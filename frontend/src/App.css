@@ -1,0 +1,400 @@
+/* =====================================================================
+   Math Animation Studio — global styles
+   ===================================================================== */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #eef3fa;        /* page background — light blue-gray */
+  --bg2: #e6edf7;       /* canvas area */
+  --bg3: #dbe7fb;       /* blue-tinted hover / fill */
+  --surface: #ffffff;   /* cards, panels, top bars */
+  --surface2: #eef2f8;  /* inputs, subtle fills, tracks */
+  --border: #cdd9e8;    /* light blue-gray border */
+  --text: #1e293b;      /* slate — main text */
+  --text-dim: #64748b;  /* muted slate */
+  --accent: #2563eb;    /* blue-600 */
+  --accent-hover: #1d4ed8; /* blue-700 */
+  --on-accent: #ffffff; /* text on accent / colored fills */
+  --danger: #dc2626;
+  --ok: #16a34a;
+  --warn: #d97706;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+  color: var(--text);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------------------------------------------------------------------------
+   Buttons
+--------------------------------------------------------------------------- */
+.btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s, border-color 0.15s;
+}
+.btn:hover:not(:disabled) { background: var(--bg3); border-color: var(--accent); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn--primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
+.btn--primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn--secondary { background: var(--bg3); border-color: var(--accent); color: var(--accent); }
+.btn--ghost { background: transparent; border-color: transparent; }
+.btn--ghost:hover:not(:disabled) { background: var(--surface2); border-color: var(--border); }
+
+/* ---------------------------------------------------------------------------
+   Dep Gate
+--------------------------------------------------------------------------- */
+.dep-gate--loading {
+  display: flex;
+  height: 100vh;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+}
+
+.dep-gate--blocked {
+  display: flex;
+  height: 100vh;
+  align-items: center;
+  justify-content: center;
+  background: rgba(30, 41, 59, 0.35);
+}
+
+.dep-gate__modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 36px 40px;
+  max-width: 560px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dep-gate__modal h2 { font-size: 20px; color: var(--danger); }
+.dep-gate__error { color: var(--text-dim); }
+
+.dep-gate__table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dep-gate__table th, .dep-gate__table td {
+  text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border);
+}
+.dep-gate__table th { color: var(--text-dim); font-weight: 500; }
+.dep-gate__row--missing td { color: var(--danger); }
+
+.dep-gate__btn { align-self: flex-start; }
+
+.dep-banner {
+  background: var(--bg3);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 20px;
+  font-size: 12px;
+  color: var(--warn);
+}
+
+/* ---------------------------------------------------------------------------
+   Project Home
+--------------------------------------------------------------------------- */
+.project-home {
+  max-width: 680px;
+  margin: 60px auto;
+  padding: 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.project-home__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+}
+
+.project-home__header h1 { font-size: 22px; }
+
+/* keep the button from crowding the title and from wrapping */
+.project-home__header .btn { margin-left: 16px; white-space: nowrap; }
+
+.project-home__form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.project-home__input {
+  flex: 1;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+}
+.project-home__input:focus { border-color: var(--accent); }
+
+.project-home__empty { color: var(--text-dim); }
+
+.project-home__list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+
+.project-home__item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.project-home__item:hover { border-color: var(--accent); background: var(--surface2); }
+
+.project-home__name { flex: 1; font-weight: 500; }
+.project-home__meta { color: var(--text-dim); font-size: 12px; }
+
+/* ---------------------------------------------------------------------------
+   Editor Shell
+--------------------------------------------------------------------------- */
+.editor-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.editor-shell__topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  height: 44px;
+  flex-shrink: 0;
+}
+
+.editor-shell__title { flex: 1; font-weight: 600; font-size: 14px; }
+.editor-shell__dirty { color: var(--warn); }
+
+.editor-shell__body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.editor-shell__sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.editor-shell__sidebar--right {
+  border-right: none;
+  border-left: 1px solid var(--border);
+}
+
+.editor-shell__canvas-area {
+  flex: 1;
+  background: #000000;
+  position: relative;
+  overflow: hidden;
+}
+
+.editor-shell__timeline {
+  height: 160px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+}
+
+.canvas-placeholder {
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 2;
+}
+
+.sidebar-placeholder {
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: center;
+  margin-top: 8px;
+}
+
+/* ---------------------------------------------------------------------------
+   Render Panel
+--------------------------------------------------------------------------- */
+.render-panel { display: flex; flex-direction: column; gap: 12px; }
+.render-panel__title { font-size: 13px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+.render-panel__trigger { width: 100%; }
+
+.render-panel__status { display: flex; flex-direction: column; gap: 6px; }
+
+.render-panel__progress-bar {
+  height: 6px;
+  background: var(--surface2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.render-panel__progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+.render-panel__message { font-size: 12px; color: var(--text-dim); }
+
+.render-panel__badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+.render-panel__badge--queued  { background: var(--surface2); color: var(--text-dim); }
+.render-panel__badge--running { background: #fff3e0; color: #b45309; }
+.render-panel__badge--done    { background: #e3f6ea; color: #15803d; }
+.render-panel__badge--error   { background: #fdecec; color: #b91c1c; }
+
+.render-panel__video { display: flex; flex-direction: column; gap: 8px; }
+.render-panel__player { width: 100%; border-radius: 6px; border: 1px solid var(--border); background: #000; }
+.render-panel__download { text-align: center; text-decoration: none; display: block; }
+
+/* ---------------------------------------------------------------------------
+   Shared panel bits
+--------------------------------------------------------------------------- */
+.panel-title {
+  font-size: 12px; font-weight: 700; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.05em;
+  margin: 4px 0 8px;
+}
+.panel-hint { color: var(--text-dim); font-size: 12px; }
+.sidebar-divider { height: 1px; background: var(--border); margin: 14px 0; }
+
+.editor-shell__sidebar--right { display: flex; flex-direction: column; }
+
+/* ---------------------------------------------------------------------------
+   Object palette + list
+--------------------------------------------------------------------------- */
+.palette__buttons { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.palette__btn { text-align: left; }
+
+.obj-list { list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.obj-list__item {
+  padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  border: 1px solid transparent;
+}
+.obj-list__item:hover { background: var(--surface2); }
+.obj-list__item--sel { background: var(--bg3); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.obj-list__empty { color: var(--text-dim); font-size: 12px; padding: 6px 10px; }
+
+/* ---------------------------------------------------------------------------
+   Canvas
+--------------------------------------------------------------------------- */
+.canvas-empty {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  color: #94a3b8; font-size: 13px; pointer-events: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Inspector fields
+--------------------------------------------------------------------------- */
+.inspector { display: flex; flex-direction: column; gap: 10px; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field__label { font-size: 11px; color: var(--text-dim); }
+.field__input, .field__textarea {
+  padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface2); color: var(--text); font-size: 13px; outline: none;
+  width: 100%;
+}
+.field__input:focus, .field__textarea:focus { border-color: var(--accent); }
+.field__textarea { resize: vertical; font-family: ui-monospace, Consolas, monospace; }
+.field__color { width: 100%; height: 28px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); cursor: pointer; }
+.field-row { display: flex; gap: 8px; }
+.field-row .field { flex: 1; }
+
+.btn--danger-ghost { background: transparent; border-color: var(--border); color: var(--danger); margin-top: 6px; }
+.btn--danger-ghost:hover:not(:disabled) { background: #fdecec; border-color: var(--danger); }
+.inspector__delete { width: 100%; }
+
+/* ---------------------------------------------------------------------------
+   Timeline strip
+--------------------------------------------------------------------------- */
+.timeline { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+.timeline__header { display: flex; align-items: baseline; gap: 10px; }
+.timeline__hint { font-size: 11px; color: var(--text-dim); }
+.timeline__rows { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+.timeline__row {
+  display: grid; grid-template-columns: 1.6fr 1fr 0.8fr 0.8fr; gap: 8px; align-items: center;
+  padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 12px;
+  border: 1px solid transparent;
+}
+.timeline__row:hover { background: var(--surface2); }
+.timeline__row--sel { background: var(--bg3); border-color: var(--accent); }
+.timeline__row--head { font-weight: 600; color: var(--text-dim); cursor: default; }
+.timeline__row--head:hover { background: transparent; }
+.timeline__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timeline__select, .timeline__num {
+  padding: 3px 6px; border-radius: 5px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font-size: 12px; outline: none; width: 100%;
+}
+.timeline__select:focus, .timeline__num:focus { border-color: var(--accent); }
+.timeline__num:disabled { opacity: 0.4; }
+
+/* ---------------------------------------------------------------------------
+   Add panel
+--------------------------------------------------------------------------- */
+.add-panel__group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.add-panel__cat { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin-bottom: 2px; }
+.add-panel__btn { text-align: left; font-size: 12px; padding: 5px 10px; }
+
+/* ---------------------------------------------------------------------------
+   Outliner
+--------------------------------------------------------------------------- */
+.outliner__list { list-style: none; display: flex; flex-direction: column; gap: 1px; }
+.outliner__item {
+  display: flex; align-items: center; gap: 6px; padding: 4px 6px;
+  border-radius: 6px; cursor: pointer; font-size: 12px; border: 1px solid transparent;
+}
+.outliner__item:hover { background: var(--surface2); }
+.outliner__item:hover .outliner__actions { opacity: 1; }
+.outliner__item--sel { background: var(--bg3); border-color: var(--accent); }
+.outliner__icon { width: 14px; text-align: center; color: var(--text-dim); }
+.outliner__name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outliner__actions { display: flex; gap: 1px; opacity: 0.35; transition: opacity 0.15s; }
+.outliner__btn {
+  border: none; background: transparent; cursor: pointer; font-size: 10px;
+  color: var(--text-dim); padding: 2px 3px; border-radius: 4px; line-height: 1;
+}
+.outliner__btn:hover { background: var(--surface); color: var(--text); }
+.outliner__btn--del:hover { color: var(--danger); }
+
+/* ---------------------------------------------------------------------------
+   Inspector extras
+--------------------------------------------------------------------------- */
+.field--check { flex-direction: row; align-items: center; gap: 8px; }
+.field--check input { width: auto; }
+.matrix-grid { display: grid; gap: 4px; }
+.matrix-grid .field__input { text-align: center; padding: 4px 2px; }
