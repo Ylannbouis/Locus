@@ -78,9 +78,16 @@ function coordChildren(o: SceneObject, stroke: string, sw: number) {
     }
   }
 
-  // axes lines
-  els.push(<Line key="xaxis" points={[-xLen / 2, axisYpx, xLen / 2, axisYpx]} stroke={stroke} strokeWidth={sw} />);
-  els.push(<Line key="yaxis" points={[axisXpx, -yLen / 2, axisXpx, yLen / 2]} stroke={stroke} strokeWidth={sw} />);
+  // axes lines (with optional arrow tips at the positive ends, matching Manim)
+  const tips = st === 'axes' && !!p.tips;
+  if (tips) {
+    const tip = 0.18 * PXU;
+    els.push(<Arrow key="xaxis" points={[-xLen / 2, axisYpx, xLen / 2, axisYpx]} stroke={stroke} fill={stroke} strokeWidth={sw} pointerLength={tip} pointerWidth={tip} />);
+    els.push(<Arrow key="yaxis" points={[axisXpx, yLen / 2, axisXpx, -yLen / 2]} stroke={stroke} fill={stroke} strokeWidth={sw} pointerLength={tip} pointerWidth={tip} />);
+  } else {
+    els.push(<Line key="xaxis" points={[-xLen / 2, axisYpx, xLen / 2, axisYpx]} stroke={stroke} strokeWidth={sw} />);
+    els.push(<Line key="yaxis" points={[axisXpx, -yLen / 2, axisXpx, yLen / 2]} stroke={stroke} strokeWidth={sw} />);
+  }
 
   if (st === 'axes') {
     for (const x of safeTicks(xmin, xmax, xstep)) {

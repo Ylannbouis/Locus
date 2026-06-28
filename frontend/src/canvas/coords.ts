@@ -6,6 +6,26 @@
 
 export const PX_PER_UNIT = 80;
 
+// Manim's default camera frame (16:9, frame_height = 8 units). The canvas draws
+// this as a guide so what you compose matches what gets rendered.
+export const FRAME_WIDTH = 14.2222;
+export const FRAME_HEIGHT = 8;
+
+// KaTeX em size (scene units per font_size point) calibrated so a KaTeX-rendered
+// formula has the same *width* as Manim's. Measured: Manim renders
+// "a^2+b^2=c^2" at 2.5688 units; KaTeX lays it out at 5.7741 em -> Manim packs
+// 0.4449 units/em at font_size 48, i.e. 0.4449/48 per point. (Width is matched
+// rather than glyph height because Manim's ink is horizontally tighter than
+// KaTeX's advances, and overflowing a bounding box is the visible artifact.)
+export const MANIM_EM_UNITS_PER_PT = 0.009268;
+
+// Manim Matrix() layout defaults (scene units, center-to-center). Manim places
+// entries on a fixed-pitch grid independent of glyph width, so the canvas must
+// replicate the pitch rather than use KaTeX's (much tighter) matrix spacing.
+export const MATRIX_H_PITCH = 1.3; // h_buff
+export const MATRIX_V_PITCH = 0.8; // v_buff
+export const MATRIX_BRACKET_BUFF = 0.25; // gap from entries to bracket
+
 export interface View {
   scale: number;
   offsetX: number; // screen position (px) of world origin

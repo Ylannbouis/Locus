@@ -109,7 +109,7 @@ export function createAxes(): SceneObject {
   return base({
     type: 'coordinate_system', name: 'Axes',
     style: { stroke_color: '#ffffff', stroke_width: 2 },
-    props: { subtype: 'axes', x_range: [-4, 4, 1], y_range: [-3, 3, 1], x_length: 6, y_length: 4.5, include_numbers: true },
+    props: { subtype: 'axes', x_range: [-4, 4, 1], y_range: [-3, 3, 1], x_length: 6, y_length: 4.5, include_numbers: true, tips: false },
   });
 }
 

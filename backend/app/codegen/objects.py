@@ -114,8 +114,10 @@ def _emit_construct(obj: SceneObject) -> str:
             xl = _num(props.get("x_length"), 6.0)
             yl = _num(props.get("y_length"), 4.0)
             inc = bool(props.get("include_numbers", True))
+            # No arrow tips by default (matches the canvas preview); opt in via props.
+            tips = bool(props.get("tips", False))
             return (f"Axes(x_range={xr}, y_range={yr}, x_length={xl}, y_length={yl}, "
-                    f"tips=True, axis_config={{'include_numbers': {inc}}})")
+                    f"tips={tips}, axis_config={{'include_numbers': {inc}}})")
         if subtype == "number_line":
             xr = _range(props.get("x_range"), [-5, 5, 1])
             length = _num(props.get("length"), 8.0)
@@ -230,6 +232,24 @@ def emit_object(obj: SceneObject) -> tuple[str, list[str]]:
     elif otype == "shape" and subtype in POINT_SHAPES:
         if abs(x) > 1e-9 or abs(y) > 1e-9:
             lines.append(f"{var}.shift(np.array([{x}, {y}, 0.0]))")
+    elif otype == "coordinate_system":
+        # The canvas centers the axis-line region (data midpoint) at `position`.
+        # move_to() would instead center Manim's full bbox (tips/numbers/labels
+        # included), shifting the axes; align the data midpoint via c2p instead.
+        props = obj.props or {}
+        st = props.get("subtype", "axes")
+        if st == "number_line":
+            xr = props.get("x_range") or [-5, 5, 1]
+            xmid = (_num(xr[0], -5) + _num(xr[1], 5)) / 2
+            lines.append(f"{var}.shift(np.array([{x}, {y}, 0.0]) - {var}.number_to_point({xmid}))")
+        elif st in ("axes", "number_plane"):
+            xr = props.get("x_range") or [-5, 5, 1]
+            yr = props.get("y_range") or [-3, 3, 1]
+            xmid = (_num(xr[0], -5) + _num(xr[1], 5)) / 2
+            ymid = (_num(yr[0], -3) + _num(yr[1], 3)) / 2
+            lines.append(f"{var}.shift(np.array([{x}, {y}, 0.0]) - {var}.c2p({xmid}, {ymid}))")
+        else:
+            lines.append(f"{var}.move_to(np.array([{x}, {y}, 0.0]))")
     else:
         lines.append(f"{var}.move_to(np.array([{x}, {y}, 0.0]))")
 

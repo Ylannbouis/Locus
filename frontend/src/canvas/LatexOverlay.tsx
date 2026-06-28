@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import katex from 'katex';
 import type { View } from './coords';
-import { PX_PER_UNIT, worldX, worldY } from './coords';
+import {
+  PX_PER_UNIT, MANIM_EM_UNITS_PER_PT,
+  MATRIX_H_PITCH, MATRIX_V_PITCH, MATRIX_BRACKET_BUFF,
+  worldX, worldY,
+} from './coords';
 import { useProjectStore } from '../store/projectStore';
 import type { SceneObject } from '../types/ir';
 
@@ -10,25 +14,37 @@ interface Props {
   view: View;
 }
 
-function renderTex(tex: string): string {
+function renderTex(tex: string, displayMode = true): string {
   try {
-    return katex.renderToString(tex || '\\;', { throwOnError: false, displayMode: true });
+    return katex.renderToString(tex || '\\;', { throwOnError: false, displayMode });
   } catch {
     return '<span style="color:#dc2626">LaTeX error</span>';
   }
 }
 
-// Build a KaTeX matrix string from a matrix object's entries + brackets.
-function matrixTex(o: SceneObject): string {
-  const p = o.props as any;
-  const entries: string[][] = Array.isArray(p.entries) ? p.entries : [['1', '0'], ['0', '1']];
-  const env = p.left_bracket === '(' ? 'pmatrix' : 'bmatrix';
-  const body = entries.map(row => row.map(c => String(c)).join(' & ')).join(' \\\\ ');
-  return `\\begin{${env}} ${body} \\end{${env}}`;
+// Draw a matrix bracket as SVG so its height and vertical centering are exact
+// (KaTeX \left..\right delimiters center on the math axis and round up in size,
+// which makes them too tall and visually offset). `h`/`w` are world px.
+function bracketSvg(ch: string, h: number, w: number, t: number, color: string): string {
+  const p = t;                       // keep the stroke inside the viewBox
+  const x0 = p, x1 = w - p, y0 = p, y1 = h - p, mid = w / 2;
+  let d: string;
+  if (ch === '|') {
+    d = `M ${mid} ${y0} L ${mid} ${y1}`;
+  } else if (ch === '(' || ch === '{') {
+    d = `M ${x1} ${y0} Q ${x0} ${h / 2} ${x1} ${y1}`;
+  } else if (ch === ')' || ch === '}') {
+    d = `M ${x0} ${y0} Q ${x1} ${h / 2} ${x0} ${y1}`;
+  } else if (ch === ']') {
+    d = `M ${x0} ${y0} L ${x1} ${y0} L ${x1} ${y1} L ${x0} ${y1}`;
+  } else { // '[' and default
+    d = `M ${x1} ${y0} L ${x0} ${y0} L ${x0} ${y1} L ${x1} ${y1}`;
+  }
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block;overflow:visible">`
+    + `<path d="${d}" fill="none" stroke="${color}" stroke-width="${t}" stroke-linecap="square" stroke-linejoin="miter"/></svg>`;
 }
 
 function texFor(o: SceneObject): string {
-  if (o.type === 'matrix') return matrixTex(o);
   return String((o.props as any).tex_string ?? '');
 }
 
@@ -84,37 +100,105 @@ export function LatexOverlay({ objects, view }: Props) {
         }}
       >
         {latexObjects.map(o => {
-          const tex = texFor(o);
-          const fontSize = Number((o.props as any).font_size ?? 48) * 0.55;
+          // KaTeX font-size (world px) calibrated so 1em matches Manim's em.
+          const fontSize = Number((o.props as any).font_size ?? 48) * MANIM_EM_UNITS_PER_PT * PX_PER_UNIT;
           const color = (o.style.fill_color as string) || '#ffffff';
           const isSel = selectedIds.includes(o.id);
           const px = drag && drag.id === o.id ? drag.x : o.position.x;
           const py = drag && drag.id === o.id ? drag.y : o.position.y;
+
+          const wrapperBase: React.CSSProperties = {
+            position: 'absolute',
+            left: worldX(px),
+            top: worldY(py),
+            transform: 'translate(-50%, -50%)',
+            fontSize: `${fontSize}px`,
+            color,
+            cursor: 'move',
+            pointerEvents: 'auto',
+            userSelect: 'none',
+            outline: isSel ? '2px solid #2563eb' : 'none',
+            outlineOffset: '2px',
+            borderRadius: '4px',
+          };
+
+          const onDown = (e: React.PointerEvent) => {
+            e.stopPropagation();
+            selectObject(o.id);
+            dragRef.current = { id: o.id, startSX: e.clientX, startSY: e.clientY, startX: o.position.x, startY: o.position.y };
+          };
+
+          if (o.type === 'matrix') {
+            const p = o.props as any;
+            const entries: string[][] = Array.isArray(p.entries) && p.entries.length
+              ? p.entries
+              : [['1', '0'], ['0', '1']];
+            const rows = entries.length;
+            const cols = entries.reduce((m, r) => Math.max(m, r.length), 1);
+
+            // World-pixel pitch from Manim's fixed grid (independent of glyph width).
+            const colPitch = MATRIX_H_PITCH * PX_PER_UNIT;
+            const rowPitch = MATRIX_V_PITCH * PX_PER_UNIT;
+            const spanX = (cols - 1) * colPitch;
+            const spanY = (rows - 1) * rowPitch;
+
+            // Bracket geometry (world px): span the entries' height + a small buff.
+            const bracketH = spanY + 0.62 * fontSize + 2 * MATRIX_BRACKET_BUFF * PX_PER_UNIT;
+            const bracketW = Math.max(7, bracketH * 0.16);
+            const bracketT = Math.max(2, fontSize * 0.06);
+            // Inner edge of each bracket: half the entry span + half a glyph + buff.
+            const bracketX = spanX / 2 + 0.18 * PX_PER_UNIT + MATRIX_BRACKET_BUFF * PX_PER_UNIT;
+
+            const containerW = (bracketX + bracketW) * 2;
+            const containerH = bracketH;
+
+            return (
+              <div key={o.id} onPointerDown={onDown} style={wrapperBase}>
+                <div style={{ position: 'relative', width: containerW, height: containerH }}>
+                  {entries.flatMap((row, i) =>
+                    row.map((cell, j) => {
+                      const cx = (j - (cols - 1) / 2) * colPitch;
+                      const cy = (i - (rows - 1) / 2) * rowPitch;
+                      return (
+                        <div
+                          key={`${i}-${j}`}
+                          style={{
+                            position: 'absolute',
+                            left: '50%',
+                            top: '50%',
+                            transform: `translate(calc(-50% + ${cx}px), calc(-50% + ${cy}px))`,
+                            whiteSpace: 'nowrap',
+                          }}
+                          dangerouslySetInnerHTML={{ __html: renderTex(cell, false) }}
+                        />
+                      );
+                    }),
+                  )}
+                  <div
+                    style={{
+                      position: 'absolute', left: '50%', top: '50%',
+                      transform: `translate(calc(-100% + ${-bracketX}px), -50%)`,
+                    }}
+                    dangerouslySetInnerHTML={{ __html: bracketSvg(p.left_bracket ?? '[', bracketH, bracketW, bracketT, color) }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute', left: '50%', top: '50%',
+                      transform: `translate(${bracketX}px, -50%)`,
+                    }}
+                    dangerouslySetInnerHTML={{ __html: bracketSvg(p.right_bracket ?? ']', bracketH, bracketW, bracketT, color) }}
+                  />
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div
               key={o.id}
-              onPointerDown={(e) => {
-                e.stopPropagation();
-                selectObject(o.id);
-                dragRef.current = { id: o.id, startSX: e.clientX, startSY: e.clientY, startX: o.position.x, startY: o.position.y };
-              }}
-              style={{
-                position: 'absolute',
-                left: worldX(px),
-                top: worldY(py),
-                transform: 'translate(-50%, -50%)',
-                fontSize: `${fontSize}px`,
-                color,
-                cursor: 'move',
-                pointerEvents: 'auto',
-                userSelect: 'none',
-                padding: '4px',
-                outline: isSel ? '2px solid #2563eb' : 'none',
-                outlineOffset: '2px',
-                borderRadius: '4px',
-                whiteSpace: 'nowrap',
-              }}
-              dangerouslySetInnerHTML={{ __html: renderTex(tex) }}
+              onPointerDown={onDown}
+              style={{ ...wrapperBase, padding: '4px', whiteSpace: 'nowrap' }}
+              dangerouslySetInnerHTML={{ __html: renderTex(texFor(o)) }}
             />
           );
         })}

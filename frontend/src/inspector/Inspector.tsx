@@ -199,6 +199,12 @@ export function Inspector() {
               <span>Show numbers</span>
             </label>
           )}
+          {subtype === 'axes' && (
+            <label className="field field--check">
+              <input type="checkbox" checked={!!props.tips} onChange={e => setProp({ tips: e.target.checked })} />
+              <span>Axis arrows</span>
+            </label>
+          )}
           <ColorField label="Color" value={(obj.style.stroke_color as string) || '#ffffff'} onChange={v => setStyle({ stroke_color: v })} />
         </>
       )}

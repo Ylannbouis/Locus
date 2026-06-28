@@ -1,10 +1,11 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Launch the Math Animation Studio dev servers (uvicorn + vite).
-  Each server runs in its OWN window so Ctrl+C (or closing the window)
-  cleanly stops it and all of its child processes. Open
-  http://localhost:5173 in your browser after both windows are up.
+  Launch the Math Animation Studio dev servers (uvicorn --reload + vite).
+  Each server runs in its OWN window, wrapped in a Windows Job Object (see
+  run-in-job.ps1) so Ctrl+C, closing the window, or Stop-Process cleanly stops
+  it AND every child process it spawned (no orphaned reloader/worker/node).
+  Open http://localhost:5173 in your browser after both windows are up.
 #>
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
@@ -21,22 +22,31 @@ Write-Host "Starting Math Animation Studio..." -ForegroundColor Cyan
 Write-Host "  Backend:  http://localhost:8000   (its own window)" -ForegroundColor Gray
 Write-Host "  Frontend: http://localhost:5173   (its own window)" -ForegroundColor Gray
 
-# --- Backend window: uvicorn (no --reload; reload spawns extra processes that
-#     survive Ctrl+C). The title makes the window easy to find/close. ---
-$backendCmd = "`$host.UI.RawUI.WindowTitle='MAS Backend (Ctrl+C to stop)'; " +
-              "Set-Location '$BackendDir'; " +
-              "& '$VenvPython' -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
+# Each server runs through run-in-job.ps1, which puts the window's process (and
+# all its children) in a Windows Job Object that is killed when the window exits.
+# That lets us enable uvicorn --reload without leaking orphaned reloader/worker
+# processes when the window is closed. The command + dir + title are passed via
+# environment variables (inherited at launch) to avoid argument-quoting issues.
+$Runner = Join-Path $PSScriptRoot "run-in-job.ps1"
+
+# --- Backend window: uvicorn with auto-reload (watches the app/ package only) ---
+$env:MAS_DIR   = $BackendDir
+$env:MAS_TITLE = "MAS Backend (Ctrl+C to stop)"
+$env:MAS_CMD   = "& '$VenvPython' -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --reload-dir app"
 $backend = Start-Process powershell `
-    -ArgumentList "-NoExit", "-Command", $backendCmd `
+    -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-File", "`"$Runner`"" `
     -PassThru
 
-# --- Frontend window: vite dev server ---
-$frontendCmd = "`$host.UI.RawUI.WindowTitle='MAS Frontend (Ctrl+C to stop)'; " +
-               "Set-Location '$FrontendDir'; " +
-               "npm run dev"
+# --- Frontend window: vite dev server (already hot-reloads) ---
+$env:MAS_DIR   = $FrontendDir
+$env:MAS_TITLE = "MAS Frontend (Ctrl+C to stop)"
+$env:MAS_CMD   = "npm run dev"
 $frontend = Start-Process powershell `
-    -ArgumentList "-NoExit", "-Command", $frontendCmd `
+    -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-File", "`"$Runner`"" `
     -PassThru
+
+# Don't leave these lingering in the launching shell's environment.
+Remove-Item Env:MAS_DIR, Env:MAS_TITLE, Env:MAS_CMD -ErrorAction SilentlyContinue
 
 Write-Host ""
 Write-Host "Two windows opened:" -ForegroundColor Green

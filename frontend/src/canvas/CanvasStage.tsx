@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { Stage, Layer } from 'react-konva';
+import { Stage, Layer, Rect } from 'react-konva';
 import type Konva from 'konva';
 import { useProjectStore } from '../store/projectStore';
 import type { SceneObject } from '../types/ir';
 import { LatexOverlay } from './LatexOverlay';
 import { SceneNodes } from './SceneNodes';
-import { MIN_SCALE, MAX_SCALE, manimX, manimY, type View } from './coords';
+import {
+  PX_PER_UNIT, FRAME_WIDTH, FRAME_HEIGHT,
+  MIN_SCALE, MAX_SCALE, manimX, manimY, type View,
+} from './coords';
 
 export function CanvasStage() {
   const project = useProjectStore(s => s.project);
@@ -40,10 +43,14 @@ export function CanvasStage() {
     return () => ro.disconnect();
   }, []);
 
-  // Center the world origin once we know the size.
+  // On first measure, fit the Manim render frame into the viewport and center it,
+  // so the canvas opens showing exactly what will be rendered.
   useEffect(() => {
     if (!centered.current && size.w > 0 && size.h > 0) {
-      setView(v => ({ ...v, offsetX: size.w / 2, offsetY: size.h / 2 }));
+      const fitW = size.w / (FRAME_WIDTH * PX_PER_UNIT);
+      const fitH = size.h / (FRAME_HEIGHT * PX_PER_UNIT);
+      const scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Math.min(fitW, fitH) * 0.92));
+      setView({ scale, offsetX: size.w / 2, offsetY: size.h / 2 });
       centered.current = true;
     }
   }, [size]);
@@ -117,6 +124,17 @@ export function CanvasStage() {
         onMouseUp={onStageMouseUp}
       >
         <Layer>
+          {/* Manim render-frame guide (non-interactive) */}
+          <Rect
+            listening={false}
+            x={-(FRAME_WIDTH / 2) * PX_PER_UNIT}
+            y={-(FRAME_HEIGHT / 2) * PX_PER_UNIT}
+            width={FRAME_WIDTH * PX_PER_UNIT}
+            height={FRAME_HEIGHT * PX_PER_UNIT}
+            stroke="rgba(255,255,255,0.28)"
+            strokeWidth={1}
+            dash={[8, 8]}
+          />
           <SceneNodes
             objects={scene?.objects ?? []}
             selectedIds={selectedIds}
