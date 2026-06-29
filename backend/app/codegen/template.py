@@ -15,7 +15,7 @@ from numpy import sin, cos, tan, exp, log, sqrt, pi, e
 
 class {{ class_name }}(Scene):
     def construct(self):
-        self.camera.background_color = "{{ background_color }}"
+        self.camera.background_color = {{ background_color_repr }}
 {{ body }}
 ''',
     keep_trailing_newline=True,
@@ -25,6 +25,6 @@ class {{ class_name }}(Scene):
 def render_script(body: str, background_color: str = "#000000") -> str:
     return _TEMPLATE.render(
         class_name=SCENE_CLASS_NAME,
-        background_color=background_color,
+        background_color_repr=repr(background_color),
         body=body,
     )
