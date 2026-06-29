@@ -3,8 +3,13 @@ import {
   createLatex, createMatrix, createRectangle, createCircle, createEllipse,
   createPolygon, createLine, createArrow, createDoubleArrow, createDashedLine,
   createAxes, createNumberLine, createNumberPlane, createFunctionPlot,
+  createParametric, createImplicit, createVectorField,
+  createVector, createAngle, createBrace,
 } from '../store/objectFactory';
+import { newId } from '../store/objectFactory';
 import type { SceneObject } from '../types/ir';
+
+const LINE_SUBTYPES = ['line', 'arrow', 'dashed_line', 'double_arrow'];
 
 export function AddPanel() {
   const addObject = useProjectStore(s => s.addObject);
@@ -19,19 +24,39 @@ export function AddPanel() {
     selectObject(obj.id);
   };
 
-  const addPlot = () => {
-    let axesId: string;
+  // Ensure an Axes exists, returning its id (creates one if needed).
+  const ensureAxes = (): string => {
     const existing = scene?.objects.find(o => o.type === 'coordinate_system' && (o.props as any).subtype === 'axes');
-    if (existing) {
-      axesId = existing.id;
-    } else {
-      const axes = createAxes();
-      addObject(axes);
-      axesId = axes.id;
+    if (existing) return existing.id;
+    const axes = createAxes();
+    addObject(axes);
+    return axes.id;
+  };
+
+  const addOnAxes = (factory: (axesId: string) => SceneObject) => {
+    const obj = factory(ensureAxes());
+    addObject(obj);
+    selectObject(obj.id);
+  };
+
+  // Angle needs two lines sharing a vertex. Reuse existing lines if there are
+  // two; otherwise create a fresh pair that forms a clear angle at the origin.
+  const addAngle = () => {
+    const lines = (scene?.objects ?? []).filter(o => o.type === 'shape' && LINE_SUBTYPES.includes((o.props as any).subtype));
+    let id1 = lines[0]?.id, id2 = lines[1]?.id;
+    if (!id1 || !id2) {
+      const l1 = createLine(); l1.id = newId(); (l1.props as any).start_point = { x: 0, y: 0 }; (l1.props as any).end_point = { x: 2.5, y: 0 }; l1.name = 'Angle line 1';
+      const l2 = createLine(); l2.id = newId(); (l2.props as any).start_point = { x: 0, y: 0 }; (l2.props as any).end_point = { x: 1.8, y: 1.8 }; l2.name = 'Angle line 2';
+      addObject(l1); addObject(l2);
+      id1 = l1.id; id2 = l2.id;
     }
-    const plot = createFunctionPlot(axesId);
-    addObject(plot);
-    selectObject(plot.id);
+    const ang = createAngle(id1, id2);
+    addObject(ang);
+    selectObject(ang.id);
+  };
+  const addBrace = () => {
+    const target = (scene?.objects ?? []).find(o => o.id === useProjectStore.getState().selectedObjectIds[0]) ?? scene?.objects.find(o => o.type !== 'geometry');
+    add(() => createBrace(target?.id ?? ''));
   };
 
   return (
@@ -65,7 +90,17 @@ export function AddPanel() {
 
       <div className="add-panel__group">
         <span className="add-panel__cat">Graph</span>
-        <button className="btn add-panel__btn" onClick={addPlot}>∿ Function Plot</button>
+        <button className="btn add-panel__btn" onClick={() => addOnAxes(createFunctionPlot)}>∿ Function Plot</button>
+        <button className="btn add-panel__btn" onClick={() => addOnAxes(createParametric)}>⟳ Parametric</button>
+        <button className="btn add-panel__btn" onClick={() => addOnAxes(createImplicit)}>◔ Implicit</button>
+        <button className="btn add-panel__btn" onClick={() => add(createVectorField)}>⇶ Vector Field</button>
+      </div>
+
+      <div className="add-panel__group">
+        <span className="add-panel__cat">Geometry</span>
+        <button className="btn add-panel__btn" onClick={() => add(createVector)}>↗ Vector</button>
+        <button className="btn add-panel__btn" onClick={addAngle}>∠ Angle</button>
+        <button className="btn add-panel__btn" onClick={addBrace}>⏟ Brace</button>
       </div>
     </div>
   );

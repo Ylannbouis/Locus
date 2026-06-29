@@ -1,8 +1,21 @@
-import { Rect, Circle as KCircle, Ellipse, Line, Arrow, Group } from 'react-konva';
+import { Rect, Circle as KCircle, Ellipse, Line, Arrow, Group, Path } from 'react-konva';
 import type Konva from 'konva';
 import type { SceneObject } from '../types/ir';
 import { PX_PER_UNIT, worldX, worldY } from './coords';
-import { samplePlot } from './plotting';
+import { samplePlot, sampleParametric, sampleVectorField, vectorFieldColor } from './plotting';
+import { objectBounds, lineSegment, intersect, BRACE_BUFF, BRACE_DEPTH } from './geometry';
+
+// Build an SVG path for a brace along a baseline (world px). axis 'h' or 'v';
+// `sign` is the direction the tip points (away from the target).
+function bracePath(a0: number, a1: number, base: number, depth: number, axis: 'h' | 'v', sign: number): string {
+  const mid = (a0 + a1) / 2;
+  const m = base + sign * depth * 0.5;
+  const tip = base + sign * depth;
+  if (axis === 'h') {
+    return `M ${a0} ${base} Q ${a0} ${m} ${(a0 + mid) / 2} ${m} Q ${mid} ${m} ${mid} ${tip} Q ${mid} ${m} ${(mid + a1) / 2} ${m} Q ${a1} ${m} ${a1} ${base}`;
+  }
+  return `M ${base} ${a0} Q ${m} ${a0} ${m} ${(a0 + mid) / 2} Q ${m} ${mid} ${tip} ${mid} Q ${m} ${mid} ${m} ${(mid + a1) / 2} Q ${m} ${a1} ${base} ${a1}`;
+}
 
 function hexToRgba(hex: string | null | undefined, alpha: number): string {
   if (!hex) return 'rgba(0,0,0,0)';
@@ -158,16 +171,95 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag }: Pro
     }
 
     if (o.type === 'graph') {
+      const st = p.subtype ?? 'function_plot';
+      const pick = (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey); };
+
+      if (st === 'vector_field') {
+        const arrows = sampleVectorField(o);
+        if (!arrows.length) return null;
+        return (
+          <Group key={o.id} onClick={pick} onMouseDown={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }}>
+            {arrows.map((a, i) => {
+              const c = vectorFieldColor(a.mag); // matches Manim's [0,2] gradient
+              return (
+                <Arrow key={i} points={[worldX(a.x), worldY(a.y), worldX(a.x + a.dx), worldY(a.y + a.dy)]}
+                  stroke={c} fill={c} strokeWidth={2} pointerLength={6} pointerWidth={5} listening={false} />
+              );
+            })}
+          </Group>
+        );
+      }
+
+      if (st === 'implicit') return null; // render-only (no canvas preview)
+
       const axes = objects.find(a => a.id === p.axes_ref && a.type === 'coordinate_system');
       if (!axes) return null;
-      const pts = samplePlot(axes, String(p.expression ?? ''), p.x_range);
+      const pts = st === 'parametric'
+        ? sampleParametric(axes, String(p.x_expression ?? 'cos(t)'), String(p.y_expression ?? 'sin(t)'), p.t_range)
+        : samplePlot(axes, String(p.expression ?? ''), p.x_range);
       if (pts.length < 4) return null;
       return (
         <Line key={o.id} points={pts} stroke={stroke} strokeWidth={strokeWidth} lineJoin="round" lineCap="round"
           {...sel}
           onMouseDown={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }}
-          onClick={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey); }} />
+          onClick={pick} />
       );
+    }
+
+    if (o.type === 'geometry') {
+      const pick = (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey); };
+
+      if (p.subtype === 'vector') {
+        const dir = (p.direction as { x: number; y: number }) ?? { x: 1, y: 0 };
+        const tip = 0.25 * PXU;
+        return <Arrow {...common} points={[0, 0, worldX(dir.x), worldY(dir.y)]} stroke={stroke} fill={stroke}
+          strokeWidth={strokeWidth} pointerLength={tip} pointerWidth={tip * 0.9} />;
+      }
+
+      if (p.subtype === 'angle') {
+        const s1 = lineSegment(objects.find(a => a.id === p.line1_id));
+        const s2 = lineSegment(objects.find(a => a.id === p.line2_id));
+        if (!s1 || !s2) return null;
+        const v = intersect(s1, s2);
+        if (!v) return null;
+        // direction along each line toward the endpoint farther from the vertex
+        const far = (seg: [[number, number], [number, number]]) => {
+          const d0 = Math.hypot(seg[0][0] - v[0], seg[0][1] - v[1]);
+          const d1 = Math.hypot(seg[1][0] - v[0], seg[1][1] - v[1]);
+          const pt = d1 >= d0 ? seg[1] : seg[0];
+          return Math.atan2(pt[1] - v[1], pt[0] - v[0]);
+        };
+        let a1 = far(s1), a2 = far(s2);
+        let delta = a2 - a1;
+        while (delta > Math.PI) delta -= 2 * Math.PI;
+        while (delta < -Math.PI) delta += 2 * Math.PI;
+        const R = Number(p.radius ?? 0.6);
+        const pts: number[] = [];
+        const N = 28;
+        for (let i = 0; i <= N; i++) {
+          const ang = a1 + (delta * i) / N;
+          pts.push(worldX(v[0] + R * Math.cos(ang)), worldY(v[1] + R * Math.sin(ang)));
+        }
+        return <Line key={o.id} points={pts} stroke={stroke} strokeWidth={strokeWidth} {...sel}
+          onMouseDown={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }} onClick={pick} />;
+      }
+
+      if (p.subtype === 'brace') {
+        const target = objects.find(a => a.id === p.target_id);
+        if (!target) return null;
+        const b = objectBounds(target);
+        const buff = BRACE_BUFF, depth = BRACE_DEPTH * PXU;
+        const dir = String(p.direction_str ?? 'DOWN').toUpperCase();
+        let d: string;
+        if (dir === 'DOWN') d = bracePath(worldX(b.cx - b.hw), worldX(b.cx + b.hw), worldY(b.cy - b.hh - buff), depth, 'h', +1);
+        else if (dir === 'UP') d = bracePath(worldX(b.cx - b.hw), worldX(b.cx + b.hw), worldY(b.cy + b.hh + buff), depth, 'h', -1);
+        else if (dir === 'LEFT') d = bracePath(worldY(b.cy - b.hh), worldY(b.cy + b.hh), worldX(b.cx - b.hw - buff), depth, 'v', -1);
+        else d = bracePath(worldY(b.cy - b.hh), worldY(b.cy + b.hh), worldX(b.cx + b.hw + buff), depth, 'v', +1);
+        return <Path key={o.id} data={d} stroke={stroke} strokeWidth={2} {...sel}
+          onMouseDown={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }} onClick={pick} />;
+      }
+
+      return null;
     }
     return null;
   };

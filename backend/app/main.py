@@ -12,7 +12,9 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app import deps_check
-from app.models.ir import Project, ProjectSummary, RenderJob, RenderRequest
+from app.models.ir import (
+    MorphPreviewRequest, Project, ProjectSummary, RenderJob, RenderRequest,
+)
 from app.render import queue as rq
 from app.render.worker import run_worker
 from app.storage.projects import (
@@ -113,6 +115,21 @@ async def post_render(req: RenderRequest) -> dict[str, str]:
         project_id=req.project_id,
         scene_id=req.scene_id,
         quality=req.quality,
+    )
+    rq.enqueue(job)
+    return {"job_id": job_id}
+
+
+@app.post("/api/render/morph-preview")
+async def post_morph_preview(req: MorphPreviewRequest) -> dict[str, str]:
+    job_id = rq.new_job_id()
+    job = RenderJob(
+        job_id=job_id,
+        project_id=req.project_id,
+        scene_id=req.scene_id,
+        quality="preview",
+        mode="morph",
+        keyframe_id=req.keyframe_id,
     )
     rq.enqueue(job)
     return {"job_id": job_id}

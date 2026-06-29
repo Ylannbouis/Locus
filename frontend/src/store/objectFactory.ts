@@ -137,3 +137,53 @@ export function createFunctionPlot(axesId: string): SceneObject {
     props: { subtype: 'function_plot', axes_ref: axesId, expression: 'sin(x)', x_range: [-4, 4], use_smoothing: true },
   });
 }
+
+export function createParametric(axesId: string): SceneObject {
+  return base({
+    type: 'graph', name: 'parametric',
+    style: { stroke_color: '#58c4dd', stroke_width: 4 },
+    props: { subtype: 'parametric', axes_ref: axesId, x_expression: 'cos(t)', y_expression: 'sin(2*t)', t_range: [0, 6.2832, 0.05] },
+  });
+}
+
+export function createImplicit(axesId: string): SceneObject {
+  return base({
+    type: 'graph', name: 'implicit',
+    style: { stroke_color: '#ff6699', stroke_width: 4 },
+    props: { subtype: 'implicit', axes_ref: axesId, expression: 'x**2 + y**2 - 4' },
+  });
+}
+
+// --- Vector field (standalone, scene coords) ------------------------------
+export function createVectorField(): SceneObject {
+  return base({
+    type: 'graph', name: 'vector field',
+    style: { stroke_color: '#ffffff' },
+    props: { subtype: 'vector_field', x_func: '-y', y_func: 'x', x_range: [-5, 5, 1], y_range: [-3, 3, 1] },
+  });
+}
+
+// --- Geometry --------------------------------------------------------------
+export function createVector(): SceneObject {
+  return base({
+    type: 'geometry', name: 'Vector',
+    style: { stroke_color: '#22c55e', stroke_width: 4 },
+    props: { subtype: 'vector', direction: { x: 2, y: 1 }, label: '' },
+  });
+}
+
+export function createAngle(line1Id = '', line2Id = ''): SceneObject {
+  return base({
+    type: 'geometry', name: 'Angle',
+    style: { stroke_color: '#ffff00', stroke_width: 3 },
+    props: { subtype: 'angle', line1_id: line1Id, line2_id: line2Id, radius: 0.6 },
+  });
+}
+
+export function createBrace(targetId = ''): SceneObject {
+  return base({
+    type: 'geometry', name: 'Brace',
+    style: { stroke_color: '#ffffff' },
+    props: { subtype: 'brace', target_id: targetId, direction_str: 'DOWN', label: '' },
+  });
+}

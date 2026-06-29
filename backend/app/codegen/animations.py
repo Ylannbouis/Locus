@@ -76,6 +76,12 @@ def emit_animation(verb: str, var: str, params: dict[str, Any] | None = None,
         tvar = var_map.get(target) if target else None
         if not tvar:
             return None
+        if verb == "morph_equation":
+            key_map = params.get("key_map")
+            pairs = {str(k): str(v) for k, v in key_map.items() if k and v} if isinstance(key_map, dict) else {}
+            if pairs:
+                items = ", ".join(f"{k!r}: {v!r}" for k, v in pairs.items())
+                return f"{cls}({var}, {tvar}, key_map={{{items}}})"
         return f"{cls}({var}, {tvar})"
 
     if verb == "move":

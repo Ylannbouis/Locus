@@ -64,12 +64,12 @@ put a fade and a write-on on a timeline → render an MP4 → download**. Everyt
 - **Checkpoint:** full animation authoring UX. ✅ verified — codegen for all verbs/groups/relationships compiles and a multi-verb parallel-group scene renders to MP4 ("Played 7 animations").
 - Deferred to Phase 5 as planned: the dedicated **camera track** + `camera_move` (MovingCameraScene) codegen.
 
-### Phase 4 — Math-specific features ⬜
-- Parametric curves; implicit plots (needs `sympy`); vector fields.
-- **Equation morphing** (`TransformMatchingTex`) with a key-map UI + "preview morph" test render. (Flagged as fragile — first-class feature.)
-- Animated parameter sweep (`ValueTracker` + `always_redraw`).
-- Geometry primitives: Vector (labeled), Angle, Brace; axis labels.
-- **Checkpoint:** all math-specific features available.
+### Phase 4 — Math-specific features ✅
+- Parametric curves (`axes.plot_parametric_curve`), implicit plots (`axes.plot_implicit_curve`), vector fields (`ArrowVectorField`, standalone). Canvas previews: parametric curve sampled, vector-field arrows (magnitude-colored); implicit is render-only.
+- **Equation morphing** (`TransformMatchingTex`) with a key-map editor in the KeyframeInspector + a "Preview Morph" 1-second test render (backend `mode=morph` job → `generate_morph_preview_script`, `POST /api/render/morph-preview`).
+- Animated parameter sweep: function-plot `props.sweep` → `ValueTracker` + `always_redraw`; the swept param is exposed in the plot lambda and animated via its own timeline event.
+- Geometry primitives: Vector (labeled, draggable preview), Angle (references two lines), Brace (references a target, labeled); axis labels (`get_axis_labels`). Angle/brace are render-only on the canvas.
+- **Checkpoint:** all math-specific features available. ✅ verified — a scene exercising every feature renders to MP4 (frame inspected), and the morph preview renders standalone.
 
 ### Phase 5 — Camera system ⬜
 - Dedicated camera track on the timeline (keyframeable pan/zoom/focus).

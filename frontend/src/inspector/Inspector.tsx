@@ -201,29 +201,105 @@ export function Inspector() {
             </label>
           )}
           {subtype === 'axes' && (
-            <label className="field field--check">
-              <input type="checkbox" checked={!!props.tips} onChange={e => setProp({ tips: e.target.checked })} />
-              <span>Axis arrows</span>
-            </label>
+            <>
+              <label className="field field--check">
+                <input type="checkbox" checked={!!props.tips} onChange={e => setProp({ tips: e.target.checked })} />
+                <span>Axis arrows</span>
+              </label>
+              <div className="field-row">
+                <TextField label="X axis label" value={String(props.x_axis_label ?? '')} mono onChange={v => setProp({ x_axis_label: v })} />
+                <TextField label="Y axis label" value={String(props.y_axis_label ?? '')} mono onChange={v => setProp({ y_axis_label: v })} />
+              </div>
+            </>
           )}
           <ColorField label="Color" value={(obj.style.stroke_color as string) || '#ffffff'} onChange={v => setStyle({ stroke_color: v })} />
         </>
       )}
 
-      {/* ---- Graph / function plot ---- */}
+      {/* ---- Graph (function plot / parametric / implicit / vector field) ---- */}
       {obj.type === 'graph' && (
         <>
-          <label className="field">
-            <span className="field__label">Axes</span>
-            <select className="field__input" value={String(props.axes_ref ?? '')} onChange={e => setProp({ axes_ref: e.target.value })}>
-              <option value="">— pick axes —</option>
-              {axesList.map(a => <option key={a.id} value={a.id}>{a.name || a.id}</option>)}
-            </select>
-          </label>
-          <TextField label="f(x) =" value={String(props.expression ?? 'sin(x)')} mono onChange={v => setProp({ expression: v })} />
-          <RangeField label="X range" value={(props.x_range as number[]) || [-4, 4]} step={false} onChange={v => setProp({ x_range: v })} />
-          <ColorField label="Color" value={(obj.style.stroke_color as string) || '#58c4dd'} onChange={v => setStyle({ stroke_color: v })} />
-          <NumberField label="Stroke width" value={Number(obj.style.stroke_width ?? 4)} step={0.5} onChange={v => setStyle({ stroke_width: v })} />
+          {subtype !== 'vector_field' && (
+            <label className="field">
+              <span className="field__label">Axes</span>
+              <select className="field__input" value={String(props.axes_ref ?? '')} onChange={e => setProp({ axes_ref: e.target.value })}>
+                <option value="">— pick axes —</option>
+                {axesList.map(a => <option key={a.id} value={a.id}>{a.name || a.id}</option>)}
+              </select>
+            </label>
+          )}
+
+          {subtype === 'function_plot' && (
+            <>
+              <TextField label="f(x) =" value={String(props.expression ?? 'sin(x)')} mono onChange={v => setProp({ expression: v })} />
+              <RangeField label="X range" value={(props.x_range as number[]) || [-4, 4]} step={false} onChange={v => setProp({ x_range: v })} />
+              <SweepEditor props={props} setProp={setProp} />
+            </>
+          )}
+
+          {subtype === 'parametric' && (
+            <>
+              <TextField label="x(t) =" value={String(props.x_expression ?? 'cos(t)')} mono onChange={v => setProp({ x_expression: v })} />
+              <TextField label="y(t) =" value={String(props.y_expression ?? 'sin(2*t)')} mono onChange={v => setProp({ y_expression: v })} />
+              <RangeField label="t range" value={(props.t_range as number[]) || [0, 6.2832, 0.05]} onChange={v => setProp({ t_range: v })} />
+            </>
+          )}
+
+          {subtype === 'implicit' && (
+            <>
+              <TextField label="F(x, y) = 0" value={String(props.expression ?? 'x**2 + y**2 - 4')} mono onChange={v => setProp({ expression: v })} />
+              <p className="panel-hint">Curve where the expression equals zero (no canvas preview).</p>
+            </>
+          )}
+
+          {subtype === 'vector_field' && (
+            <>
+              <TextField label="dx/dt (x, y) =" value={String(props.x_func ?? '-y')} mono onChange={v => setProp({ x_func: v })} />
+              <TextField label="dy/dt (x, y) =" value={String(props.y_func ?? 'x')} mono onChange={v => setProp({ y_func: v })} />
+              <RangeField label="X range" value={(props.x_range as number[]) || [-5, 5, 1]} onChange={v => setProp({ x_range: v })} />
+              <RangeField label="Y range" value={(props.y_range as number[]) || [-3, 3, 1]} onChange={v => setProp({ y_range: v })} />
+              <p className="panel-hint">Arrows are colored by magnitude automatically.</p>
+            </>
+          )}
+
+          {subtype !== 'vector_field' && (
+            <>
+              <ColorField label="Color" value={(obj.style.stroke_color as string) || '#58c4dd'} onChange={v => setStyle({ stroke_color: v })} />
+              <NumberField label="Stroke width" value={Number(obj.style.stroke_width ?? 4)} step={0.5} onChange={v => setStyle({ stroke_width: v })} />
+            </>
+          )}
+        </>
+      )}
+
+      {/* ---- Geometry (vector / angle / brace) ---- */}
+      {obj.type === 'geometry' && (
+        <>
+          {subtype === 'vector' && (
+            <>
+              <Vec2Field label="Direction" value={props.direction as Point2D} onChange={v => setProp({ direction: v })} />
+              <TextField label="Label (LaTeX)" value={String(props.label ?? '')} mono onChange={v => setProp({ label: v })} />
+            </>
+          )}
+          {subtype === 'angle' && (
+            <>
+              <ObjectPicker label="Line 1" scene={scene!} value={String(props.line1_id ?? '')} filter={o => o.type === 'shape'} exclude={obj.id} onChange={v => setProp({ line1_id: v })} />
+              <ObjectPicker label="Line 2" scene={scene!} value={String(props.line2_id ?? '')} filter={o => o.type === 'shape'} exclude={obj.id} onChange={v => setProp({ line2_id: v })} />
+              <NumberField label="Radius" value={Number(props.radius ?? 0.6)} step={0.1} onChange={v => setProp({ radius: v })} />
+            </>
+          )}
+          {subtype === 'brace' && (
+            <>
+              <ObjectPicker label="Target" scene={scene!} value={String(props.target_id ?? '')} filter={o => o.type !== 'geometry'} exclude={obj.id} onChange={v => setProp({ target_id: v })} />
+              <label className="field">
+                <span className="field__label">Direction</span>
+                <select className="field__input" value={String(props.direction_str ?? 'DOWN')} onChange={e => setProp({ direction_str: e.target.value })}>
+                  {['UP', 'DOWN', 'LEFT', 'RIGHT'].map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </label>
+              <TextField label="Label" value={String(props.label ?? '')} onChange={v => setProp({ label: v })} />
+            </>
+          )}
+          <ColorField label="Color" value={(obj.style.stroke_color as string) || '#ffffff'} onChange={v => setStyle({ stroke_color: v })} />
         </>
       )}
 
@@ -232,6 +308,56 @@ export function Inspector() {
 
       <button className="btn btn--danger-ghost inspector__delete" onClick={() => removeObject(obj.id)}>Delete object</button>
     </div>
+  );
+}
+
+// --- parameter sweep (ValueTracker) ---------------------------------------
+
+function SweepEditor({ props, setProp }: { props: Record<string, any>; setProp: (p: Record<string, any>) => void }) {
+  const sweep = (props.sweep as Record<string, any>) || {};
+  const set = (patch: Record<string, any>) => setProp({ sweep: { ...sweep, ...patch } });
+  const num = (k: string, v: number) => set({ [k]: v });
+  return (
+    <div className="field">
+      <label className="field field--check" style={{ marginBottom: sweep.enabled ? 6 : 0 }}>
+        <input type="checkbox" checked={!!sweep.enabled} onChange={e => set({ enabled: e.target.checked, param: sweep.param ?? 'a', from: sweep.from ?? 0, to: sweep.to ?? 6.2832, start_time: sweep.start_time ?? 0, duration: sweep.duration ?? 3 })} />
+        <span>Animate a parameter</span>
+      </label>
+      {sweep.enabled && (
+        <>
+          <p className="panel-hint" style={{ margin: '0 0 4px' }}>Use the parameter name in f(x), e.g. <code>sin(x + a)</code>.</p>
+          <div className="field-row">
+            <label className="field"><span className="field__label">Param</span>
+              <input className="field__input" style={{ fontFamily: 'ui-monospace, monospace' }} type="text" value={String(sweep.param ?? 'a')} onChange={e => set({ param: e.target.value })} /></label>
+            <label className="field"><span className="field__label">From</span>
+              <input className="field__input" type="number" step={0.1} value={Number(sweep.from ?? 0)} onChange={e => { const v = parseFloat(e.target.value); if (!Number.isNaN(v)) num('from', v); }} /></label>
+            <label className="field"><span className="field__label">To</span>
+              <input className="field__input" type="number" step={0.1} value={Number(sweep.to ?? 6.2832)} onChange={e => { const v = parseFloat(e.target.value); if (!Number.isNaN(v)) num('to', v); }} /></label>
+          </div>
+          <div className="field-row">
+            <label className="field"><span className="field__label">Start (s)</span>
+              <input className="field__input" type="number" step={0.1} value={Number(sweep.start_time ?? 0)} onChange={e => { const v = parseFloat(e.target.value); if (!Number.isNaN(v)) num('start_time', Math.max(0, v)); }} /></label>
+            <label className="field"><span className="field__label">Duration (s)</span>
+              <input className="field__input" type="number" step={0.1} value={Number(sweep.duration ?? 3)} onChange={e => { const v = parseFloat(e.target.value); if (!Number.isNaN(v)) num('duration', Math.max(0.1, v)); }} /></label>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ObjectPicker({ label, scene, value, filter, exclude, onChange }: {
+  label: string; scene: Scene; value: string; filter: (o: SceneObject) => boolean; exclude: string; onChange: (v: string) => void;
+}) {
+  const opts = scene.objects.filter(o => o.id !== exclude && filter(o));
+  return (
+    <label className="field">
+      <span className="field__label">{label}</span>
+      <select className="field__input" value={value} onChange={e => onChange(e.target.value)}>
+        <option value="">— pick —</option>
+        {opts.map(o => <option key={o.id} value={o.id}>{o.name || o.type}</option>)}
+      </select>
+    </label>
   );
 }
 

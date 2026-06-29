@@ -7,6 +7,7 @@ import {
   worldX, worldY,
 } from './coords';
 import { useProjectStore } from '../store/projectStore';
+import { objectBounds, braceLabelPoint, vectorLabelPoint } from './geometry';
 import type { SceneObject } from '../types/ir';
 
 interface Props {
@@ -93,6 +94,27 @@ export function LatexOverlay({ objects, view }: Props) {
   }, [view.scale, moveObject]);
 
   const latexObjects = objects.filter(o => (o.type === 'latex_text' || o.type === 'matrix') && o.visible);
+
+  // Geometry labels (vector / brace) are LaTeX, so they're rendered here by
+  // KaTeX rather than in Konva. Position matches the codegen anchor points.
+  const labelFontPx = 40 * MANIM_EM_UNITS_PER_PT * PX_PER_UNIT;
+  const geometryLabels = objects.flatMap(o => {
+    if (o.type !== 'geometry' || !o.visible) return [];
+    const p = o.props as any;
+    const text = String(p.label ?? '').trim();
+    if (!text) return [];
+    let pt: { x: number; y: number } | null = null;
+    // Vector labels are MathTex (italic); brace labels are Tex/text (upright).
+    let math = true;
+    if (p.subtype === 'vector') pt = vectorLabelPoint(o);
+    else if (p.subtype === 'brace') {
+      math = false;
+      const target = objects.find(t => t.id === p.target_id);
+      if (target) pt = braceLabelPoint(objectBounds(target), String(p.direction_str ?? 'DOWN'));
+    }
+    if (!pt) return [];
+    return [{ id: o.id, text, pt, math, color: (o.style.stroke_color as string) || '#ffffff' }];
+  });
 
   return (
     <div
@@ -212,6 +234,24 @@ export function LatexOverlay({ objects, view }: Props) {
             />
           );
         })}
+
+        {geometryLabels.map(l => (
+          <div
+            key={`lbl-${l.id}`}
+            style={{
+              position: 'absolute',
+              left: worldX(l.pt.x),
+              top: worldY(l.pt.y),
+              transform: 'translate(-50%, -50%)',
+              fontSize: `${labelFontPx}px`,
+              color: l.color,
+              pointerEvents: 'none',
+              userSelect: 'none',
+              whiteSpace: 'nowrap',
+            }}
+            dangerouslySetInnerHTML={{ __html: renderTex(l.math ? l.text : `\\text{${l.text}}`, false) }}
+          />
+        ))}
       </div>
     </div>
   );

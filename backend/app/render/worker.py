@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from app.codegen.scene import generate_scene_script
+from app.codegen.scene import generate_scene_script, generate_morph_preview_script
 from app.codegen.template import SCENE_CLASS_NAME
 from app.models.ir import RenderJob
 from app.render import queue as rq
@@ -65,7 +65,10 @@ async def _process(job: RenderJob) -> None:
         rq.update_job(job.job_id, status="error", message="Project has no scenes")
         return
 
-    script = generate_scene_script(project, scene)
+    if job.mode == "morph" and job.keyframe_id:
+        script = generate_morph_preview_script(project, scene, job.keyframe_id)
+    else:
+        script = generate_scene_script(project, scene)
 
     job_dir = renders_dir(job.project_id) / job.job_id
     job_dir.mkdir(parents=True, exist_ok=True)

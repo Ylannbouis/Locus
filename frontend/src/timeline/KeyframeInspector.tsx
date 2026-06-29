@@ -1,4 +1,5 @@
 import { useProjectStore } from '../store/projectStore';
+import { useRenderStore } from '../store/renderStore';
 import { useTimelineStore, VERB_META, TIMELINE_VERBS, EASING_OPTIONS, defaultParams } from './timelineStore';
 import type { AnimationVerb, EasingType, Point2D } from '../types/ir';
 
@@ -49,6 +50,52 @@ function Vec({ label, value, onChange }: { label: string; value: Point2D; onChan
         <input className="field__input" type="number" step={0.1} value={v.x} onChange={e => { const n = parseFloat(e.target.value); if (!Number.isNaN(n)) onChange({ x: n, y: v.y }); }} />
         <input className="field__input" type="number" step={0.1} value={v.y} onChange={e => { const n = parseFloat(e.target.value); if (!Number.isNaN(n)) onChange({ x: v.x, y: n }); }} />
       </div>
+    </div>
+  );
+}
+
+// key-map editor + "Preview Morph" 1-second test render
+function MorphTools({ keyMap, onChange, canPreview, keyframeId }: {
+  keyMap: Record<string, string>; onChange: (m: Record<string, string>) => void; canPreview: boolean; keyframeId: string;
+}) {
+  const project = useProjectStore(s => s.project);
+  const sceneId = useProjectStore(s => s.selectedSceneId);
+  const isDirty = useProjectStore(s => s.isDirty);
+  const save = useProjectStore(s => s.save);
+  const triggerMorphPreview = useRenderStore(s => s.triggerMorphPreview);
+  const isRendering = useRenderStore(s => s.isRendering);
+
+  const entries = Object.entries(keyMap);
+  const rebuild = (list: [string, string][]) => {
+    const o: Record<string, string> = {};
+    for (const [k, v] of list) if (k) o[k] = v;
+    onChange(o);
+  };
+
+  const preview = async () => {
+    if (!project || !sceneId) return;
+    if (isDirty) await save(); // ensure the backend has the latest key_map/targets
+    await triggerMorphPreview(project.id, sceneId, keyframeId);
+  };
+
+  return (
+    <div className="field">
+      <span className="field__label">Key map (match TeX substrings)</span>
+      {entries.map(([from, to], i) => (
+        <div className="field-row" key={i} style={{ marginBottom: 4 }}>
+          <input className="field__input" style={{ fontFamily: 'ui-monospace, monospace' }} type="text" placeholder="from" value={from}
+            onChange={e => { const l = [...entries] as [string, string][]; l[i] = [e.target.value, to]; rebuild(l); }} />
+          <span style={{ alignSelf: 'center' }}>→</span>
+          <input className="field__input" style={{ fontFamily: 'ui-monospace, monospace' }} type="text" placeholder="to" value={to}
+            onChange={e => { const l = [...entries] as [string, string][]; l[i] = [from, e.target.value]; rebuild(l); }} />
+          <button className="btn btn--ghost" onClick={() => rebuild(entries.filter((_, j) => j !== i) as [string, string][])}>✕</button>
+        </div>
+      ))}
+      <button className="btn" onClick={() => rebuild([...entries as [string, string][], ['', '']])}>+ pair</button>
+      <button className="btn btn--secondary" style={{ marginTop: 6 }} disabled={!canPreview || isRendering} onClick={preview}>
+        {isRendering ? 'Rendering…' : '▶ Preview Morph'}
+      </button>
+      <span className="panel-hint">Renders a 1-second test of just this morph (see the Render panel).</span>
     </div>
   );
 }
@@ -157,6 +204,15 @@ export function KeyframeInspector() {
           </select>
           {!params.target_object_id && <span className="kf-warn">Pick a target or this animation is skipped.</span>}
         </label>
+      )}
+
+      {verb === 'morph_equation' && (
+        <MorphTools
+          keyMap={(params.key_map as Record<string, string>) || {}}
+          onChange={m => setParam({ key_map: m })}
+          canPreview={!!params.target_object_id}
+          keyframeId={kf.id}
+        />
       )}
 
       <div className="field-row" style={{ marginTop: 6 }}>

@@ -24,11 +24,35 @@ POINT_SHAPES = {"line", "arrow", "double_arrow", "dashed_line", "polygon"}
 # Open shapes with no meaningful fill — color them with set_color so that e.g.
 # an Arrow's filled tip is recolored too (set_stroke alone leaves the tip white).
 LINE_LIKE = {"line", "arrow", "double_arrow", "dashed_line"}
+# Graph subtypes that are anchored to an Axes (need a valid axes_ref).
+AXES_BOUND_GRAPHS = {"function_plot", "parametric", "implicit"}
+
+_DIR_CONST = {
+    "UP": "UP", "DOWN": "DOWN", "LEFT": "LEFT", "RIGHT": "RIGHT",
+    "UL": "UL", "UR": "UR", "DL": "DL", "DR": "DR",
+}
 
 
 def var_name(obj_id: str) -> str:
     safe = re.sub(r"[^0-9a-zA-Z_]", "_", obj_id)
     return f"m_{safe}"
+
+
+def tracker_name(obj_id: str) -> str:
+    safe = re.sub(r"[^0-9a-zA-Z_]", "_", obj_id)
+    return f"t_{safe}"
+
+
+def _expr(raw: Any, default: str) -> str:
+    return raw if isinstance(raw, str) and raw.strip() else default
+
+
+def _sweep(obj: SceneObject) -> dict | None:
+    props = obj.props or {}
+    sw = props.get("sweep")
+    if isinstance(sw, dict) and sw.get("enabled"):
+        return sw
+    return None
 
 
 def _num(v: Any, default: float) -> float:
@@ -132,15 +156,51 @@ def _emit_construct(obj: SceneObject) -> str:
 
     if otype == "graph":
         subtype = props.get("subtype", "function_plot")
+        axes_ref = props.get("axes_ref")
+        axes_var = var_name(axes_ref) if axes_ref else "Axes()"
         if subtype == "function_plot":
-            axes_ref = props.get("axes_ref")
-            raw_expr = props.get("expression")
-            expr = raw_expr if isinstance(raw_expr, str) and raw_expr.strip() else "0"
+            expr = _expr(props.get("expression"), "0")
             xr = props.get("x_range")
-            axes_var = var_name(axes_ref) if axes_ref else "Axes()"
             xr_str = f", x_range={_range(xr, [-5, 5])}" if isinstance(xr, (list, tuple)) and len(xr) >= 2 else ""
             # expression is Python/numpy; sin/cos/etc are imported in the template.
             return f"{axes_var}.plot(lambda x: ({expr}){xr_str})"
+        if subtype == "parametric":
+            fx = _expr(props.get("x_expression"), "cos(t)")
+            fy = _expr(props.get("y_expression"), "sin(t)")
+            tr = _range(props.get("t_range"), [0, 6.2832, 0.05])
+            return f"{axes_var}.plot_parametric_curve(lambda t: np.array([({fx}), ({fy}), 0.0]), t_range={tr})"
+        if subtype == "implicit":
+            expr = _expr(props.get("expression"), "x**2 + y**2 - 4")
+            return f"{axes_var}.plot_implicit_curve(lambda x, y: ({expr}))"
+        if subtype == "vector_field":
+            xf = _expr(props.get("x_func"), "-y")
+            yf = _expr(props.get("y_func"), "x")
+            xr = _range(props.get("x_range"), [-5, 5, 1])
+            yr = _range(props.get("y_range"), [-3, 3, 1])
+            return ("ArrowVectorField(lambda p: np.array(["
+                    f"(lambda x, y: ({xf}))(p[0], p[1]), (lambda x, y: ({yf}))(p[0], p[1]), 0.0]), "
+                    f"x_range={xr}, y_range={yr})")
+
+    if otype == "geometry":
+        subtype = props.get("subtype", "vector")
+        label = props.get("label")
+        if subtype == "vector":
+            dx, dy = _point(props.get("direction"))
+            base = f"Vector(np.array([{dx}, {dy}, 0.0]))"
+            if isinstance(label, str) and label.strip():
+                return f"VGroup((_v := {base}), MathTex({label!r}).next_to(_v.get_end(), UR, buff=0.15))"
+            return base
+        if subtype == "angle":
+            l1 = var_name(props["line1_id"]) if props.get("line1_id") else "Line(LEFT, RIGHT)"
+            l2 = var_name(props["line2_id"]) if props.get("line2_id") else "Line(DOWN, UP)"
+            r = _num(props.get("radius"), 0.5)
+            return f"Angle({l1}, {l2}, radius={r})"
+        if subtype == "brace":
+            tgt = var_name(props["target_id"]) if props.get("target_id") else "Dot()"
+            direction = _DIR_CONST.get(str(props.get("direction_str", "DOWN")).upper(), "DOWN")
+            if isinstance(label, str) and label.strip():
+                return f"VGroup((_b := Brace({tgt}, direction={direction})), _b.get_text({label!r}))"
+            return f"Brace({tgt}, direction={direction})"
 
     if otype == "matrix":
         entries = props.get("entries") or [["a", "b"], ["c", "d"]]
@@ -175,11 +235,20 @@ def _emit_styling(var: str, obj: SceneObject) -> list[str]:
         return lines
 
     if otype in ("coordinate_system", "graph"):
+        # ArrowVectorField colors itself by vector magnitude; don't override it.
+        if otype == "graph" and (obj.props or {}).get("subtype") == "vector_field":
+            return lines
         color = sc or fc
         if color:
             lines.append(f"{var}.set_color({color!r})")
         if sw is not None:
             lines.append(f"{var}.set_stroke(width={float(sw)})")
+        return lines
+
+    if otype == "geometry":
+        color = sc or fc
+        if color:
+            lines.append(f"{var}.set_color({color!r})")
         return lines
 
     subtype = (obj.props or {}).get("subtype")
@@ -222,13 +291,52 @@ def _emit_styling(var: str, obj: SceneObject) -> list[str]:
 def emit_object(obj: SceneObject) -> tuple[str, list[str]]:
     var = var_name(obj.id)
     otype = _otype(obj)
-    subtype = (obj.props or {}).get("subtype")
+    props = obj.props or {}
+    subtype = props.get("subtype")
+
+    # A function plot with a parameter sweep becomes a ValueTracker + always_redraw
+    # so the curve re-draws as the parameter animates (the play is emitted by the
+    # scene builder). The swept parameter name is exposed as a variable in the
+    # plotting lambda, bound to the tracker's current value each frame.
+    sweep = _sweep(obj) if otype == "graph" and subtype == "function_plot" else None
+    if sweep:
+        axes_ref = props.get("axes_ref")
+        axes_var = var_name(axes_ref) if axes_ref else "Axes()"
+        param = re.sub(r"[^0-9a-zA-Z_]", "", str(sweep.get("param", "a"))) or "a"
+        expr = _expr(props.get("expression"), "0")
+        xr = props.get("x_range")
+        xr_str = f", x_range={_range(xr, [-5, 5])}" if isinstance(xr, (list, tuple)) and len(xr) >= 2 else ""
+        start_val = _num(sweep.get("from"), 0.0)
+        tvar = tracker_name(obj.id)
+        lines = [
+            f"{tvar} = ValueTracker({start_val})",
+            f"{var} = always_redraw(lambda: {axes_var}.plot("
+            f"lambda x, {param}={tvar}.get_value(): ({expr}){xr_str}))",
+        ]
+        lines.extend(_emit_styling(var, obj))
+        if obj.z_index:
+            lines.append(f"{var}.set_z_index({int(obj.z_index)})")
+        return var, lines
+
     lines: list[str] = [f"{var} = {_emit_construct(obj)}"]
     lines.extend(_emit_styling(var, obj))
+
+    # Axis labels on a coordinate system, added so they move with the axes.
+    if otype == "coordinate_system":
+        xl, yl = props.get("x_axis_label"), props.get("y_axis_label")
+        if (isinstance(xl, str) and xl.strip()) or (isinstance(yl, str) and yl.strip()):
+            xa = f"MathTex({xl!r})" if isinstance(xl, str) and xl.strip() else "MathTex('x')"
+            ya = f"MathTex({yl!r})" if isinstance(yl, str) and yl.strip() else "MathTex('y')"
+            lines.append(f"{var}.add({var}.get_axis_labels({xa}, {ya}))")
 
     x, y = _point(obj.position)
     if otype == "graph":
         pass  # follows its axes; no independent placement
+    elif otype == "geometry":
+        # Vector starts at the origin; shift it to its position. Angle/Brace are
+        # anchored to the objects they reference, so leave them where they land.
+        if subtype == "vector" and (abs(x) > 1e-9 or abs(y) > 1e-9):
+            lines.append(f"{var}.shift(np.array([{x}, {y}, 0.0]))")
     elif otype == "shape" and subtype in POINT_SHAPES:
         if abs(x) > 1e-9 or abs(y) > 1e-9:
             lines.append(f"{var}.shift(np.array([{x}, {y}, 0.0]))")

@@ -7,6 +7,7 @@ const TYPE_ICON: Record<string, string> = {
   shape: '▭',
   coordinate_system: '✛',
   graph: '∿',
+  geometry: '↗',
   group: '▦',
 };
 

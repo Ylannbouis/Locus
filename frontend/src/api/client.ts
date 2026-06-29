@@ -28,6 +28,9 @@ export const refreshDeps = (): Promise<DepsResult> =>
 export const startRender = (req: RenderRequest): Promise<{ job_id: string }> =>
   http.post('/api/render', req).then(r => r.data);
 
+export const startMorphPreview = (projectId: string, sceneId: string, keyframeId: string): Promise<{ job_id: string }> =>
+  http.post('/api/render/morph-preview', { project_id: projectId, scene_id: sceneId, keyframe_id: keyframeId }).then(r => r.data);
+
 export const getRenderStatus = (jobId: string): Promise<RenderJob> =>
   http.get(`/api/render/${jobId}`).then(r => r.data);
 

@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from app.models.ir import Project, Scene
 from app.codegen.animations import CREATION_VERBS, easing_func, emit_animation
-from app.codegen.objects import emit_object, var_name
+from app.codegen.objects import (
+    AXES_BOUND_GRAPHS, emit_object, tracker_name, var_name, _num, _sweep,
+)
 from app.codegen.template import render_script
 
 _INDENT = " " * 8
@@ -36,9 +38,16 @@ def _is_group(obj) -> bool:
     return _enum(obj.type) == "group"
 
 
+def _is_geometry(obj) -> bool:
+    return _enum(obj.type) == "geometry"
+
+
 def _emit_order(obj) -> int:
-    # others first, then graphs (need their axes), then groups (need their children)
+    # plain objects, then graphs (need axes), then geometry (may reference shapes/
+    # targets), then groups (need their children defined first).
     if _is_group(obj):
+        return 3
+    if _is_geometry(obj):
         return 2
     if _is_graph(obj):
         return 1
@@ -95,8 +104,19 @@ def build_body(scene: Scene) -> str:
         if not obj.visible:
             continue
         if _is_graph(obj):
-            axes_ref = (obj.props or {}).get("axes_ref")
-            if not axes_ref or axes_ref not in var_map:
+            # Only axes-bound graphs need a valid axes_ref; vector fields are
+            # standalone. Skip a graph whose axes was deleted/hidden.
+            if (obj.props or {}).get("subtype", "function_plot") in AXES_BOUND_GRAPHS:
+                axes_ref = (obj.props or {}).get("axes_ref")
+                if not axes_ref or axes_ref not in var_map:
+                    continue
+        if _is_geometry(obj):
+            # An Angle needs both its lines; a Brace needs its target.
+            p = obj.props or {}
+            st = p.get("subtype", "vector")
+            if st == "angle" and (p.get("line1_id") not in var_map or p.get("line2_id") not in var_map):
+                continue
+            if st == "brace" and p.get("target_id") not in var_map:
                 continue
         if _is_group(obj):
             child_vars = [var_map[o.id] for o in objects
@@ -175,6 +195,22 @@ def build_body(scene: Scene) -> str:
             "lag": lag_by_group.get(gid, 0.0),
         })
 
+    # 4b. Parameter sweeps: animate each swept plot's ValueTracker as its own
+    # timeline event (the always_redraw curve follows automatically).
+    for obj in objects:
+        if obj.id not in var_map:
+            continue
+        sw = _sweep(obj)
+        if not sw:
+            continue
+        events.append({
+            "start": max(0.0, _num(sw.get("start_time"), 0.0)),
+            "run_time": max(0.01, _num(sw.get("duration"), 3.0)),
+            "anims": [f"{tracker_name(obj.id)}.animate.set_value({_num(sw.get('to'), 1.0)})"],
+            "easing": easing_func(str(sw.get("easing", "linear"))),
+            "lag": 0.0,
+        })
+
     # 5. Emit waits + plays in time order.
     events.sort(key=lambda e: e["start"])
     current = 0.0
@@ -201,4 +237,38 @@ def build_body(scene: Scene) -> str:
 def generate_scene_script(project: Project, scene: Scene) -> str:
     bg = scene.background_color or project.settings.background_color or "#000000"
     body = build_body(scene)
+    return render_script(body=body, background_color=bg)
+
+
+def generate_morph_preview_script(project: Project, scene: Scene, keyframe_id: str) -> str:
+    """A minimal scene that just plays one morph_equation keyframe (src → dst),
+    for the 1-second 'Preview Morph' test render."""
+    bg = scene.background_color or project.settings.background_color or "#000000"
+    kf = next((k for k in scene.timeline.keyframes if k.id == keyframe_id), None)
+    if kf is None:
+        return render_script(body=_INDENT + "self.wait(0.2)", background_color=bg)
+
+    by_id = {o.id: o for o in scene.objects}
+    src = by_id.get(kf.object_id)
+    target_id = (kf.params or {}).get("target_object_id") or (kf.params or {}).get("target_tex_id")
+    dst = by_id.get(target_id) if target_id else None
+    if src is None or dst is None:
+        return render_script(body=_INDENT + "self.wait(0.2)", background_color=bg)
+
+    lines: list[str] = []
+    var_map: dict[str, str] = {}
+    for obj in (src, dst):
+        var, obj_lines = emit_object(obj)
+        var_map[obj.id] = var
+        lines.extend(obj_lines)
+    # Center both so the preview is framed regardless of their scene position.
+    lines.append(f"{var_map[src.id]}.move_to(ORIGIN)")
+    lines.append(f"{var_map[dst.id]}.move_to(ORIGIN)")
+    lines.append(f"self.add({var_map[src.id]})")
+    lines.append("self.wait(0.3)")
+    anim = emit_animation("morph_equation", var_map[src.id], kf.params, var_map)
+    if anim:
+        lines.append(f"self.play({anim}, run_time=1.0, rate_func={easing_func(_enum(kf.easing))})")
+    lines.append("self.wait(0.6)")
+    body = "\n".join(_INDENT + ln for ln in lines)
     return render_script(body=body, background_color=bg)

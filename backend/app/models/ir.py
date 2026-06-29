@@ -328,11 +328,19 @@ class RenderRequest(BaseModel):
     fps: Optional[int] = None
 
 
+class MorphPreviewRequest(BaseModel):
+    project_id: str
+    scene_id: str
+    keyframe_id: str
+
+
 class RenderJob(BaseModel):
     job_id: str
     project_id: str
     scene_id: Optional[str]
     quality: str
+    mode: str = "scene"  # "scene" | "morph"
+    keyframe_id: Optional[str] = None
     status: Literal["queued", "running", "done", "error"] = "queued"
     progress: int = 0
     message: str = ""
