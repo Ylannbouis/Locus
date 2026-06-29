@@ -3,7 +3,9 @@ import { CanvasStage } from '../canvas/CanvasStage';
 import { AddPanel } from './AddPanel';
 import { Outliner } from '../outliner/Outliner';
 import { Inspector } from '../inspector/Inspector';
-import { TimelineStrip } from '../timeline/TimelineStrip';
+import { Timeline } from '../timeline/Timeline';
+import { KeyframeInspector } from '../timeline/KeyframeInspector';
+import { useTimelineStore } from '../timeline/timelineStore';
 import { RenderPanel } from './RenderPanel';
 
 export function EditorShell() {
@@ -11,6 +13,7 @@ export function EditorShell() {
   const isDirty = useProjectStore(s => s.isDirty);
   const save = useProjectStore(s => s.save);
   const clearProject = useProjectStore(s => s.clearProject);
+  const hasKfSelected = useTimelineStore(s => s.selectedKfIds.length > 0);
 
   if (!project) return null;
 
@@ -37,14 +40,14 @@ export function EditorShell() {
         </main>
 
         <aside className="editor-shell__sidebar editor-shell__sidebar--right">
-          <Inspector />
+          {hasKfSelected ? <KeyframeInspector /> : <Inspector />}
           <div className="sidebar-divider" />
           <RenderPanel />
         </aside>
       </div>
 
       <footer className="editor-shell__timeline">
-        <TimelineStrip />
+        <Timeline />
       </footer>
     </div>
   );

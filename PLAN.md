@@ -52,16 +52,17 @@ put a fade and a write-on on a timeline → render an MP4 → download**. Everyt
 - Full categorized "Add object" panel replacing the simple palette.
 - **Checkpoint:** all non-math-specialty objects available. ✅ verified (codegen renders MP4; headless editor mounts + draws all types).
 
-### Phase 3 — Animation system + full timeline UI ⬜
-- Full keyframe timeline editor: per-object tracks, time ruler, draggable keyframe blocks (move start / resize duration), context menu.
-- Parallel groups → `AnimationGroup`; sequencing with delays.
-- Remaining verbs: Rotate, Scale, Move, DrawBorderThenFill, Indicate, Circumscribe, Flash, Transform/ReplacementTransform.
-- Per-keyframe easing selection (with curve preview).
-- Relative positioning (`next_to`, `align_to`) UI + codegen; canvas guides.
-- Object grouping/nesting → `VGroup`.
-- Multi-select, copy/paste/duplicate (Ctrl+C/V/D).
-- Final-quality render trigger (`-qh`).
-- **Checkpoint:** full animation authoring UX.
+### Phase 3 — Animation system + full timeline UI ✅
+- Full keyframe timeline editor: per-object tracks, time ruler with zoom, draggable keyframe blocks (move start / resize duration via right-edge handle), right-click context menu (change verb / duplicate / delete).
+- Parallel groups → `AnimationGroup(lag_ratio=…)`; ungrouped keyframes sequence by start_time with `self.wait()` gaps.
+- Remaining verbs: Rotate, Scale, Move, FadeOut, DrawBorderThenFill, Indicate, Circumscribe, Flash, Transform/ReplacementTransform (with params: factor / angle / target point / colors / transform target).
+- Per-keyframe easing selection with SVG curve preview (KeyframeInspector).
+- Relative positioning (`next_to` / `align_to` / `center_on` / `move_to_point`) UI in the Inspector + codegen (emitted after object construction).
+- Object grouping/nesting → `VGroup` (Outliner Group/Ungroup, Ctrl+G; nested children; child add/creation handled via the group).
+- Multi-select (shift-click + rubber-band on canvas), group drag-move, copy/paste/duplicate (Ctrl+C/V/D), delete (Del).
+- Final-quality render trigger (`-qh`, 1080p) with a confirm warning, alongside the 480p preview.
+- **Checkpoint:** full animation authoring UX. ✅ verified — codegen for all verbs/groups/relationships compiles and a multi-verb parallel-group scene renders to MP4 ("Played 7 animations").
+- Deferred to Phase 5 as planned: the dedicated **camera track** + `camera_move` (MovingCameraScene) codegen.
 
 ### Phase 4 — Math-specific features ⬜
 - Parametric curves; implicit plots (needs `sympy`); vector fields.

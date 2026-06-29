@@ -15,7 +15,7 @@ function hexToRgba(hex: string | null | undefined, alpha: number): string {
 interface Props {
   objects: SceneObject[];
   selectedIds: string[];
-  onSelect: (id: string) => void;
+  onSelect: (id: string, additive: boolean) => void;
   onCommitDrag: (o: SceneObject, node: Konva.Node) => void;
 }
 
@@ -118,8 +118,8 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag }: Pro
     const drag = {
       draggable: true,
       onMouseDown: (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; },
-      onClick: (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id); },
-      onDragStart: () => onSelect(o.id),
+      onClick: (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey); },
+      onDragStart: (e: Konva.KonvaEventObject<DragEvent>) => { if (!isSel) onSelect(o.id, false); void e; },
       onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => onCommitDrag(o, e.target),
     };
     const common = { key: o.id, ...pos, ...drag, ...sel };
@@ -166,7 +166,7 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag }: Pro
         <Line key={o.id} points={pts} stroke={stroke} strokeWidth={strokeWidth} lineJoin="round" lineCap="round"
           {...sel}
           onMouseDown={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }}
-          onClick={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id); }} />
+          onClick={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey); }} />
       );
     }
     return null;

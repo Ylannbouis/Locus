@@ -1,5 +1,6 @@
 import { useProjectStore } from '../store/projectStore';
-import type { SceneObject, Point2D } from '../types/ir';
+import { newId } from '../store/objectFactory';
+import type { SceneObject, Point2D, Scene, Relationship, RelationshipType } from '../types/ir';
 
 function NumberField({ label, value, step = 0.1, onChange }: {
   label: string; value: number; step?: number; onChange: (v: number) => void;
@@ -226,7 +227,76 @@ export function Inspector() {
         </>
       )}
 
+      <div className="sidebar-divider" />
+      <RelationshipEditor objId={obj.id} scene={scene!} />
+
       <button className="btn btn--danger-ghost inspector__delete" onClick={() => removeObject(obj.id)}>Delete object</button>
+    </div>
+  );
+}
+
+// --- relative positioning --------------------------------------------------
+
+const REL_TYPES: { value: RelationshipType; label: string }[] = [
+  { value: 'next_to', label: 'Next to' },
+  { value: 'align_to', label: 'Align to' },
+  { value: 'center_on', label: 'Center on' },
+  { value: 'move_to_point', label: 'Move to point' },
+];
+const DIRECTIONS = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'UL', 'UR', 'DL', 'DR'];
+
+function RelationshipEditor({ objId, scene }: { objId: string; scene: Scene }) {
+  const addRelationship = useProjectStore(s => s.addRelationship);
+  const updateRelationship = useProjectStore(s => s.updateRelationship);
+  const removeRelationship = useProjectStore(s => s.removeRelationship);
+
+  const rels = scene.relationships.filter(r => r.subject_id === objId);
+  const others = scene.objects.filter(o => o.id !== objId);
+
+  const add = () => {
+    const rel: Relationship = {
+      id: newId('rel'), type: 'next_to', subject_id: objId,
+      anchor_id: others[0]?.id ?? '', direction: 'RIGHT', buff: 0.5, target_point: null,
+    };
+    addRelationship(rel);
+  };
+
+  return (
+    <div className="field">
+      <span className="field__label">Relative positioning</span>
+      {rels.length === 0 && <p className="panel-hint" style={{ margin: '2px 0' }}>None. Position is absolute.</p>}
+      {rels.map(r => (
+        <div key={r.id} className="rel-row">
+          <select className="field__input" value={r.type} onChange={e => updateRelationship(r.id, { type: e.target.value as RelationshipType })}>
+            {REL_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+          {r.type !== 'move_to_point' && (
+            <select className="field__input" value={r.anchor_id} onChange={e => updateRelationship(r.id, { anchor_id: e.target.value })}>
+              <option value="">— anchor —</option>
+              {others.map(o => <option key={o.id} value={o.id}>{o.name || o.type}</option>)}
+            </select>
+          )}
+          {(r.type === 'next_to' || r.type === 'align_to') && (
+            <select className="field__input" value={r.direction} onChange={e => updateRelationship(r.id, { direction: e.target.value })}>
+              {DIRECTIONS.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          )}
+          {r.type === 'next_to' && (
+            <input className="field__input" type="number" step={0.1} value={r.buff}
+              title="buffer" onChange={e => { const v = parseFloat(e.target.value); if (!Number.isNaN(v)) updateRelationship(r.id, { buff: v }); }} />
+          )}
+          {r.type === 'move_to_point' && (
+            <div className="field-row" style={{ flex: 1 }}>
+              <input className="field__input" type="number" step={0.1} value={r.target_point?.x ?? 0}
+                onChange={e => { const v = parseFloat(e.target.value); if (!Number.isNaN(v)) updateRelationship(r.id, { target_point: { x: v, y: r.target_point?.y ?? 0 } }); }} />
+              <input className="field__input" type="number" step={0.1} value={r.target_point?.y ?? 0}
+                onChange={e => { const v = parseFloat(e.target.value); if (!Number.isNaN(v)) updateRelationship(r.id, { target_point: { x: r.target_point?.x ?? 0, y: v } }); }} />
+            </div>
+          )}
+          <button className="btn btn--ghost" title="Remove" onClick={() => removeRelationship(r.id)}>✕</button>
+        </div>
+      ))}
+      <button className="btn" disabled={others.length === 0} onClick={add} style={{ marginTop: 4 }}>+ relationship</button>
     </div>
   );
 }

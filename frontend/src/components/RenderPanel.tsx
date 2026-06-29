@@ -8,8 +8,13 @@ export function RenderPanel() {
 
   if (!project) return null;
 
-  const handleRender = async () => {
+  const handlePreview = async () => {
     await triggerRender(project.id, selectedSceneId, 'preview');
+  };
+
+  const handleFinal = async () => {
+    if (!window.confirm('High-quality render (1080p) can take several minutes for a long scene. Continue?')) return;
+    await triggerRender(project.id, selectedSceneId, 'final');
   };
 
   return (
@@ -18,11 +23,22 @@ export function RenderPanel() {
 
       <button
         className="btn btn--primary render-panel__trigger"
-        onClick={handleRender}
+        onClick={handlePreview}
         disabled={isRendering}
       >
-        {isRendering ? 'Rendering…' : 'Preview Render'}
+        {isRendering ? 'Rendering…' : 'Preview Render (480p)'}
       </button>
+      <button
+        className="btn btn--secondary render-panel__trigger"
+        onClick={handleFinal}
+        disabled={isRendering}
+        title="1080p — slower"
+      >
+        Final Render (1080p)
+      </button>
+      {job?.quality === 'final' && isRendering && (
+        <p className="render-panel__message">High quality — this may take a while.</p>
+      )}
 
       {job && (
         <div className="render-panel__status">

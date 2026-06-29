@@ -223,7 +223,7 @@ body {
 }
 
 .editor-shell__timeline {
-  height: 160px;
+  height: 220px;
   flex-shrink: 0;
   background: var(--surface);
   border-top: 1px solid var(--border);
@@ -398,3 +398,84 @@ body {
 .field--check input { width: auto; }
 .matrix-grid { display: grid; gap: 4px; }
 .matrix-grid .field__input { text-align: center; padding: 4px 2px; }
+
+/* ---------------------------------------------------------------------------
+   Relationships (Align panel)
+--------------------------------------------------------------------------- */
+.rel-row { display: flex; gap: 4px; align-items: center; margin-bottom: 4px; }
+.rel-row .field__input { padding: 3px 4px; font-size: 11px; }
+.rel-row .btn { padding: 2px 6px; }
+
+/* ---------------------------------------------------------------------------
+   Outliner head
+--------------------------------------------------------------------------- */
+.outliner__head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.outliner__group-btn { font-size: 11px; padding: 2px 8px; }
+
+/* ---------------------------------------------------------------------------
+   Full timeline editor
+--------------------------------------------------------------------------- */
+.tl { display: flex; flex-direction: column; height: 100%; gap: 6px; }
+.tl__bar { display: flex; align-items: center; gap: 8px; }
+.tl__bar .btn { padding: 3px 10px; font-size: 12px; }
+.tl__zoom { font-weight: 700; padding: 3px 9px; }
+.tl__hint { font-size: 11px; color: var(--text-dim); margin-left: auto; }
+
+/* Single scroll container; the corner, ruler and label column are kept in view
+   with position: sticky so everything stays aligned no matter how far you scroll. */
+.tl__scroll { flex: 1; overflow: auto; position: relative; border: 1px solid var(--border); border-radius: 6px; }
+.tl__grid { display: grid; }
+.tl__corner {
+  position: sticky; left: 0; top: 0; z-index: 4;
+  background: var(--surface2); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
+.tl__ruler {
+  position: sticky; top: 0; z-index: 3;
+  border-bottom: 1px solid var(--border); background: var(--surface2);
+}
+.tl__tick { position: absolute; top: 0; height: 100%; border-left: 1px solid var(--border); }
+.tl__tick-label { font-size: 10px; color: var(--text-dim); padding-left: 3px; }
+
+.tl__label {
+  position: sticky; left: 0; z-index: 2;
+  display: flex; align-items: center; font-size: 12px; color: var(--text);
+  background: var(--surface2); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
+}
+.tl__label:hover { background: var(--bg3); }
+.tl__label--sel { background: var(--bg3); color: var(--accent); font-weight: 600; }
+
+.tl__lane { position: relative; border-bottom: 1px solid var(--border); background: var(--surface); }
+.tl__kf {
+  position: absolute; top: 4px; height: calc(100% - 8px); border-radius: 4px;
+  color: #fff; font-size: 10px; cursor: grab; display: flex; align-items: center;
+  overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,0.2); user-select: none;
+  border: 1px solid rgba(255,255,255,0.25);
+}
+.tl__kf:active { cursor: grabbing; }
+.tl__kf--sel { outline: 2px solid #1e293b; outline-offset: 1px; z-index: 1; }
+.tl__kf--grouped { border-style: dashed; border-color: #fff; }
+.tl__kf-label { padding: 0 6px; pointer-events: none; white-space: nowrap; }
+.tl__kf-handle { position: absolute; right: 0; top: 0; width: 7px; height: 100%; cursor: ew-resize; background: rgba(255,255,255,0.25); }
+
+.tl__menu {
+  position: fixed; z-index: 100; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,0.18); padding: 6px; min-width: 180px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.tl__menu-head { font-size: 10px; text-transform: uppercase; color: var(--text-dim); padding: 2px 6px; }
+.tl__menu-verbs { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+.tl__menu-verb { font-size: 11px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface2); cursor: pointer; text-align: left; }
+.tl__menu-verb:hover { background: var(--bg3); }
+.tl__menu-verb.is-active { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.tl__menu-sep { height: 1px; background: var(--border); margin: 4px 0; }
+.tl__menu-item { font-size: 12px; padding: 5px 8px; border: none; background: transparent; cursor: pointer; text-align: left; border-radius: 5px; }
+.tl__menu-item:hover { background: var(--surface2); }
+.tl__menu-item--danger { color: var(--danger); }
+
+/* ---------------------------------------------------------------------------
+   Keyframe inspector
+--------------------------------------------------------------------------- */
+.kf-inspector { display: flex; flex-direction: column; gap: 10px; }
+.kf-ease-preview { border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); align-self: stretch; }
+.kf-warn { font-size: 11px; color: var(--warn); }

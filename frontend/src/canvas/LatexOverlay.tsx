@@ -51,6 +51,7 @@ function texFor(o: SceneObject): string {
 export function LatexOverlay({ objects, view }: Props) {
   const selectedIds = useProjectStore(s => s.selectedObjectIds);
   const selectObject = useProjectStore(s => s.selectObject);
+  const toggleSelect = useProjectStore(s => s.toggleSelect);
   const moveObject = useProjectStore(s => s.moveObject);
 
   // Local drag state so we commit a single history entry on pointer-up.
@@ -69,7 +70,15 @@ export function LatexOverlay({ objects, view }: Props) {
       const d = dragRef.current;
       if (d) {
         setDrag(cur => {
-          if (cur && cur.id === d.id) moveObject(d.id, cur.x, cur.y);
+          if (cur && cur.id === d.id) {
+            const st = useProjectStore.getState();
+            const sel = st.selectedObjectIds;
+            if (sel.length > 1 && sel.includes(d.id)) {
+              st.moveObjectsBy(sel, cur.x - d.startX, cur.y - d.startY);
+            } else {
+              st.moveObject(d.id, cur.x, cur.y);
+            }
+          }
           return null;
         });
         dragRef.current = null;
@@ -124,7 +133,8 @@ export function LatexOverlay({ objects, view }: Props) {
 
           const onDown = (e: React.PointerEvent) => {
             e.stopPropagation();
-            selectObject(o.id);
+            if (e.shiftKey) toggleSelect(o.id);
+            else if (!selectedIds.includes(o.id)) selectObject(o.id);
             dragRef.current = { id: o.id, startSX: e.clientX, startSY: e.clientY, startX: o.position.x, startY: o.position.y };
           };
 

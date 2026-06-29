@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import subprocess
 import sys
 
 # In-memory cache for the process lifetime. Cleared on server restart so a
@@ -21,25 +22,27 @@ class DepStatus:
         return {"ok": self.ok, "version": self.version, "error": self.error}
 
 
-async def _check_subprocess(args: list[str]) -> DepStatus:
+def _run_check(args: list[str]) -> DepStatus:
+    # Plain blocking subprocess (run off-thread by the caller). Avoids
+    # asyncio.create_subprocess_exec, which raises NotImplementedError on the
+    # Windows SelectorEventLoop that uvicorn uses under --reload.
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
-        text = (stdout or stderr).decode(errors="replace").splitlines()
+        proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        text = (proc.stdout or proc.stderr).decode(errors="replace").splitlines()
         version = text[0].strip() if text else ""
         if proc.returncode == 0:
             return DepStatus(ok=True, version=version)
-        return DepStatus(ok=False, error=version)
+        return DepStatus(ok=False, error=version or f"exited with code {proc.returncode}")
     except FileNotFoundError:
         return DepStatus(ok=False, error="Not found in PATH")
-    except asyncio.TimeoutError:
+    except subprocess.TimeoutExpired:
         return DepStatus(ok=False, error="Check timed out")
     except Exception as exc:
-        return DepStatus(ok=False, error=str(exc))
+        return DepStatus(ok=False, error=str(exc) or type(exc).__name__)
+
+
+async def _check_subprocess(args: list[str]) -> DepStatus:
+    return await asyncio.to_thread(_run_check, args)
 
 
 def _check_python_import(module: str) -> DepStatus:

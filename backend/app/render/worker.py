@@ -6,6 +6,7 @@ python) as a module, so it works without the venv being on PATH.
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
 from pathlib import Path
 
@@ -81,32 +82,29 @@ async def _process(job: RenderJob) -> None:
     ]
 
     rq.update_job(job.job_id, progress=10, message="Launching Manim…")
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        cwd=str(job_dir),
-    )
+
+    # Run Manim in a worker thread with a plain blocking subprocess. asyncio's
+    # create_subprocess_exec is unavailable on the Windows SelectorEventLoop that
+    # uvicorn uses under --reload, so we avoid it entirely.
+    def _run() -> tuple[int, list[str]]:
+        proc = subprocess.run(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            cwd=str(job_dir), timeout=1800,
+        )
+        lines = [ln for ln in proc.stdout.decode(errors="replace").splitlines() if ln.strip()]
+        return proc.returncode, lines[-40:]
 
     ticker = asyncio.create_task(_progress_ticker(job.job_id))
-    tail: list[str] = []
     try:
-        assert proc.stdout is not None
-        while True:
-            raw = await proc.stdout.readline()
-            if not raw:
-                break
-            text = raw.decode(errors="replace").rstrip()
-            if not text:
-                continue
-            tail.append(text)
-            tail[:] = tail[-40:]
-            rq.update_job(job.job_id, message=text[-180:])
-        await proc.wait()
+        returncode, tail = await asyncio.to_thread(_run)
+    except subprocess.TimeoutExpired:
+        ticker.cancel()
+        rq.update_job(job.job_id, status="error", message="Manim render timed out (30 min)")
+        return
     finally:
         ticker.cancel()
 
-    if proc.returncode != 0:
+    if returncode != 0:
         detail = " | ".join(tail[-6:]) or "unknown error"
         rq.update_job(job.job_id, status="error", message=f"Manim failed: {detail}")
         return
