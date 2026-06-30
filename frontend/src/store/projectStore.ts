@@ -264,6 +264,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const idSet = new Set(ids);
       // Align grouped keyframes to a common start so they truly play in parallel.
       const members = scene.timeline.keyframes.filter(k => idSet.has(k.id));
+      if (!members.length) return;
       const start = Math.min(...members.map(k => k.start_time));
       members.forEach(k => { k.group_id = gid; k.start_time = start; });
       const group: AnimationGroup = { id: gid, type: 'parallel', label: '', lag_ratio: 0 };

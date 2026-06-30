@@ -146,13 +146,33 @@ def build_body(scene: Scene) -> str:
 
     # 3. Pre-add objects that are not animated in by a creation verb.
     # Children of a group are represented by their VGroup (added/created via the
-    # group), so don't add them individually.
+    # group), so don't add them individually — unless the group itself has a child
+    # with a creation verb (in which case the group must not be pre-added).
+    groups_with_creation = {
+        obj.id for obj in objects if _is_group(obj)
+        and any(o.parent_id == obj.id and o.id in created_ids for o in objects)
+    }
     pre_added = [obj for obj in objects if obj.id in var_map
                  and obj.id not in created_ids and obj.id not in transform_targets
-                 and obj.parent_id is None]
+                 and obj.parent_id is None
+                 and not (_is_group(obj) and obj.id in groups_with_creation)]
     if pre_added:
         lines.append("# objects present from the first frame")
         for obj in pre_added:
+            lines.append(f"self.add({var_map[obj.id]})")
+        lines.append("")
+
+    # Non-creation children of groups that were skipped above need to be visible
+    # from the first frame even though their parent group is not pre-added.
+    early_children = [
+        obj for obj in objects
+        if obj.parent_id in groups_with_creation and obj.id in var_map
+        and obj.id not in created_ids and obj.id not in transform_targets
+    ]
+    if early_children:
+        if not pre_added:
+            lines.append("# objects present from the first frame")
+        for obj in early_children:
             lines.append(f"self.add({var_map[obj.id]})")
         lines.append("")
 

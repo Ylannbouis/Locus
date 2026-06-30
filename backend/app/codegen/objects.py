@@ -157,7 +157,9 @@ def _emit_construct(obj: SceneObject) -> str:
     if otype == "graph":
         subtype = props.get("subtype", "function_plot")
         axes_ref = props.get("axes_ref")
-        axes_var = var_name(axes_ref) if axes_ref else "Axes()"
+        if subtype in AXES_BOUND_GRAPHS and not axes_ref:
+            raise ValueError(f"Graph ({subtype}) requires axes_ref")
+        axes_var = var_name(axes_ref) if axes_ref else ""
         if subtype == "function_plot":
             expr = _expr(props.get("expression"), "0")
             xr = props.get("x_range")
@@ -301,8 +303,12 @@ def emit_object(obj: SceneObject) -> tuple[str, list[str]]:
     sweep = _sweep(obj) if otype == "graph" and subtype == "function_plot" else None
     if sweep:
         axes_ref = props.get("axes_ref")
-        axes_var = var_name(axes_ref) if axes_ref else "Axes()"
+        if not axes_ref:
+            raise ValueError("Swept function plot requires axes_ref")
+        axes_var = var_name(axes_ref)
         param = re.sub(r"[^0-9a-zA-Z_]", "", str(sweep.get("param", "a"))) or "a"
+        if param == "x":
+            raise ValueError("Sweep parameter cannot be named 'x' (conflicts with the plot variable)")
         expr = _expr(props.get("expression"), "0")
         xr = props.get("x_range")
         xr_str = f", x_range={_range(xr, [-5, 5])}" if isinstance(xr, (list, tuple)) and len(xr) >= 2 else ""
@@ -331,7 +337,9 @@ def emit_object(obj: SceneObject) -> tuple[str, list[str]]:
 
     x, y = _point(obj.position)
     if otype == "graph":
-        pass  # follows its axes; no independent placement
+        if subtype == "vector_field" and (abs(x) > 1e-9 or abs(y) > 1e-9):
+            lines.append(f"{var}.shift(np.array([{x}, {y}, 0.0]))")
+        # other graph types follow their axes; no independent placement
     elif otype == "geometry":
         # Vector starts at the origin; shift it to its position. Angle/Brace are
         # anchored to the objects they reference, so leave them where they land.

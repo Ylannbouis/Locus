@@ -4,16 +4,24 @@ import { useRenderStore } from '../store/renderStore';
 export function RenderPanel() {
   const project = useProjectStore(s => s.project);
   const selectedSceneId = useProjectStore(s => s.selectedSceneId);
+  const isDirty = useProjectStore(s => s.isDirty);
+  const save = useProjectStore(s => s.save);
   const { job, videoUrl, isRendering, triggerRender, reset } = useRenderStore();
 
   if (!project) return null;
 
+  const ensureSaved = async () => {
+    if (isDirty) await save();
+  };
+
   const handlePreview = async () => {
+    await ensureSaved();
     await triggerRender(project.id, selectedSceneId, 'preview');
   };
 
   const handleFinal = async () => {
     if (!window.confirm('High-quality render (1080p) can take several minutes for a long scene. Continue?')) return;
+    await ensureSaved();
     await triggerRender(project.id, selectedSceneId, 'final');
   };
 

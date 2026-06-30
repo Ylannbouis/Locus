@@ -162,9 +162,12 @@ async def download_render(job_id: str) -> FileResponse:
 async def ws_render(websocket: WebSocket, job_id: str) -> None:
     await websocket.accept()
     job = rq.get_job(job_id)
-    if job:
-        await websocket.send_json(job.model_dump())
-    if job and job.status in ("done", "error"):
+    if not job:
+        await websocket.send_json({"status": "error", "message": "Job not found", "job_id": job_id})
+        await websocket.close()
+        return
+    await websocket.send_json(job.model_dump())
+    if job.status in ("done", "error"):
         await websocket.close()
         return
 

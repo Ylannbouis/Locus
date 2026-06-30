@@ -56,14 +56,29 @@ async def _process(job: RenderJob) -> None:
     rq.update_job(job.job_id, status="running", progress=5, message="Preparing scene…")
 
     project = load_project(job.project_id)
+    if not project.scenes:
+        rq.update_job(job.job_id, status="error", message="Project has no scenes")
+        return
+
     scene = None
     if job.scene_id:
         scene = next((s for s in project.scenes if s.id == job.scene_id), None)
-    if scene is None:
-        scene = project.scenes[0] if project.scenes else None
-    if scene is None:
-        rq.update_job(job.job_id, status="error", message="Project has no scenes")
-        return
+        if scene is None:
+            rq.update_job(
+                job.job_id,
+                status="error",
+                message=f"Scene not found: {job.scene_id}",
+            )
+            return
+    else:
+        if len(project.scenes) > 1:
+            rq.update_job(
+                job.job_id,
+                status="error",
+                message="scene_id is required when the project has multiple scenes",
+            )
+            return
+        scene = project.scenes[0]
 
     if job.mode == "morph" and job.keyframe_id:
         script = generate_morph_preview_script(project, scene, job.keyframe_id)
