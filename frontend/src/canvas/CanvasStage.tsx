@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Stage, Layer, Rect } from 'react-konva';
 import type Konva from 'konva';
 import { useProjectStore } from '../store/projectStore';
+import { useTimelineStore, CAMERA_ID } from '../timeline/timelineStore';
 import type { SceneObject } from '../types/ir';
 import { LatexOverlay } from './LatexOverlay';
 import { SceneNodes } from './SceneNodes';
@@ -9,6 +10,8 @@ import {
   PX_PER_UNIT, FRAME_WIDTH, FRAME_HEIGHT,
   MIN_SCALE, MAX_SCALE, manimX, manimY, worldX, worldY, type View,
 } from './coords';
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export function CanvasStage() {
   const project = useProjectStore(s => s.project);
@@ -18,6 +21,9 @@ export function CanvasStage() {
   const toggleSelect = useProjectStore(s => s.toggleSelect);
   const moveObject = useProjectStore(s => s.moveObject);
   const moveObjectsBy = useProjectStore(s => s.moveObjectsBy);
+  const updateKeyframe = useProjectStore(s => s.updateKeyframe);
+  const updateCameraTrack = useProjectStore(s => s.updateCameraTrack);
+  const selectedKfIds = useTimelineStore(s => s.selectedKfIds);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -32,6 +38,43 @@ export function CanvasStage() {
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
   const objects = scene?.objects ?? [];
   const bgColor = scene?.background_color || project?.settings.background_color || '#000000';
+
+  // ---- Camera viewport overlay -------------------------------------------
+  // Shows the framing of the selected camera keyframe, or the scene's initial
+  // camera framing when its pan/zoom is non-default. Dragging the rectangle
+  // sets the pan target; zoom + reset live in the floating HUD.
+  const camKf = scene?.timeline.keyframes.find(k => k.object_id === CAMERA_ID && selectedKfIds.includes(k.id));
+  const camParams = (camKf?.params ?? {}) as { pan?: { x: number; y: number }; zoom?: number; focus_object_id?: string };
+  const camTrack = scene?.camera_track;
+  const trackActive = !!camTrack && (Math.abs(camTrack.initial_pan?.x ?? 0) > 1e-6
+    || Math.abs(camTrack.initial_pan?.y ?? 0) > 1e-6 || Math.abs((camTrack.initial_zoom ?? 1) - 1) > 1e-6);
+  // Visible once the camera is in use (any camera keyframe) or the initial
+  // framing is non-default; with no camera keyframe selected it edits the
+  // scene's initial framing, otherwise the selected keyframe's framing.
+  const hasCameraKf = !!scene?.timeline.keyframes.some(k => k.object_id === CAMERA_ID);
+  const showCamera = !!camKf || trackActive || hasCameraKf;
+  const focusObj = camKf && camParams.focus_object_id ? objects.find(o => o.id === camParams.focus_object_id) : undefined;
+  const camZoom = camKf ? Number(camParams.zoom ?? 1) : (camTrack?.initial_zoom ?? 1);
+  const camCenter = camKf
+    ? (focusObj ? focusObj.position : (camParams.pan ?? { x: 0, y: 0 }))
+    : (camTrack?.initial_pan ?? { x: 0, y: 0 });
+  const camDraggable = showCamera && !focusObj;
+  const camHalfWpx = (FRAME_WIDTH / Math.max(0.1, camZoom) / 2) * PX_PER_UNIT;
+  const camHalfHpx = (FRAME_HEIGHT / Math.max(0.1, camZoom) / 2) * PX_PER_UNIT;
+
+  const commitCameraPan = (cx: number, cy: number) => {
+    if (camKf) updateKeyframe(camKf.id, { params: { ...camParams, pan: { x: round2(cx), y: round2(cy) }, focus_object_id: undefined } });
+    else updateCameraTrack({ initial_pan: { x: round2(cx), y: round2(cy) } });
+  };
+  const setCamZoom = (z: number) => {
+    const zoom = Math.max(0.1, z);
+    if (camKf) updateKeyframe(camKf.id, { params: { ...camParams, zoom } });
+    else updateCameraTrack({ initial_zoom: zoom });
+  };
+  const resetCamera = () => {
+    if (camKf) updateKeyframe(camKf.id, { params: { pan: { x: 0, y: 0 }, zoom: 1 } });
+    else updateCameraTrack({ initial_pan: { x: 0, y: 0 }, initial_zoom: 1 });
+  };
 
   useEffect(() => {
     const el = containerRef.current;
@@ -172,8 +215,39 @@ export function CanvasStage() {
             onSelect={handleSelect}
             onCommitDrag={commitDrag}
           />
+          {showCamera && (
+            <Rect
+              x={worldX(camCenter.x) - camHalfWpx}
+              y={worldY(camCenter.y) - camHalfHpx}
+              width={camHalfWpx * 2}
+              height={camHalfHpx * 2}
+              fillEnabled={false}
+              stroke="#0891b2"
+              strokeWidth={2}
+              dash={[10, 6]}
+              draggable={camDraggable}
+              listening={camDraggable}
+              hitStrokeWidth={20}
+              onDragEnd={e => commitCameraPan(manimX(e.target.x() + camHalfWpx), manimY(e.target.y() + camHalfHpx))}
+            />
+          )}
         </Layer>
       </Stage>
+
+      {showCamera && (
+        <div className="camera-hud">
+          <span className="camera-hud__title">📷 {camKf ? `Camera @ ${camKf.start_time.toFixed(1)}s` : 'Initial camera'}</span>
+          <label className="camera-hud__zoom">
+            Zoom
+            <input type="number" step={0.1} min={0.1} value={camZoom}
+              onChange={e => { const v = parseFloat(e.target.value); if (!Number.isNaN(v)) setCamZoom(v); }} />
+          </label>
+          {focusObj
+            ? <span className="camera-hud__hint">tracking {focusObj.name || focusObj.type}</span>
+            : <span className="camera-hud__hint">drag the frame to pan</span>}
+          <button className="btn btn--ghost" onClick={resetCamera}>Reset</button>
+        </div>
+      )}
 
       <LatexOverlay objects={objects} view={view} />
 

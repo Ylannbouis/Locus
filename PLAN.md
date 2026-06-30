@@ -71,11 +71,11 @@ put a fade and a write-on on a timeline → render an MP4 → download**. Everyt
 - Geometry primitives: Vector (labeled, draggable preview), Angle (references two lines), Brace (references a target, labeled); axis labels (`get_axis_labels`). Angle/brace are render-only on the canvas.
 - **Checkpoint:** all math-specific features available. ✅ verified — a scene exercising every feature renders to MP4 (frame inspected), and the morph preview renders standalone.
 
-### Phase 5 — Camera system ⬜
+### Phase 5 — Camera system ✅
 - Dedicated camera track on the timeline (keyframeable pan/zoom/focus).
 - Codegen auto-switches base class to `MovingCameraScene`; `camera.frame.animate` moves (zoom = `frame_width / zoom_level`).
 - Canvas viewport-rectangle overlay; drag to set pan target; camera reset.
-- **Checkpoint:** camera animation integrated.
+- **Checkpoint:** camera animation integrated. ✅ verified — a scene with initial framing + focus-on-object + pan/zoom (and a camera move grouped in parallel with an object animation) renders to MP4 via `MovingCameraScene` ("Played 5 animations"); zoomed frame inspected.
 
 ### Phase 6 — Export, multi-scene, packaging ⬜
 - Multiple scenes per project: list panel, add/delete/reorder/duplicate.

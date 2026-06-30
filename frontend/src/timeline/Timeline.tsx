@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import { newId } from '../store/objectFactory';
-import { useTimelineStore, VERB_META, TIMELINE_VERBS, defaultParams } from './timelineStore';
+import { useTimelineStore, VERB_META, TIMELINE_VERBS, defaultParams, CAMERA_ID } from './timelineStore';
 import type { AnimationVerb, Keyframe, SceneObject } from '../types/ir';
 
 const ROW_H = 30;
@@ -83,13 +83,25 @@ export function Timeline() {
     setDrag({ kfId: kf.id, mode, startClientX: e.clientX, origStart: kf.start_time, origDur: kf.duration, curStart: kf.start_time, curDur: kf.duration });
   };
 
-  const addKfAt = (obj: SceneObject, e: React.MouseEvent) => {
+  const laneTime = (e: React.MouseEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const x = e.clientX - rect.left; // lane-local px (rect already accounts for scroll)
-    const t = Math.max(0, Math.round((x / pxPerSec) * 10) / 10);
+    return Math.max(0, Math.round((x / pxPerSec) * 10) / 10);
+  };
+
+  const addKfAt = (obj: SceneObject, e: React.MouseEvent) => {
     const kf: Keyframe = {
-      id: newId('kf'), object_id: obj.id, start_time: t, verb: defaultVerb(obj),
+      id: newId('kf'), object_id: obj.id, start_time: laneTime(e), verb: defaultVerb(obj),
       duration: 1, easing: 'smooth', group_id: null, params: {},
+    };
+    addKeyframe(kf);
+    selectKf(kf.id);
+  };
+
+  const addCameraKfAt = (e: React.MouseEvent) => {
+    const kf: Keyframe = {
+      id: newId('kf'), object_id: CAMERA_ID, start_time: laneTime(e), verb: 'camera_move',
+      duration: 1.5, easing: 'smooth', group_id: null, params: defaultParams('camera_move'),
     };
     addKeyframe(kf);
     selectKf(kf.id);
@@ -102,6 +114,29 @@ export function Timeline() {
   };
 
   const selectedHaveGroup = keyframes.some(k => selectedKfIds.includes(k.id) && k.group_id);
+  const cameraKfs = keyframes.filter(k => k.object_id === CAMERA_ID);
+
+  // One keyframe block, shared by the camera lane and every object lane.
+  const renderKfBlock = (kf: Keyframe) => {
+    const isDragging = drag?.kfId === kf.id;
+    const start = isDragging ? drag!.curStart : kf.start_time;
+    const dur = isDragging && drag!.mode === 'resize' ? drag!.curDur : kf.duration;
+    const meta = VERB_META[kf.verb];
+    const sel = selectedKfIds.includes(kf.id);
+    const w = Math.max(18, dur * pxPerSec);
+    return (
+      <div key={kf.id}
+        className={`tl__kf ${sel ? 'tl__kf--sel' : ''} ${kf.group_id ? 'tl__kf--grouped' : ''}`}
+        style={{ left: start * pxPerSec, width: w, background: meta.color }}
+        title={`${meta.label} @ ${start.toFixed(2)}s · ${dur.toFixed(2)}s${kf.group_id ? ' · parallel' : ''}`}
+        onPointerDown={e => startDrag(e, kf, 'move')}
+        onClick={e => { e.stopPropagation(); setMenu(null); selectKf(kf.id, e.shiftKey); }}
+        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); selectKf(kf.id, false); setMenu({ x: e.clientX, y: e.clientY, kfId: kf.id }); }}>
+        {w > 40 && <span className="tl__kf-label">{meta.label}</span>}
+        <span className="tl__kf-handle" onPointerDown={e => startDrag(e, kf, 'resize')} />
+      </div>
+    );
+  };
 
   if (!scene) return <div className="tl"><p className="panel-hint">No scene.</p></div>;
 
@@ -128,6 +163,16 @@ export function Timeline() {
             ))}
           </div>
 
+          {/* Dedicated camera track (pan / zoom / focus keyframes). */}
+          <div className="tl__label tl__label--camera" style={{ height: ROW_H, paddingLeft: 8 }}
+            title="Camera track — double-click to add a camera move">
+            📷 Camera
+          </div>
+          <div className="tl__lane tl__lane--camera" style={{ height: ROW_H }}
+            onDoubleClick={e => { e.stopPropagation(); addCameraKfAt(e); }}>
+            {cameraKfs.map(renderKfBlock)}
+          </div>
+
           {objects.map(o => {
             const rowKfs = keyframes.filter(k => k.object_id === o.id);
             return (
@@ -139,26 +184,7 @@ export function Timeline() {
                 </div>
                 <div className="tl__lane" style={{ height: ROW_H }}
                   onDoubleClick={e => { e.stopPropagation(); addKfAt(o, e); }}>
-                  {rowKfs.map(kf => {
-                    const isDragging = drag?.kfId === kf.id;
-                    const start = isDragging ? drag!.curStart : kf.start_time;
-                    const dur = isDragging && drag!.mode === 'resize' ? drag!.curDur : kf.duration;
-                    const meta = VERB_META[kf.verb];
-                    const sel = selectedKfIds.includes(kf.id);
-                    const w = Math.max(18, dur * pxPerSec);
-                    return (
-                      <div key={kf.id}
-                        className={`tl__kf ${sel ? 'tl__kf--sel' : ''} ${kf.group_id ? 'tl__kf--grouped' : ''}`}
-                        style={{ left: start * pxPerSec, width: w, background: meta.color }}
-                        title={`${meta.label} @ ${start.toFixed(2)}s · ${dur.toFixed(2)}s${kf.group_id ? ' · parallel' : ''}`}
-                        onPointerDown={e => startDrag(e, kf, 'move')}
-                        onClick={e => { e.stopPropagation(); setMenu(null); selectKf(kf.id, e.shiftKey); }}
-                        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); selectKf(kf.id, false); setMenu({ x: e.clientX, y: e.clientY, kfId: kf.id }); }}>
-                        {w > 40 && <span className="tl__kf-label">{meta.label}</span>}
-                        <span className="tl__kf-handle" onPointerDown={e => startDrag(e, kf, 'resize')} />
-                      </div>
-                    );
-                  })}
+                  {rowKfs.map(renderKfBlock)}
                 </div>
               </Fragment>
             );
@@ -171,14 +197,18 @@ export function Timeline() {
         if (!kf) return null;
         return (
           <div className="tl__menu" style={{ left: menu.x, top: menu.y }} onClick={e => e.stopPropagation()}>
-            <div className="tl__menu-head">Change verb</div>
-            <div className="tl__menu-verbs">
-              {TIMELINE_VERBS.map(v => (
-                <button key={v} className={`tl__menu-verb ${kf.verb === v ? 'is-active' : ''}`}
-                  onClick={() => { updateKeyframe(kf.id, { verb: v, params: defaultParams(v) }); setMenu(null); }}>{VERB_META[v].label}</button>
-              ))}
-            </div>
-            <div className="tl__menu-sep" />
+            {kf.object_id !== CAMERA_ID && (
+              <>
+                <div className="tl__menu-head">Change verb</div>
+                <div className="tl__menu-verbs">
+                  {TIMELINE_VERBS.map(v => (
+                    <button key={v} className={`tl__menu-verb ${kf.verb === v ? 'is-active' : ''}`}
+                      onClick={() => { updateKeyframe(kf.id, { verb: v, params: defaultParams(v) }); setMenu(null); }}>{VERB_META[v].label}</button>
+                  ))}
+                </div>
+                <div className="tl__menu-sep" />
+              </>
+            )}
             <button className="tl__menu-item" onClick={() => { duplicateKf(kf); setMenu(null); }}>Duplicate</button>
             <button className="tl__menu-item tl__menu-item--danger" onClick={() => { removeKeyframe(kf.id); setMenu(null); }}>Delete</button>
           </div>
