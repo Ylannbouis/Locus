@@ -70,9 +70,9 @@ mas/
 | 0 | Dev environment + project skeleton | ✓ Done |
 | 1 | End-to-end pipeline (place objects → render MP4) | ✓ Done |
 | 2 | Object catalog expansion | ✓ Done |
-| 3 | Full animation system + timeline UI | Pending |
-| 4 | Math-specific features (equation morphing, plots) | Pending |
-| 5 | Camera system | Pending |
+| 3 | Full animation system + timeline UI | ✓ Done |
+| 4 | Math-specific features (equation morphing, plots) | ✓ Done |
+| 5 | Camera system | ✓ Done |
 | 6 | Multi-scene, export formats, packaging | Pending |
 
 ## Save File Format

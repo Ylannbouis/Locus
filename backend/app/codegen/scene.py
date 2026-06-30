@@ -10,14 +10,19 @@ all objects are constructed and before the timeline runs.
 """
 from __future__ import annotations
 
+import re
+
 from app.models.ir import Project, Scene
 from app.codegen.animations import CREATION_VERBS, easing_func, emit_animation
 from app.codegen.objects import (
-    AXES_BOUND_GRAPHS, emit_object, tracker_name, var_name, _num, _sweep,
+    AXES_BOUND_GRAPHS, emit_object, tracker_name, var_name, _num, _point, _sweep,
 )
 from app.codegen.template import render_script
 
 _INDENT = " " * 8
+
+# Sentinel object id for keyframes that drive the camera (mirrors the frontend).
+CAMERA_ID = "__camera__"
 
 # Relationship direction string -> Manim constant.
 _DIR = {
@@ -78,6 +83,74 @@ def _rel_line(rel, var_map: dict[str, str]) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Camera
+# ---------------------------------------------------------------------------
+
+def _is_camera_kf(kf) -> bool:
+    return _enum(kf.verb) == "camera_move" or kf.object_id == CAMERA_ID
+
+
+def _zoom(v) -> float:
+    """A positive zoom factor (frame width = config.frame_width / zoom). Guards
+    against a 0 / negative / malformed value that would yield an invalid width."""
+    z = _num(v, 1.0)
+    return z if z > 1e-6 else 1.0
+
+
+def _uses_camera(scene: Scene) -> bool:
+    """The scene needs MovingCameraScene if any keyframe drives the camera or the
+    initial camera framing (pan/zoom) is non-default."""
+    if any(_is_camera_kf(kf) for kf in scene.timeline.keyframes):
+        return True
+    ct = scene.camera_track
+    if ct is None:
+        return False
+    px, py = _point(ct.initial_pan)
+    return abs(px) > 1e-9 or abs(py) > 1e-9 or abs(_num(ct.initial_zoom, 1.0) - 1.0) > 1e-9
+
+
+def _camera_anim(kf, var_map: dict[str, str]) -> str | None:
+    """A camera_move keyframe -> a `self.camera.frame.animate…` expression.
+
+    params: pan {x,y} (or focus_object_id to track an object's center) and an
+    absolute zoom level (frame width = config.frame_width / zoom).
+    """
+    p = kf.params or {}
+    parts: list[str] = []
+    focus = p.get("focus_object_id")
+    if focus and var_map.get(focus):
+        parts.append(f"move_to({var_map[focus]}.get_center())")
+    elif p.get("pan") is not None or p.get("target") is not None:
+        x, y = _point(p.get("pan") if p.get("pan") is not None else p.get("target"))
+        parts.append(f"move_to(np.array([{x}, {y}, 0.0]))")
+    if p.get("zoom") is not None:
+        parts.append(f"set(width=config.frame_width / {_zoom(p.get('zoom'))})")
+    if not parts:
+        return None
+    return "self.camera.frame.animate." + ".".join(parts)
+
+
+def _is_track_kf(kf, var_map: dict[str, str]) -> bool:
+    """A camera keyframe that continuously follows an object (rather than a one-
+    shot move): needs `track` set and a focus object that actually exists."""
+    if not _is_camera_kf(kf):
+        return False
+    p = kf.params or {}
+    foc = p.get("focus_object_id")
+    return bool(p.get("track")) and bool(foc) and foc in var_map
+
+
+def _kf_anim(kf, var_map: dict[str, str]) -> str | None:
+    """Animation expression for any keyframe, routing camera keyframes specially."""
+    if _is_camera_kf(kf):
+        return _camera_anim(kf, var_map)
+    v = var_map.get(kf.object_id)
+    if not v:
+        return None
+    return emit_animation(_enum(kf.verb), v, kf.params, var_map)
+
+
 def build_body(scene: Scene) -> str:
     # Emit in dependency order: plain objects, then graphs (need their axes),
     # then groups (need their children defined first).
@@ -98,6 +171,21 @@ def build_body(scene: Scene) -> str:
 
     lines: list[str] = []
     var_map: dict[str, str] = {}
+
+    # 0. Initial camera framing (only meaningful under MovingCameraScene).
+    if _uses_camera(scene):
+        ct = scene.camera_track
+        px, py = _point(ct.initial_pan) if ct else (0.0, 0.0)
+        iz = _zoom(ct.initial_zoom) if ct else 1.0
+        cam_init: list[str] = []
+        if abs(px) > 1e-9 or abs(py) > 1e-9:
+            cam_init.append(f"self.camera.frame.move_to(np.array([{px}, {py}, 0.0]))")
+        if abs(iz - 1.0) > 1e-9:
+            cam_init.append(f"self.camera.frame.set(width=config.frame_width / {iz})")
+        if cam_init:
+            lines.append("# initial camera framing")
+            lines.extend(cam_init)
+            lines.append("")
 
     # 1. Define + style every object (skip invisible ones).
     for obj in objects:
@@ -181,11 +269,12 @@ def build_body(scene: Scene) -> str:
     grouped: dict[str, list] = {}
     events: list[dict] = []  # {start, run_time, anims, easing, lag}
     for kf in ordered:
+        if _is_track_kf(kf, var_map):
+            continue  # emitted as camera-follow updater statements (4c) below
         if kf.group_id:
             grouped.setdefault(kf.group_id, []).append(kf)
         else:
-            anim = emit_animation(_enum(kf.verb), var_map.get(kf.object_id, ""),
-                                  kf.params, var_map) if var_map.get(kf.object_id) else None
+            anim = _kf_anim(kf, var_map)
             if anim is None:
                 continue
             events.append({
@@ -198,10 +287,7 @@ def build_body(scene: Scene) -> str:
     for gid, members in grouped.items():
         anims = []
         for kf in members:
-            v = var_map.get(kf.object_id)
-            if not v:
-                continue
-            a = emit_animation(_enum(kf.verb), v, kf.params, var_map)
+            a = _kf_anim(kf, var_map)
             if a:
                 anims.append(a)
         if not anims:
@@ -231,8 +317,31 @@ def build_body(scene: Scene) -> str:
             "lag": 0.0,
         })
 
-    # 5. Emit waits + plays in time order.
-    events.sort(key=lambda e: e["start"])
+    # 4c. Continuous camera tracking: attach a follow-updater over the keyframe's
+    # window so the camera stays centered on the object while it animates. The
+    # add runs before any play at the same time (order 0) and the remove after
+    # (order 2), so a move that overlaps the window is followed start to finish.
+    for kf in ordered:
+        if not _is_track_kf(kf, var_map):
+            continue
+        p = kf.params or {}
+        foc = var_map[p["focus_object_id"]]
+        fn = f"_camfollow_{re.sub(r'[^0-9a-zA-Z_]', '_', kf.id)}"
+        start_lines = [f"{fn} = lambda f: f.move_to({foc}.get_center())"]
+        if p.get("zoom") is not None:
+            start_lines.append(f"self.camera.frame.set(width=config.frame_width / {_zoom(p.get('zoom'))})")
+        # The frame's updater only runs during self.play() while the frame is in
+        # the scene's mobject list, so add it before attaching the follow updater.
+        start_lines.append("self.add(self.camera.frame)")
+        start_lines.append(f"self.camera.frame.add_updater({fn})")
+        start = max(0.0, float(kf.start_time))
+        dur = max(0.01, float(kf.duration))
+        events.append({"start": start, "kind": "stmt", "order": 0, "run_time": 0.0, "lines": start_lines})
+        events.append({"start": start + dur, "kind": "stmt", "order": 2, "run_time": 0.0,
+                       "lines": [f"self.camera.frame.remove_updater({fn})"]})
+
+    # 5. Emit waits + plays (and tracking statements) in time order.
+    events.sort(key=lambda e: (e["start"], e.get("order", 1)))
     current = 0.0
     played_any = False
     for ev in events:
@@ -240,6 +349,9 @@ def build_body(scene: Scene) -> str:
         if gap > 1e-6:
             lines.append(f"self.wait({round(gap, 4)})")
             current += gap
+        if ev.get("kind") == "stmt":
+            lines.extend(ev["lines"])
+            continue
         if ev["lag"] > 1e-9 and len(ev["anims"]) > 1:
             inner = f"AnimationGroup({', '.join(ev['anims'])}, lag_ratio={round(ev['lag'], 4)})"
             lines.append(f"self.play({inner}, run_time={ev['run_time']}, rate_func={ev['easing']})")
@@ -257,7 +369,8 @@ def build_body(scene: Scene) -> str:
 def generate_scene_script(project: Project, scene: Scene) -> str:
     bg = scene.background_color or project.settings.background_color or "#000000"
     body = build_body(scene)
-    return render_script(body=body, background_color=bg)
+    base = "MovingCameraScene" if _uses_camera(scene) else "Scene"
+    return render_script(body=body, background_color=bg, base_class=base)
 
 
 def generate_morph_preview_script(project: Project, scene: Scene, keyframe_id: str) -> str:

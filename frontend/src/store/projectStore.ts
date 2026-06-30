@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { produce } from 'immer';
-import type { Project, Scene, SceneObject, Keyframe, Relationship, AnimationGroup } from '../types/ir';
+import type { Project, Scene, SceneObject, Keyframe, Relationship, AnimationGroup, CameraTrack } from '../types/ir';
 import { saveProject } from '../api/client';
 import { newId } from './objectFactory';
 import { useTimelineStore } from '../timeline/timelineStore';
@@ -52,6 +52,9 @@ interface ProjectState {
   removeKeyframe: (id: string) => void;
   groupKeyframes: (ids: string[]) => void;
   ungroupKeyframes: (ids: string[]) => void;
+
+  // Camera
+  updateCameraTrack: (patch: Partial<CameraTrack>) => void;
 
   // History
   undo: () => void;
@@ -281,6 +284,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     // Drop now-empty groups.
     scene.timeline.groups = scene.timeline.groups.filter(g =>
       scene.timeline.keyframes.some(k => k.group_id === g.id));
+  }),
+
+  updateCameraTrack: (patch) => _mutate(set, get, draft => {
+    const scene = activeScene(draft, get().selectedSceneId);
+    if (!scene) return;
+    scene.camera_track = { ...scene.camera_track, ...patch };
   }),
 
   undo: () => {

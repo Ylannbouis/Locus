@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import type { AnimationVerb } from '../types/ir';
 
+// Sentinel object id for keyframes that drive the camera (mirrors the backend).
+export const CAMERA_ID = '__camera__';
+
 // UI-only state for the timeline editor (not persisted with the project).
 interface TimelineUIState {
   selectedKfIds: string[];
@@ -44,7 +47,8 @@ export const VERB_META: Record<AnimationVerb, { label: string; color: string }> 
   camera_move: { label: 'Camera', color: '#0891b2' },
 };
 
-// Verbs offered in the timeline "add animation" picker (camera is Phase 5).
+// Verbs offered in the timeline "add animation" picker for object lanes.
+// (camera_move is authored from the dedicated camera track, not here.)
 export const TIMELINE_VERBS: AnimationVerb[] = [
   'write', 'create', 'draw_border_then_fill', 'fade_in', 'fade_out',
   'transform', 'replacement_transform', 'move', 'scale', 'rotate',
@@ -61,6 +65,7 @@ export function defaultParams(verb: AnimationVerb): Record<string, unknown> {
     case 'indicate': return { color: '#ffff00', scale_factor: 1.2 };
     case 'circumscribe': return { color: '#ffff00' };
     case 'flash': return { color: '#ffff00' };
+    case 'camera_move': return { pan: { x: 0, y: 0 }, zoom: 1 };
     default: return {};
   }
 }

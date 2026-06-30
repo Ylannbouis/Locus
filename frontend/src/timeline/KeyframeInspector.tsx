@@ -1,6 +1,6 @@
 import { useProjectStore } from '../store/projectStore';
 import { useRenderStore } from '../store/renderStore';
-import { useTimelineStore, VERB_META, TIMELINE_VERBS, EASING_OPTIONS, defaultParams } from './timelineStore';
+import { useTimelineStore, VERB_META, TIMELINE_VERBS, EASING_OPTIONS, defaultParams, CAMERA_ID } from './timelineStore';
 import type { AnimationVerb, EasingType, Point2D } from '../types/ir';
 
 // Approximate rate functions for the visual easing preview (not used for render).
@@ -124,20 +124,24 @@ export function KeyframeInspector() {
   const params = (kf.params ?? {}) as Record<string, any>;
   const setParam = (patch: Record<string, any>) => updateKeyframe(kf.id, { params: { ...params, ...patch } });
   const verb = kf.verb;
+  const isCamera = kf.object_id === CAMERA_ID || verb === 'camera_move';
 
   const otherObjects = scene.objects.filter(o => o.id !== kf.object_id);
   const moveMode: 'to' | 'by' = params.delta ? 'by' : 'to';
+  const focusId = String(params.focus_object_id ?? '');
 
   return (
     <div className="kf-inspector">
-      <h3 className="panel-title">Animation — {obj?.name || obj?.type || '?'}</h3>
+      <h3 className="panel-title">{isCamera ? '📷 Camera Move' : `Animation — ${obj?.name || obj?.type || '?'}`}</h3>
 
-      <label className="field">
-        <span className="field__label">Verb</span>
-        <select className="field__input" value={verb} onChange={e => { const v = e.target.value as AnimationVerb; updateKeyframe(kf.id, { verb: v, params: defaultParams(v) }); }}>
-          {TIMELINE_VERBS.map(v => <option key={v} value={v}>{VERB_META[v].label}</option>)}
-        </select>
-      </label>
+      {!isCamera && (
+        <label className="field">
+          <span className="field__label">Verb</span>
+          <select className="field__input" value={verb} onChange={e => { const v = e.target.value as AnimationVerb; updateKeyframe(kf.id, { verb: v, params: defaultParams(v) }); }}>
+            {TIMELINE_VERBS.map(v => <option key={v} value={v}>{VERB_META[v].label}</option>)}
+          </select>
+        </label>
+      )}
 
       <div className="field-row">
         <Num label="Start (s)" value={kf.start_time} onChange={v => updateKeyframe(kf.id, { start_time: Math.max(0, v) })} />
@@ -151,6 +155,36 @@ export function KeyframeInspector() {
         </select>
       </label>
       <EasingPreview easing={kf.easing} />
+
+      {/* ---- camera move ---- */}
+      {isCamera && (
+        <>
+          <label className="field">
+            <span className="field__label">Focus object (optional)</span>
+            <select className="field__input" value={focusId}
+              onChange={e => setParam({ focus_object_id: e.target.value || undefined, track: e.target.value ? params.track : undefined })}>
+              <option value="">— pan to point —</option>
+              {otherObjects.map(o => <option key={o.id} value={o.id}>{o.name || o.type}</option>)}
+            </select>
+          </label>
+          {!focusId && (
+            <Vec label="Pan to (x, y)" value={params.pan ?? { x: 0, y: 0 }} onChange={v => setParam({ pan: v })} />
+          )}
+          {focusId && (
+            <label className="field field--check">
+              <input type="checkbox" checked={!!params.track} onChange={e => setParam({ track: e.target.checked })} />
+              <span className="field__label" style={{ margin: 0 }}>Track continuously (follow while it moves)</span>
+            </label>
+          )}
+          <Num label="Zoom (1 = full frame)" value={Number(params.zoom ?? 1)} step={0.1}
+            onChange={v => setParam({ zoom: Math.max(0.1, v) })} />
+          <span className="panel-hint">
+            {params.track && focusId
+              ? 'The camera locks onto the object for this keyframe’s duration — overlap it with the object’s move.'
+              : 'Zoom > 1 moves the camera in; the frame width is the scene width ÷ zoom.'}
+          </span>
+        </>
+      )}
 
       {/* ---- verb-specific params ---- */}
       {(verb === 'fade_in' || verb === 'fade_out') && (
