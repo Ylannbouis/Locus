@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Stage, Layer, Rect } from 'react-konva';
+import { Stage, Layer, Rect, Arrow, Circle, Group } from 'react-konva';
 import type Konva from 'konva';
 import { useProjectStore } from '../store/projectStore';
 import { useTimelineStore, CAMERA_ID } from '../timeline/timelineStore';
-import type { SceneObject } from '../types/ir';
+import type { Point2D, SceneObject } from '../types/ir';
 import { LatexOverlay } from './LatexOverlay';
 import { SceneNodes } from './SceneNodes';
+import { effectivePosition, transformAfter, type Ghost } from './motion';
 import {
   PX_PER_UNIT, FRAME_WIDTH, FRAME_HEIGHT,
   MIN_SCALE, MAX_SCALE, manimX, manimY, worldX, worldY, type View,
@@ -29,6 +30,7 @@ export function CanvasStage() {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [view, setView] = useState<View>({ scale: 1, offsetX: 0, offsetY: 0 });
   const [band, setBand] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [handleDrag, setHandleDrag] = useState<{ id: string; pos: Point2D } | null>(null);
   const centered = useRef(false);
   const viewRef = useRef(view); viewRef.current = view;
   const pan = useRef({ active: false, sx: 0, sy: 0, ox: 0, oy: 0 });
@@ -38,6 +40,11 @@ export function CanvasStage() {
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
   const objects = scene?.objects ?? [];
   const bgColor = scene?.background_color || project?.settings.background_color || '#000000';
+
+  // The keyframe shown in the inspector (drives the on-canvas previews below).
+  const selKf = scene?.timeline.keyframes.find(k => k.id === selectedKfIds[0]);
+  const previewKf = selKf && (selKf.verb === 'move' || selKf.verb === 'scale' || selKf.verb === 'rotate')
+    ? selKf : undefined;
 
   // ---- Camera viewport overlay -------------------------------------------
   // Shows the framing of the selected camera keyframe, or the scene's initial
@@ -52,11 +59,15 @@ export function CanvasStage() {
   // framing is non-default; with no camera keyframe selected it edits the
   // scene's initial framing, otherwise the selected keyframe's framing.
   const hasCameraKf = !!scene?.timeline.keyframes.some(k => k.object_id === CAMERA_ID);
-  const showCamera = !!camKf || trackActive || hasCameraKf;
+  // Suppress the initial-framing overlay while previewing a move/scale/rotate so
+  // the canvas isn't cluttered; a selected camera keyframe still shows it.
+  const showCamera = !!camKf || ((trackActive || hasCameraKf) && !previewKf);
   const focusObj = camKf && camParams.focus_object_id ? objects.find(o => o.id === camParams.focus_object_id) : undefined;
   const camZoom = camKf ? Number(camParams.zoom ?? 1) : (camTrack?.initial_zoom ?? 1);
-  const camCenter = camKf
-    ? (focusObj ? focusObj.position : (camParams.pan ?? { x: 0, y: 0 }))
+  // For a focus keyframe, frame the object where it is at the keyframe's time
+  // (after any earlier move animations), not its authored start position.
+  const camCenter: Point2D = camKf
+    ? (focusObj && scene ? effectivePosition(scene, focusObj.id, camKf.start_time) : (camParams.pan ?? { x: 0, y: 0 }))
     : (camTrack?.initial_pan ?? { x: 0, y: 0 });
   const camDraggable = showCamera && !focusObj;
   const camHalfWpx = (FRAME_WIDTH / Math.max(0.1, camZoom) / 2) * PX_PER_UNIT;
@@ -74,6 +85,40 @@ export function CanvasStage() {
   const resetCamera = () => {
     if (camKf) updateKeyframe(camKf.id, { params: { pan: { x: 0, y: 0 }, zoom: 1 } });
     else updateCameraTrack({ initial_pan: { x: 0, y: 0 }, initial_zoom: 1 });
+  };
+
+  // ---- Move / scale / rotate preview -------------------------------------
+  // When such a keyframe is selected, show a faded ghost of the object at the
+  // resulting transform — stacking any earlier move/scale/rotate keyframes. A
+  // move also gets a direction arrow and a draggable handle at the destination.
+  const previewObj = previewKf ? objects.find(o => o.id === previewKf.object_id) : undefined;
+
+  let ghost: Ghost | null = null;
+  let moveFrom: Point2D | null = null;
+  let moveTo: Point2D | null = null;
+  let beforePos: Point2D | null = null;
+  if (previewKf && previewObj && scene) {
+    const { before, after } = transformAfter(scene, previewKf);
+    beforePos = before.pos;
+    // While dragging this keyframe's handle, follow the cursor; else the keyframe.
+    const live = handleDrag && handleDrag.id === previewKf.id ? handleDrag.pos : null;
+    const dest = previewKf.verb === 'move' ? (live ?? after.pos) : after.pos;
+    ghost = { obj: { ...previewObj, position: dest }, scale: after.scale, rotationDeg: after.rotationDeg };
+    if (previewKf.verb === 'move') { moveFrom = before.pos; moveTo = dest; }
+  }
+  const isLatexLike = (o: SceneObject) => o.type === 'latex_text' || o.type === 'matrix';
+  const ghostLatex = ghost && isLatexLike(ghost.obj) ? [ghost] : [];
+  const ghostShapes = ghost && !isLatexLike(ghost.obj) ? [ghost] : [];
+
+  const commitMoveDestination = (x: number, y: number) => {
+    if (!previewKf || !beforePos) return;
+    const p = previewKf.params as Record<string, unknown>;
+    // Preserve the keyframe's mode: 'by' (delta) stays relative; otherwise 'to'.
+    if (p.delta && !p.target_position) {
+      updateKeyframe(previewKf.id, { params: { ...p, delta: { x: round2(x - beforePos.x), y: round2(y - beforePos.y) } } });
+    } else {
+      updateKeyframe(previewKf.id, { params: { ...p, target_position: { x: round2(x), y: round2(y) } } });
+    }
   };
 
   useEffect(() => {
@@ -231,7 +276,40 @@ export function CanvasStage() {
               onDragEnd={e => commitCameraPan(manimX(e.target.x() + camHalfWpx), manimY(e.target.y() + camHalfHpx))}
             />
           )}
+          {moveFrom && moveTo && (
+            <Arrow
+              points={[worldX(moveFrom.x), worldY(moveFrom.y), worldX(moveTo.x), worldY(moveTo.y)]}
+              stroke="#ea580c" fill="#ea580c" strokeWidth={2} dash={[9, 5]}
+              pointerLength={11} pointerWidth={10} listening={false} opacity={0.9}
+            />
+          )}
+          {moveTo && (
+            <Circle
+              x={worldX(moveTo.x)} y={worldY(moveTo.y)}
+              radius={9 / view.scale} fill="#ea580c" stroke="#ffffff" strokeWidth={1.5 / view.scale}
+              draggable
+              onMouseDown={e => { e.cancelBubble = true; }}
+              onDragMove={e => previewKf && setHandleDrag({ id: previewKf.id, pos: { x: manimX(e.target.x()), y: manimY(e.target.y()) } })}
+              onDragEnd={e => { commitMoveDestination(manimX(e.target.x()), manimY(e.target.y())); setHandleDrag(null); }}
+            />
+          )}
         </Layer>
+        {ghostShapes.length > 0 && (
+          <Layer listening={false} opacity={0.42}>
+            {ghostShapes.map(g => {
+              const cx = worldX(g.obj.position.x);
+              const cy = worldY(g.obj.position.y);
+              // Rotate/scale about the object's center; Konva rotation is CW on
+              // screen, Manim degrees are CCW in math space → negate.
+              return (
+                <Group key={g.obj.id} x={cx} y={cy} offsetX={cx} offsetY={cy}
+                  scaleX={g.scale} scaleY={g.scale} rotation={-g.rotationDeg}>
+                  <SceneNodes objects={[g.obj]} selectedIds={[]} onSelect={() => {}} onCommitDrag={() => {}} />
+                </Group>
+              );
+            })}
+          </Layer>
+        )}
       </Stage>
 
       {showCamera && (
@@ -249,7 +327,7 @@ export function CanvasStage() {
         </div>
       )}
 
-      <LatexOverlay objects={objects} view={view} />
+      <LatexOverlay objects={objects} view={view} ghosts={ghostLatex} />
 
       {band && (
         <div style={{

@@ -8,11 +8,14 @@ import {
 } from './coords';
 import { useProjectStore } from '../store/projectStore';
 import { objectBounds, braceLabelPoint, vectorLabelPoint } from './geometry';
+import type { Ghost } from './motion';
 import type { SceneObject } from '../types/ir';
 
 interface Props {
   objects: SceneObject[];
   view: View;
+  // Faded, non-interactive transform previews (move/scale/rotate destinations).
+  ghosts?: Ghost[];
 }
 
 function renderTex(tex: string, displayMode = true): string {
@@ -49,7 +52,75 @@ function texFor(o: SceneObject): string {
   return String((o.props as any).tex_string ?? '');
 }
 
-export function LatexOverlay({ objects, view }: Props) {
+// The inner KaTeX/matrix content for a latex_text or matrix object (without the
+// positioning/interaction wrapper). Shared by the live objects and the faded
+// move-preview "ghosts".
+function latexInner(o: SceneObject, fontSize: number, color: string): React.ReactNode {
+  if (o.type === 'matrix') {
+    const p = o.props as any;
+    const entries: string[][] = Array.isArray(p.entries) && p.entries.length
+      ? p.entries
+      : [['1', '0'], ['0', '1']];
+    const rows = entries.length;
+    const cols = entries.reduce((m, r) => Math.max(m, r.length), 1);
+
+    // World-pixel pitch from Manim's fixed grid (independent of glyph width).
+    const colPitch = MATRIX_H_PITCH * PX_PER_UNIT;
+    const rowPitch = MATRIX_V_PITCH * PX_PER_UNIT;
+    const spanX = (cols - 1) * colPitch;
+    const spanY = (rows - 1) * rowPitch;
+
+    // Bracket geometry (world px): span the entries' height + a small buff.
+    const bracketH = spanY + 0.62 * fontSize + 2 * MATRIX_BRACKET_BUFF * PX_PER_UNIT;
+    const bracketW = Math.max(7, bracketH * 0.16);
+    const bracketT = Math.max(2, fontSize * 0.06);
+    const bracketX = spanX / 2 + 0.18 * PX_PER_UNIT + MATRIX_BRACKET_BUFF * PX_PER_UNIT;
+
+    const containerW = (bracketX + bracketW) * 2;
+    const containerH = bracketH;
+
+    return (
+      <div style={{ position: 'relative', width: containerW, height: containerH }}>
+        {entries.flatMap((row, i) =>
+          row.map((cell, j) => {
+            const cx = (j - (cols - 1) / 2) * colPitch;
+            const cy = (i - (rows - 1) / 2) * rowPitch;
+            return (
+              <div
+                key={`${i}-${j}`}
+                style={{
+                  position: 'absolute', left: '50%', top: '50%',
+                  transform: `translate(calc(-50% + ${cx}px), calc(-50% + ${cy}px))`,
+                  whiteSpace: 'nowrap',
+                }}
+                dangerouslySetInnerHTML={{ __html: renderTex(cell, false) }}
+              />
+            );
+          }),
+        )}
+        <div
+          style={{ position: 'absolute', left: '50%', top: '50%', transform: `translate(calc(-100% + ${-bracketX}px), -50%)` }}
+          dangerouslySetInnerHTML={{ __html: bracketSvg(p.left_bracket ?? '[', bracketH, bracketW, bracketT, color) }}
+        />
+        <div
+          style={{ position: 'absolute', left: '50%', top: '50%', transform: `translate(${bracketX}px, -50%)` }}
+          dangerouslySetInnerHTML={{ __html: bracketSvg(p.right_bracket ?? ']', bracketH, bracketW, bracketT, color) }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: '4px', whiteSpace: 'nowrap' }}
+      dangerouslySetInnerHTML={{ __html: renderTex(texFor(o)) }} />
+  );
+}
+
+function latexFontPx(o: SceneObject): number {
+  return Number((o.props as any).font_size ?? 48) * MANIM_EM_UNITS_PER_PT * PX_PER_UNIT;
+}
+
+export function LatexOverlay({ objects, view, ghosts = [] }: Props) {
   const selectedIds = useProjectStore(s => s.selectedObjectIds);
   const selectObject = useProjectStore(s => s.selectObject);
   const toggleSelect = useProjectStore(s => s.toggleSelect);
@@ -132,7 +203,7 @@ export function LatexOverlay({ objects, view }: Props) {
       >
         {latexObjects.map(o => {
           // KaTeX font-size (world px) calibrated so 1em matches Manim's em.
-          const fontSize = Number((o.props as any).font_size ?? 48) * MANIM_EM_UNITS_PER_PT * PX_PER_UNIT;
+          const fontSize = latexFontPx(o);
           const color = (o.style.fill_color as string) || '#ffffff';
           const isSel = selectedIds.includes(o.id);
           const px = drag && drag.id === o.id ? drag.x : o.position.x;
@@ -160,78 +231,37 @@ export function LatexOverlay({ objects, view }: Props) {
             dragRef.current = { id: o.id, startSX: e.clientX, startSY: e.clientY, startX: o.position.x, startY: o.position.y };
           };
 
-          if (o.type === 'matrix') {
-            const p = o.props as any;
-            const entries: string[][] = Array.isArray(p.entries) && p.entries.length
-              ? p.entries
-              : [['1', '0'], ['0', '1']];
-            const rows = entries.length;
-            const cols = entries.reduce((m, r) => Math.max(m, r.length), 1);
+          return (
+            <div key={o.id} onPointerDown={onDown} style={wrapperBase}>
+              {latexInner(o, fontSize, color)}
+            </div>
+          );
+        })}
 
-            // World-pixel pitch from Manim's fixed grid (independent of glyph width).
-            const colPitch = MATRIX_H_PITCH * PX_PER_UNIT;
-            const rowPitch = MATRIX_V_PITCH * PX_PER_UNIT;
-            const spanX = (cols - 1) * colPitch;
-            const spanY = (rows - 1) * rowPitch;
-
-            // Bracket geometry (world px): span the entries' height + a small buff.
-            const bracketH = spanY + 0.62 * fontSize + 2 * MATRIX_BRACKET_BUFF * PX_PER_UNIT;
-            const bracketW = Math.max(7, bracketH * 0.16);
-            const bracketT = Math.max(2, fontSize * 0.06);
-            // Inner edge of each bracket: half the entry span + half a glyph + buff.
-            const bracketX = spanX / 2 + 0.18 * PX_PER_UNIT + MATRIX_BRACKET_BUFF * PX_PER_UNIT;
-
-            const containerW = (bracketX + bracketW) * 2;
-            const containerH = bracketH;
-
-            return (
-              <div key={o.id} onPointerDown={onDown} style={wrapperBase}>
-                <div style={{ position: 'relative', width: containerW, height: containerH }}>
-                  {entries.flatMap((row, i) =>
-                    row.map((cell, j) => {
-                      const cx = (j - (cols - 1) / 2) * colPitch;
-                      const cy = (i - (rows - 1) / 2) * rowPitch;
-                      return (
-                        <div
-                          key={`${i}-${j}`}
-                          style={{
-                            position: 'absolute',
-                            left: '50%',
-                            top: '50%',
-                            transform: `translate(calc(-50% + ${cx}px), calc(-50% + ${cy}px))`,
-                            whiteSpace: 'nowrap',
-                          }}
-                          dangerouslySetInnerHTML={{ __html: renderTex(cell, false) }}
-                        />
-                      );
-                    }),
-                  )}
-                  <div
-                    style={{
-                      position: 'absolute', left: '50%', top: '50%',
-                      transform: `translate(calc(-100% + ${-bracketX}px), -50%)`,
-                    }}
-                    dangerouslySetInnerHTML={{ __html: bracketSvg(p.left_bracket ?? '[', bracketH, bracketW, bracketT, color) }}
-                  />
-                  <div
-                    style={{
-                      position: 'absolute', left: '50%', top: '50%',
-                      transform: `translate(${bracketX}px, -50%)`,
-                    }}
-                    dangerouslySetInnerHTML={{ __html: bracketSvg(p.right_bracket ?? ']', bracketH, bracketW, bracketT, color) }}
-                  />
-                </div>
-              </div>
-            );
-          }
-
+        {/* Faded preview of a selected move/scale/rotate animation's result. */}
+        {ghosts.filter(g => g.obj.type === 'latex_text' || g.obj.type === 'matrix').map(g => {
+          const o = g.obj;
+          const fontSize = latexFontPx(o);
+          const color = (o.style.fill_color as string) || '#ffffff';
+          // CSS rotate is clockwise on screen; Manim degrees are CCW in math
+          // space (y-up), which reads as clockwise once y is flipped → negate.
           return (
             <div
-              key={o.id}
-              onPointerDown={onDown}
-              style={{ ...wrapperBase, padding: '4px', whiteSpace: 'nowrap' }}
-              dangerouslySetInnerHTML={{ __html: renderTex(texFor(o)) }}
-            />
+              key={`ghost-${o.id}`}
+              style={{
+                position: 'absolute',
+                left: worldX(o.position.x),
+                top: worldY(o.position.y),
+                transform: `translate(-50%, -50%) rotate(${-g.rotationDeg}deg) scale(${g.scale})`,
+                fontSize: `${fontSize}px`,
+                color,
+                opacity: 0.4,
+                pointerEvents: 'none',
+                userSelect: 'none',
+              }}
+            >
+              {latexInner(o, fontSize, color)}
+            </div>
           );
         })}
 

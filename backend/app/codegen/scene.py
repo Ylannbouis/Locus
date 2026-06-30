@@ -10,6 +10,8 @@ all objects are constructed and before the timeline runs.
 """
 from __future__ import annotations
 
+import re
+
 from app.models.ir import Project, Scene
 from app.codegen.animations import CREATION_VERBS, easing_func, emit_animation
 from app.codegen.objects import (
@@ -127,6 +129,16 @@ def _camera_anim(kf, var_map: dict[str, str]) -> str | None:
     if not parts:
         return None
     return "self.camera.frame.animate." + ".".join(parts)
+
+
+def _is_track_kf(kf, var_map: dict[str, str]) -> bool:
+    """A camera keyframe that continuously follows an object (rather than a one-
+    shot move): needs `track` set and a focus object that actually exists."""
+    if not _is_camera_kf(kf):
+        return False
+    p = kf.params or {}
+    foc = p.get("focus_object_id")
+    return bool(p.get("track")) and bool(foc) and foc in var_map
 
 
 def _kf_anim(kf, var_map: dict[str, str]) -> str | None:
@@ -257,6 +269,8 @@ def build_body(scene: Scene) -> str:
     grouped: dict[str, list] = {}
     events: list[dict] = []  # {start, run_time, anims, easing, lag}
     for kf in ordered:
+        if _is_track_kf(kf, var_map):
+            continue  # emitted as camera-follow updater statements (4c) below
         if kf.group_id:
             grouped.setdefault(kf.group_id, []).append(kf)
         else:
@@ -303,8 +317,31 @@ def build_body(scene: Scene) -> str:
             "lag": 0.0,
         })
 
-    # 5. Emit waits + plays in time order.
-    events.sort(key=lambda e: e["start"])
+    # 4c. Continuous camera tracking: attach a follow-updater over the keyframe's
+    # window so the camera stays centered on the object while it animates. The
+    # add runs before any play at the same time (order 0) and the remove after
+    # (order 2), so a move that overlaps the window is followed start to finish.
+    for kf in ordered:
+        if not _is_track_kf(kf, var_map):
+            continue
+        p = kf.params or {}
+        foc = var_map[p["focus_object_id"]]
+        fn = f"_camfollow_{re.sub(r'[^0-9a-zA-Z_]', '_', kf.id)}"
+        start_lines = [f"{fn} = lambda f: f.move_to({foc}.get_center())"]
+        if p.get("zoom") is not None:
+            start_lines.append(f"self.camera.frame.set(width=config.frame_width / {_zoom(p.get('zoom'))})")
+        # The frame's updater only runs during self.play() while the frame is in
+        # the scene's mobject list, so add it before attaching the follow updater.
+        start_lines.append("self.add(self.camera.frame)")
+        start_lines.append(f"self.camera.frame.add_updater({fn})")
+        start = max(0.0, float(kf.start_time))
+        dur = max(0.01, float(kf.duration))
+        events.append({"start": start, "kind": "stmt", "order": 0, "run_time": 0.0, "lines": start_lines})
+        events.append({"start": start + dur, "kind": "stmt", "order": 2, "run_time": 0.0,
+                       "lines": [f"self.camera.frame.remove_updater({fn})"]})
+
+    # 5. Emit waits + plays (and tracking statements) in time order.
+    events.sort(key=lambda e: (e["start"], e.get("order", 1)))
     current = 0.0
     played_any = False
     for ev in events:
@@ -312,6 +349,9 @@ def build_body(scene: Scene) -> str:
         if gap > 1e-6:
             lines.append(f"self.wait({round(gap, 4)})")
             current += gap
+        if ev.get("kind") == "stmt":
+            lines.extend(ev["lines"])
+            continue
         if ev["lag"] > 1e-9 and len(ev["anims"]) > 1:
             inner = f"AnimationGroup({', '.join(ev['anims'])}, lag_ratio={round(ev['lag'], 4)})"
             lines.append(f"self.play({inner}, run_time={ev['run_time']}, rate_func={ev['easing']})")
