@@ -109,6 +109,7 @@ export function CanvasStage() {
   const isLatexLike = (o: SceneObject) => o.type === 'latex_text' || o.type === 'matrix';
   const ghostLatex = ghost && isLatexLike(ghost.obj) ? [ghost] : [];
   const ghostShapes = ghost && !isLatexLike(ghost.obj) ? [ghost] : [];
+  const previewFrozenIds = previewKf && previewObj ? [previewObj.id] : [];
 
   const commitMoveDestination = (x: number, y: number) => {
     if (!previewKf || !beforePos) return;
@@ -259,6 +260,7 @@ export function CanvasStage() {
             selectedIds={selectedIds}
             onSelect={handleSelect}
             onCommitDrag={commitDrag}
+            nonInteractiveIds={previewFrozenIds}
           />
           {showCamera && (
             <Rect
@@ -283,16 +285,6 @@ export function CanvasStage() {
               pointerLength={11} pointerWidth={10} listening={false} opacity={0.9}
             />
           )}
-          {moveTo && (
-            <Circle
-              x={worldX(moveTo.x)} y={worldY(moveTo.y)}
-              radius={9 / view.scale} fill="#ea580c" stroke="#ffffff" strokeWidth={1.5 / view.scale}
-              draggable
-              onMouseDown={e => { e.cancelBubble = true; }}
-              onDragMove={e => previewKf && setHandleDrag({ id: previewKf.id, pos: { x: manimX(e.target.x()), y: manimY(e.target.y()) } })}
-              onDragEnd={e => { commitMoveDestination(manimX(e.target.x()), manimY(e.target.y())); setHandleDrag(null); }}
-            />
-          )}
         </Layer>
         {ghostShapes.length > 0 && (
           <Layer listening={false} opacity={0.42}>
@@ -308,6 +300,19 @@ export function CanvasStage() {
                 </Group>
               );
             })}
+          </Layer>
+        )}
+        {moveTo && previewKf?.verb === 'move' && previewObj && !isLatexLike(previewObj) && (
+          <Layer>
+            <Circle
+              x={worldX(moveTo.x)} y={worldY(moveTo.y)}
+              radius={9 / view.scale} fill="#ea580c" stroke="#ffffff" strokeWidth={1.5 / view.scale}
+              hitStrokeWidth={24 / view.scale}
+              draggable
+              onMouseDown={e => { e.cancelBubble = true; }}
+              onDragMove={e => setHandleDrag({ id: previewKf.id, pos: { x: manimX(e.target.x()), y: manimY(e.target.y()) } })}
+              onDragEnd={e => { commitMoveDestination(manimX(e.target.x()), manimY(e.target.y())); setHandleDrag(null); }}
+            />
           </Layer>
         )}
       </Stage>
@@ -327,7 +332,17 @@ export function CanvasStage() {
         </div>
       )}
 
-      <LatexOverlay objects={objects} view={view} ghosts={ghostLatex} />
+      <LatexOverlay
+        objects={objects}
+        view={view}
+        ghosts={ghostLatex}
+        nonInteractiveIds={previewFrozenIds}
+        moveHandle={moveTo && previewKf?.verb === 'move' && previewObj && isLatexLike(previewObj) ? {
+          pos: moveTo,
+          onDragMove: pos => setHandleDrag({ id: previewKf.id, pos }),
+          onCommit: pos => { commitMoveDestination(pos.x, pos.y); setHandleDrag(null); },
+        } : null}
+      />
 
       {band && (
         <div style={{

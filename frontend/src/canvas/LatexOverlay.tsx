@@ -9,13 +9,23 @@ import {
 import { useProjectStore } from '../store/projectStore';
 import { objectBounds, braceLabelPoint, vectorLabelPoint } from './geometry';
 import type { Ghost } from './motion';
-import type { SceneObject } from '../types/ir';
+import type { Point2D, SceneObject } from '../types/ir';
+
+interface MoveHandle {
+  pos: Point2D;
+  onDragMove: (pos: Point2D) => void;
+  onCommit: (pos: Point2D) => void;
+}
 
 interface Props {
   objects: SceneObject[];
   view: View;
   // Faded, non-interactive transform previews (move/scale/rotate destinations).
   ghosts?: Ghost[];
+  // Objects being edited via a move/scale/rotate keyframe preview.
+  nonInteractiveIds?: string[];
+  // Draggable destination handle for move keyframes on LaTeX/matrix objects.
+  moveHandle?: MoveHandle | null;
 }
 
 function renderTex(tex: string, displayMode = true): string {
@@ -120,18 +130,32 @@ function latexFontPx(o: SceneObject): number {
   return Number((o.props as any).font_size ?? 48) * MANIM_EM_UNITS_PER_PT * PX_PER_UNIT;
 }
 
-export function LatexOverlay({ objects, view, ghosts = [] }: Props) {
+export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [], moveHandle = null }: Props) {
   const selectedIds = useProjectStore(s => s.selectedObjectIds);
   const selectObject = useProjectStore(s => s.selectObject);
   const toggleSelect = useProjectStore(s => s.toggleSelect);
   const moveObject = useProjectStore(s => s.moveObject);
+  const frozen = new Set(nonInteractiveIds);
 
   // Local drag state so we commit a single history entry on pointer-up.
   const [drag, setDrag] = useState<{ id: string; x: number; y: number } | null>(null);
   const dragRef = useRef<{ id: string; startSX: number; startSY: number; startX: number; startY: number } | null>(null);
+  const moveHandleRef = useRef<{ startSX: number; startSY: number; startX: number; startY: number } | null>(null);
+  const moveHandleLiveRef = useRef<Point2D | null>(null);
+
+  useEffect(() => { moveHandleLiveRef.current = null; }, [moveHandle?.pos.x, moveHandle?.pos.y]);
 
   useEffect(() => {
     function onMove(e: PointerEvent) {
+      const mh = moveHandleRef.current;
+      if (mh && moveHandle) {
+        const dxUnits = (e.clientX - mh.startSX) / (view.scale * PX_PER_UNIT);
+        const dyUnits = -(e.clientY - mh.startSY) / (view.scale * PX_PER_UNIT);
+        const pos = { x: mh.startX + dxUnits, y: mh.startY + dyUnits };
+        moveHandleLiveRef.current = pos;
+        moveHandle.onDragMove(pos);
+        return;
+      }
       const d = dragRef.current;
       if (!d) return;
       const dxUnits = (e.clientX - d.startSX) / (view.scale * PX_PER_UNIT);
@@ -139,6 +163,13 @@ export function LatexOverlay({ objects, view, ghosts = [] }: Props) {
       setDrag({ id: d.id, x: d.startX + dxUnits, y: d.startY + dyUnits });
     }
     function onUp() {
+      const mh = moveHandleRef.current;
+      if (mh && moveHandle) {
+        if (moveHandleLiveRef.current) moveHandle.onCommit(moveHandleLiveRef.current);
+        moveHandleLiveRef.current = null;
+        moveHandleRef.current = null;
+        return;
+      }
       const d = dragRef.current;
       if (d) {
         setDrag(cur => {
@@ -162,7 +193,7 @@ export function LatexOverlay({ objects, view, ghosts = [] }: Props) {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [view.scale, moveObject]);
+  }, [view.scale, moveObject, moveHandle]);
 
   const latexObjects = objects.filter(o => (o.type === 'latex_text' || o.type === 'matrix') && o.visible);
 
@@ -206,6 +237,7 @@ export function LatexOverlay({ objects, view, ghosts = [] }: Props) {
           const fontSize = latexFontPx(o);
           const color = (o.style.fill_color as string) || '#ffffff';
           const isSel = selectedIds.includes(o.id);
+          const isFrozen = frozen.has(o.id);
           const px = drag && drag.id === o.id ? drag.x : o.position.x;
           const py = drag && drag.id === o.id ? drag.y : o.position.y;
 
@@ -216,15 +248,15 @@ export function LatexOverlay({ objects, view, ghosts = [] }: Props) {
             transform: 'translate(-50%, -50%)',
             fontSize: `${fontSize}px`,
             color,
-            cursor: 'move',
-            pointerEvents: 'auto',
+            cursor: isFrozen ? 'default' : 'move',
+            pointerEvents: isFrozen ? 'none' : 'auto',
             userSelect: 'none',
             outline: isSel ? '2px solid #2563eb' : 'none',
             outlineOffset: '2px',
             borderRadius: '4px',
           };
 
-          const onDown = (e: React.PointerEvent) => {
+          const onDown = isFrozen ? undefined : (e: React.PointerEvent) => {
             e.stopPropagation();
             if (e.shiftKey) toggleSelect(o.id);
             else if (!selectedIds.includes(o.id)) selectObject(o.id);
@@ -282,6 +314,37 @@ export function LatexOverlay({ objects, view, ghosts = [] }: Props) {
             dangerouslySetInnerHTML={{ __html: renderTex(l.math ? l.text : `\\text{${l.text}}`, false) }}
           />
         ))}
+
+        {moveHandle && (
+          <div
+            style={{
+              position: 'absolute',
+              left: worldX(moveHandle.pos.x),
+              top: worldY(moveHandle.pos.y),
+              transform: 'translate(-50%, -50%)',
+              width: 18,
+              height: 18,
+              borderRadius: '50%',
+              background: '#ea580c',
+              border: '2px solid #ffffff',
+              boxSizing: 'border-box',
+              cursor: 'grab',
+              pointerEvents: 'auto',
+              touchAction: 'none',
+              zIndex: 20,
+            }}
+            onPointerDown={e => {
+              e.stopPropagation();
+              e.preventDefault();
+              moveHandleRef.current = {
+                startSX: e.clientX,
+                startSY: e.clientY,
+                startX: moveHandle.pos.x,
+                startY: moveHandle.pos.y,
+              };
+            }}
+          />
+        )}
       </div>
     </div>
   );

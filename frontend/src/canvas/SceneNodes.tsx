@@ -30,6 +30,9 @@ interface Props {
   selectedIds: string[];
   onSelect: (id: string, additive: boolean) => void;
   onCommitDrag: (o: SceneObject, node: Konva.Node) => void;
+  // Objects being edited via a move/scale/rotate keyframe preview must not steal
+  // pointer events from the destination drag handle.
+  nonInteractiveIds?: string[];
 }
 
 const PXU = PX_PER_UNIT;
@@ -117,18 +120,21 @@ function coordChildren(o: SceneObject, stroke: string, sw: number) {
   return els;
 }
 
-export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag }: Props) {
+export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonInteractiveIds = [] }: Props) {
+  const frozen = new Set(nonInteractiveIds);
+
   const renderNode = (o: SceneObject): React.ReactNode => {
     if (!o.visible) return null;
     if (o.type === 'latex_text' || o.type === 'matrix') return null; // handled by overlay
 
     const isSel = selectedIds.includes(o.id);
+    const isFrozen = frozen.has(o.id);
     const stroke = hexToRgba(o.style.stroke_color, o.style.stroke_opacity ?? 1);
     const strokeWidth = Number(o.style.stroke_width ?? 2);
     const fill = hexToRgba(o.style.fill_color, o.style.fill_opacity ?? 0);
     const sel = isSel ? { shadowColor: '#2563eb', shadowBlur: 10, shadowOpacity: 1 } : {};
     const pos = { x: worldX(o.position.x), y: worldY(o.position.y) };
-    const drag = {
+    const drag = isFrozen ? { draggable: false, listening: false } : {
       draggable: true,
       onMouseDown: (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; },
       onClick: (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey); },
@@ -172,13 +178,13 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag }: Pro
 
     if (o.type === 'graph') {
       const st = p.subtype ?? 'function_plot';
-      const pick = (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey); };
+      const pick = isFrozen ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey); };
 
       if (st === 'vector_field') {
         const arrows = sampleVectorField(o);
         if (!arrows.length) return null;
         return (
-          <Group key={o.id} onClick={pick} onMouseDown={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }}>
+          <Group key={o.id} listening={!isFrozen} onClick={pick} onMouseDown={isFrozen ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }}>
             {arrows.map((a, i) => {
               const c = vectorFieldColor(a.mag); // matches Manim's [0,2] gradient
               return (
@@ -200,14 +206,15 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag }: Pro
       if (pts.length < 4) return null;
       return (
         <Line key={o.id} points={pts} stroke={stroke} strokeWidth={strokeWidth} lineJoin="round" lineCap="round"
+          listening={!isFrozen}
           {...sel}
-          onMouseDown={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }}
+          onMouseDown={isFrozen ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }}
           onClick={pick} />
       );
     }
 
     if (o.type === 'geometry') {
-      const pick = (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey); };
+      const pick = isFrozen ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey); };
 
       if (p.subtype === 'vector') {
         const dir = (p.direction as { x: number; y: number }) ?? { x: 1, y: 0 };
@@ -240,8 +247,8 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag }: Pro
           const ang = a1 + (delta * i) / N;
           pts.push(worldX(v[0] + R * Math.cos(ang)), worldY(v[1] + R * Math.sin(ang)));
         }
-        return <Line key={o.id} points={pts} stroke={stroke} strokeWidth={strokeWidth} {...sel}
-          onMouseDown={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }} onClick={pick} />;
+        return <Line key={o.id} points={pts} stroke={stroke} strokeWidth={strokeWidth} listening={!isFrozen} {...sel}
+          onMouseDown={isFrozen ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }} onClick={pick} />;
       }
 
       if (p.subtype === 'brace') {
@@ -255,8 +262,8 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag }: Pro
         else if (dir === 'UP') d = bracePath(worldX(b.cx - b.hw), worldX(b.cx + b.hw), worldY(b.cy + b.hh + buff), depth, 'h', -1);
         else if (dir === 'LEFT') d = bracePath(worldY(b.cy - b.hh), worldY(b.cy + b.hh), worldX(b.cx - b.hw - buff), depth, 'v', -1);
         else d = bracePath(worldY(b.cy - b.hh), worldY(b.cy + b.hh), worldX(b.cx + b.hw + buff), depth, 'v', +1);
-        return <Path key={o.id} data={d} stroke={stroke} strokeWidth={2} {...sel}
-          onMouseDown={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }} onClick={pick} />;
+        return <Path key={o.id} data={d} stroke={stroke} strokeWidth={2} listening={!isFrozen} {...sel}
+          onMouseDown={isFrozen ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }} onClick={pick} />;
       }
 
       return null;
