@@ -65,12 +65,15 @@ codegen is the source of truth for the actual animation).
   *before* `time` (in `start_time` order, mirroring Manim's sequential play) into `{pos, scale,
   rotationDeg}`. `transformAfter(scene, kf)` returns `{before, after}` for one keyframe. So previews
   **stack** prior transforms. `effectivePosition` (=`.pos`) feeds the camera-focus overlay.
-- Selecting a **move/scale/rotate** keyframe shows a faded **ghost** at the resulting transform —
-  Konva shapes inside a `<Group>` pivoted about the object's center; equations/matrices via the
-  `LatexOverlay` `ghosts` prop (CSS `rotate(${-deg})` — CSS/Konva rotation is CW on screen while
-  Manim degrees are CCW in math space, so **negate**). A **move** also draws a direction arrow and a
-  draggable destination handle (Konva circle for shapes; an HTML handle for LaTeX/matrix since those
-  live in the overlay above the canvas) → `updateKeyframe` commits the new `target_position`/`delta`.
+- Selecting **move/scale/rotate** keyframes shows a faded **ghost** at each one's resulting transform
+  (`previewItems` — one per selected transform keyframe, so shift-selecting several shows several;
+  `Ghost.key` keeps React keys unique when an object has multiple). Holding **Space** with one object
+  selected previews *all* its transform keyframes. Konva shapes render inside a `<Group>` pivoted about
+  the object's center; equations/matrices via the `LatexOverlay` `ghosts` prop (CSS `rotate(${-deg})` —
+  CSS/Konva rotation is CW on screen while Manim degrees are CCW in math space, so **negate**). Moves
+  also draw a direction arrow; a *lone* selected move is draggable (Konva circle for shapes; an HTML
+  handle for LaTeX/matrix) → `updateKeyframe` commits the new `target_position`/`delta`. (Multi-select
+  + Backspace deletes all selected keyframes via the projectStore keydown handler.)
 - The **camera** viewport rectangle (cyan, `CAMERA_ID`-driven) shows the framing of a selected camera
   keyframe, or the scene's initial framing; drag it to set the pan, zoom/Reset live in a floating
   `.camera-hud`. It's suppressed while a move/scale/rotate keyframe is selected.

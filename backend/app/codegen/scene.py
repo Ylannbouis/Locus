@@ -151,6 +151,17 @@ def _kf_anim(kf, var_map: dict[str, str]) -> str | None:
     return emit_animation(_enum(kf.verb), v, kf.params, var_map)
 
 
+def _bake(expr: str, run_time: float, rate_func: str) -> str:
+    """Bake run_time + rate_func into an animation expression so it can carry its
+    own timing inside an AnimationGroup / Succession (the overlapping timeline)."""
+    rt = round(float(run_time), 4)
+    if ".animate." in expr:
+        # m.animate.method(...) -> m.animate(run_time=…, rate_func=…).method(...)
+        return expr.replace(".animate.", f".animate(run_time={rt}, rate_func={rate_func}).", 1)
+    # Animation-class call: insert the kwargs before the final ')'.
+    return f"{expr[:-1]}, run_time={rt}, rate_func={rate_func})"
+
+
 def build_body(scene: Scene) -> str:
     # Emit in dependency order: plain objects, then graphs (need their axes),
     # then groups (need their children defined first).
@@ -264,101 +275,135 @@ def build_body(scene: Scene) -> str:
             lines.append(f"self.add({var_map[obj.id]})")
         lines.append("")
 
-    # 4. Build timeline events: grouped keyframes -> one play; singles -> one each.
+    # 4. Lay out the timeline. Two emission models:
     ordered = sorted(keyframes, key=lambda k: k.start_time)
-    grouped: dict[str, list] = {}
-    events: list[dict] = []  # {start, run_time, anims, easing, lag}
-    for kf in ordered:
-        if _is_track_kf(kf, var_map):
-            continue  # emitted as camera-follow updater statements (4c) below
-        if kf.group_id:
-            grouped.setdefault(kf.group_id, []).append(kf)
-        else:
-            anim = _kf_anim(kf, var_map)
-            if anim is None:
-                continue
-            events.append({
-                "start": kf.start_time,
-                "run_time": max(0.01, float(kf.duration)),
-                "anims": [anim],
-                "easing": easing_func(_enum(kf.easing)),
-                "lag": 0.0,
-            })
-    for gid, members in grouped.items():
-        anims = []
-        for kf in members:
-            a = _kf_anim(kf, var_map)
-            if a:
-                anims.append(a)
-        if not anims:
-            continue
-        first = members[0]
-        events.append({
-            "start": min(k.start_time for k in members),
-            "run_time": max(0.01, max(float(k.duration) for k in members)),
-            "anims": anims,
-            "easing": easing_func(_enum(first.easing)),
-            "lag": lag_by_group.get(gid, 0.0),
-        })
-
-    # 4b. Parameter sweeps: animate each swept plot's ValueTracker as its own
-    # timeline event (the always_redraw curve follows automatically).
-    for obj in objects:
-        if obj.id not in var_map:
-            continue
-        sw = _sweep(obj)
-        if not sw:
-            continue
-        events.append({
-            "start": max(0.0, _num(sw.get("start_time"), 0.0)),
-            "run_time": max(0.01, _num(sw.get("duration"), 3.0)),
-            "anims": [f"{tracker_name(obj.id)}.animate.set_value({_num(sw.get('to'), 1.0)})"],
-            "easing": easing_func(str(sw.get("easing", "linear"))),
-            "lag": 0.0,
-        })
-
-    # 4c. Continuous camera tracking: attach a follow-updater over the keyframe's
-    # window so the camera stays centered on the object while it animates. The
-    # add runs before any play at the same time (order 0) and the remove after
-    # (order 2), so a move that overlaps the window is followed start to finish.
-    for kf in ordered:
-        if not _is_track_kf(kf, var_map):
-            continue
-        p = kf.params or {}
-        foc = var_map[p["focus_object_id"]]
-        fn = f"_camfollow_{re.sub(r'[^0-9a-zA-Z_]', '_', kf.id)}"
-        start_lines = [f"{fn} = lambda f: f.move_to({foc}.get_center())"]
-        if p.get("zoom") is not None:
-            start_lines.append(f"self.camera.frame.set(width=config.frame_width / {_zoom(p.get('zoom'))})")
-        # The frame's updater only runs during self.play() while the frame is in
-        # the scene's mobject list, so add it before attaching the follow updater.
-        start_lines.append("self.add(self.camera.frame)")
-        start_lines.append(f"self.camera.frame.add_updater({fn})")
-        start = max(0.0, float(kf.start_time))
-        dur = max(0.01, float(kf.duration))
-        events.append({"start": start, "kind": "stmt", "order": 0, "run_time": 0.0, "lines": start_lines})
-        events.append({"start": start + dur, "kind": "stmt", "order": 2, "run_time": 0.0,
-                       "lines": [f"self.camera.frame.remove_updater({fn})"]})
-
-    # 5. Emit waits + plays (and tracking statements) in time order.
-    events.sort(key=lambda e: (e["start"], e.get("order", 1)))
-    current = 0.0
+    uses_tracking = any(_is_track_kf(kf, var_map) for kf in keyframes)
     played_any = False
-    for ev in events:
-        gap = ev["start"] - current
-        if gap > 1e-6:
-            lines.append(f"self.wait({round(gap, 4)})")
-            current += gap
-        if ev.get("kind") == "stmt":
-            lines.extend(ev["lines"])
-            continue
-        if ev["lag"] > 1e-9 and len(ev["anims"]) > 1:
-            inner = f"AnimationGroup({', '.join(ev['anims'])}, lag_ratio={round(ev['lag'], 4)})"
-            lines.append(f"self.play({inner}, run_time={ev['run_time']}, rate_func={ev['easing']})")
-        else:
-            lines.append(f"self.play({', '.join(ev['anims'])}, run_time={ev['run_time']}, rate_func={ev['easing']})")
-        current += ev["run_time"]
-        played_any = True
+
+    if uses_tracking:
+        # --- Sequential model -------------------------------------------------
+        # Continuous camera tracking needs add/remove-updater *statements* timed
+        # between plays, which a single self.play can't express — so emit a play
+        # per time slot with self.wait() gaps. Keyframes sharing a group_id (or a
+        # start time) collapse into one parallel play.
+        grouped: dict[str, list] = {}
+        ungrouped_by_start: dict[float, list] = {}
+        events: list[dict] = []  # {start, run_time, anims, easing, lag} | stmt
+        for kf in ordered:
+            if _is_track_kf(kf, var_map):
+                continue
+            if kf.group_id:
+                grouped.setdefault(kf.group_id, []).append(kf)
+            else:
+                ungrouped_by_start.setdefault(round(float(kf.start_time), 4), []).append(kf)
+
+        for start, members in ungrouped_by_start.items():
+            anims = [a for kf in members if (a := _kf_anim(kf, var_map)) is not None]
+            if not anims:
+                continue
+            events.append({"start": start, "run_time": max(0.01, max(float(k.duration) for k in members)),
+                           "anims": anims, "easing": easing_func(_enum(members[0].easing)), "lag": 0.0})
+        for gid, members in grouped.items():
+            anims = [a for kf in members if (a := _kf_anim(kf, var_map)) is not None]
+            if not anims:
+                continue
+            events.append({"start": min(k.start_time for k in members),
+                           "run_time": max(0.01, max(float(k.duration) for k in members)),
+                           "anims": anims, "easing": easing_func(_enum(members[0].easing)),
+                           "lag": lag_by_group.get(gid, 0.0)})
+        for obj in objects:  # parameter sweeps
+            if obj.id not in var_map:
+                continue
+            sw = _sweep(obj)
+            if not sw:
+                continue
+            events.append({"start": max(0.0, _num(sw.get("start_time"), 0.0)),
+                           "run_time": max(0.01, _num(sw.get("duration"), 3.0)),
+                           "anims": [f"{tracker_name(obj.id)}.animate.set_value({_num(sw.get('to'), 1.0)})"],
+                           "easing": easing_func(str(sw.get("easing", "linear"))), "lag": 0.0})
+        for kf in ordered:  # camera-follow updater statements
+            if not _is_track_kf(kf, var_map):
+                continue
+            p = kf.params or {}
+            foc = var_map[p["focus_object_id"]]
+            fn = f"_camfollow_{re.sub(r'[^0-9a-zA-Z_]', '_', kf.id)}"
+            start_lines = [f"{fn} = lambda f: f.move_to({foc}.get_center())"]
+            if p.get("zoom") is not None:
+                start_lines.append(f"self.camera.frame.set(width=config.frame_width / {_zoom(p.get('zoom'))})")
+            start_lines.append("self.add(self.camera.frame)")
+            start_lines.append(f"self.camera.frame.add_updater({fn})")
+            start = max(0.0, float(kf.start_time))
+            dur = max(0.01, float(kf.duration))
+            events.append({"start": start, "kind": "stmt", "order": 0, "run_time": 0.0, "lines": start_lines})
+            events.append({"start": start + dur, "kind": "stmt", "order": 2, "run_time": 0.0,
+                           "lines": [f"self.camera.frame.remove_updater({fn})"]})
+
+        events.sort(key=lambda e: (e["start"], e.get("order", 1)))
+        current = 0.0
+        for ev in events:
+            gap = ev["start"] - current
+            if gap > 1e-6:
+                lines.append(f"self.wait({round(gap, 4)})")
+                current += gap
+            if ev.get("kind") == "stmt":
+                lines.extend(ev["lines"])
+                continue
+            if ev["lag"] > 1e-9 and len(ev["anims"]) > 1:
+                inner = f"AnimationGroup({', '.join(ev['anims'])}, lag_ratio={round(ev['lag'], 4)})"
+                lines.append(f"self.play({inner}, run_time={ev['run_time']}, rate_func={ev['easing']})")
+            else:
+                lines.append(f"self.play({', '.join(ev['anims'])}, run_time={ev['run_time']}, rate_func={ev['easing']})")
+            current += ev["run_time"]
+            played_any = True
+    else:
+        # --- Timeline model ---------------------------------------------------
+        # Every animation becomes a track inside one AnimationGroup; each carries
+        # its own run_time + easing and a Succession(Wait(delay), …) offsets its
+        # start, so animations overlap exactly as laid out — different start/end
+        # times included.
+        tracks: list[tuple[float, str]] = []
+        grouped: dict[str, list] = {}
+        for kf in ordered:
+            if kf.group_id:
+                grouped.setdefault(kf.group_id, []).append(kf)
+                continue
+            a = _kf_anim(kf, var_map)
+            if a is not None:
+                tracks.append((float(kf.start_time),
+                               _bake(a, max(0.01, float(kf.duration)), easing_func(_enum(kf.easing)))))
+        for gid, members in grouped.items():
+            exprs = [_bake(a, max(0.01, float(kf.duration)), easing_func(_enum(kf.easing)))
+                     for kf in members if (a := _kf_anim(kf, var_map)) is not None]
+            if not exprs:
+                continue
+            lag = round(lag_by_group.get(gid, 0.0), 4)
+            inner = exprs[0] if len(exprs) == 1 else f"AnimationGroup({', '.join(exprs)}, lag_ratio={lag})"
+            tracks.append((min(float(k.start_time) for k in members), inner))
+        for obj in objects:  # parameter sweeps
+            if obj.id not in var_map:
+                continue
+            sw = _sweep(obj)
+            if not sw:
+                continue
+            expr = f"{tracker_name(obj.id)}.animate.set_value({_num(sw.get('to'), 1.0)})"
+            tracks.append((max(0.0, _num(sw.get("start_time"), 0.0)),
+                           _bake(expr, max(0.01, _num(sw.get("duration"), 3.0)),
+                                 easing_func(str(sw.get("easing", "linear"))))))
+
+        if tracks:
+            tracks.sort(key=lambda t: t[0])
+            t0 = tracks[0][0]
+            if t0 > 1e-6:
+                lines.append(f"self.wait({round(t0, 4)})")
+            parts = []
+            for start, expr in tracks:
+                delay = round(start - t0, 4)
+                parts.append(f"Succession(Wait({delay}), {expr})" if delay > 1e-6 else expr)
+            if len(parts) == 1:
+                lines.append(f"self.play({parts[0]})")
+            else:
+                lines.append(f"self.play(AnimationGroup({', '.join(parts)}, lag_ratio=0.0))")
+            played_any = True
 
     # 6. Hold the final frame so the export isn't truncated.
     lines.append("self.wait(0.5)" if played_any or pre_added else "self.wait(1.0)")

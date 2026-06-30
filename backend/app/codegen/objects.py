@@ -101,6 +101,15 @@ def _emit_construct(obj: SceneObject) -> str:
         tex = props.get("tex_string", "")
         font_size = int(_num(props.get("font_size"), 42))
         ctor = "MathTex" if props.get("use_mathtex", True) else "Tex"
+        # Per-term coloring (set_color_by_tex) only targets a term if it's its own
+        # submobject, so isolate the colored substrings at construction. Otherwise
+        # `set_color_by_tex('a', …)` matches the single whole-string submobject and
+        # recolors the entire equation.
+        color_map = props.get("color_map") or {}
+        terms = [t for t in color_map if isinstance(t, str) and t.strip()]
+        if terms:
+            iso = ", ".join(repr(t) for t in terms)
+            return f"{ctor}({tex!r}, font_size={font_size}, substrings_to_isolate=[{iso}])"
         return f"{ctor}({tex!r}, font_size={font_size})"
 
     if otype == "shape":

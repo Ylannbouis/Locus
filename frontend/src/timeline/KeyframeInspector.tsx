@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import { useRenderStore } from '../store/renderStore';
 import { useTimelineStore, VERB_META, TIMELINE_VERBS, EASING_OPTIONS, defaultParams, CAMERA_ID } from './timelineStore';
@@ -65,10 +66,19 @@ function MorphTools({ keyMap, onChange, canPreview, keyframeId }: {
   const triggerMorphPreview = useRenderStore(s => s.triggerMorphPreview);
   const isRendering = useRenderStore(s => s.isRendering);
 
-  const entries = Object.entries(keyMap);
-  const rebuild = (list: [string, string][]) => {
+  // Local rows so a blank in-progress pair can exist before the "from" is typed
+  // (the map can't key an empty string). Only non-empty rows serialize back.
+  const [rows, setRows] = useState<[string, string][]>(() => Object.entries(keyMap));
+  useEffect(() => {
+    const serialized: Record<string, string> = {};
+    for (const [k, v] of rows) if (k) serialized[k] = v;
+    if (JSON.stringify(serialized) !== JSON.stringify(keyMap)) setRows(Object.entries(keyMap));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keyMap]);
+  const commit = (next: [string, string][]) => {
+    setRows(next);
     const o: Record<string, string> = {};
-    for (const [k, v] of list) if (k) o[k] = v;
+    for (const [k, v] of next) if (k) o[k] = v;
     onChange(o);
   };
 
@@ -81,17 +91,17 @@ function MorphTools({ keyMap, onChange, canPreview, keyframeId }: {
   return (
     <div className="field">
       <span className="field__label">Key map (match TeX substrings)</span>
-      {entries.map(([from, to], i) => (
+      {rows.map(([from, to], i) => (
         <div className="field-row" key={i} style={{ marginBottom: 4 }}>
           <input className="field__input" style={{ fontFamily: 'ui-monospace, monospace' }} type="text" placeholder="from" value={from}
-            onChange={e => { const l = [...entries] as [string, string][]; l[i] = [e.target.value, to]; rebuild(l); }} />
+            onChange={e => commit(rows.map((r, j) => j === i ? [e.target.value, r[1]] : r))} />
           <span style={{ alignSelf: 'center' }}>→</span>
           <input className="field__input" style={{ fontFamily: 'ui-monospace, monospace' }} type="text" placeholder="to" value={to}
-            onChange={e => { const l = [...entries] as [string, string][]; l[i] = [from, e.target.value]; rebuild(l); }} />
-          <button className="btn btn--ghost" onClick={() => rebuild(entries.filter((_, j) => j !== i) as [string, string][])}>✕</button>
+            onChange={e => commit(rows.map((r, j) => j === i ? [r[0], e.target.value] : r))} />
+          <button className="btn btn--ghost" onClick={() => commit(rows.filter((_, j) => j !== i))}>✕</button>
         </div>
       ))}
-      <button className="btn" onClick={() => rebuild([...entries as [string, string][], ['', '']])}>+ pair</button>
+      <button className="btn" onClick={() => setRows([...rows, ['', '']])}>+ pair</button>
       <button className="btn btn--secondary" style={{ marginTop: 6 }} disabled={!canPreview || isRendering} onClick={preview}>
         {isRendering ? 'Rendering…' : '▶ Preview Morph'}
       </button>

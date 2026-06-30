@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import { newId } from '../store/objectFactory';
 import type { SceneObject, Point2D, Scene, Relationship, RelationshipType } from '../types/ir';
@@ -430,25 +431,39 @@ function RelationshipEditor({ objId, scene }: { objId: string; scene: Scene }) {
 // --- sub-editors -----------------------------------------------------------
 
 function ColorMapEditor({ map, onChange }: { map: Record<string, string>; onChange: (m: Record<string, string>) => void }) {
-  const entries = Object.entries(map);
-  const rebuild = (list: [string, string][]) => {
+  // Local rows so an in-progress blank term can exist before it's typed (the map
+  // can't hold an empty key). Only non-empty rows are serialized back to the map.
+  const [rows, setRows] = useState<[string, string][]>(() => Object.entries(map));
+
+  // Resync when the map changes from outside this editor (object switch / undo).
+  useEffect(() => {
+    const serialized: Record<string, string> = {};
+    for (const [k, v] of rows) if (k) serialized[k] = v;
+    if (JSON.stringify(serialized) !== JSON.stringify(map)) setRows(Object.entries(map));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
+
+  const commit = (next: [string, string][]) => {
+    setRows(next);
     const o: Record<string, string> = {};
-    for (const [k, v] of list) if (k) o[k] = v;
+    for (const [k, v] of next) if (k) o[k] = v;
     onChange(o);
   };
+
   return (
     <div className="field">
       <span className="field__label">Term colors</span>
-      {entries.map(([term, color], i) => (
+      {rows.map(([term, color], i) => (
         <div className="field-row" key={i} style={{ marginBottom: 4 }}>
           <input className="field__input" style={{ fontFamily: 'ui-monospace, Consolas, monospace' }} type="text" value={term}
-            onChange={e => { const list = [...entries] as [string, string][]; list[i] = [e.target.value, color]; rebuild(list); }} />
+            placeholder="TeX substring" onChange={e => commit(rows.map((r, j) => j === i ? [e.target.value, r[1]] : r))} />
           <input className="field__color" type="color" value={color}
-            onChange={e => { const list = [...entries] as [string, string][]; list[i] = [term, e.target.value]; rebuild(list); }} />
-          <button className="btn btn--ghost" onClick={() => rebuild(entries.filter((_, j) => j !== i) as [string, string][])}>✕</button>
+            onChange={e => commit(rows.map((r, j) => j === i ? [r[0], e.target.value] : r))} />
+          <button className="btn btn--ghost" onClick={() => commit(rows.filter((_, j) => j !== i))}>✕</button>
         </div>
       ))}
-      <button className="btn" onClick={() => rebuild([...entries as [string, string][], ['', '#ffff00']])}>+ term</button>
+      {/* Add a blank row locally; it serializes to the map once a term is typed. */}
+      <button className="btn" onClick={() => setRows([...rows, ['', '#ffff00']])}>+ term</button>
     </div>
   );
 }

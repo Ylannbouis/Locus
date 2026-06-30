@@ -52,14 +52,22 @@ dependencies are missing/hidden:
 3. `self.add()` objects that are present from frame 0 — i.e. *not* introduced by a creation verb
    (`CREATION_VERBS`) and *not* a Transform target (those are pulled in by the transform), and
    not a group child (the group's VGroup represents them).
-4. Build timeline events: keyframes sharing a `group_id` collapse into one `self.play`
-   (`AnimationGroup(lag_ratio=…)` when lag > 0, else plain parallel); ungrouped keyframes each get
-   their own play. Parameter **sweeps** emit their own event animating the object's `ValueTracker`.
-   Every keyframe's animation goes through `_kf_anim` (routes camera keyframes to `_camera_anim`,
-   object keyframes to `emit_animation`). Continuous-tracking camera keyframes don't produce a play
-   — they emit **statement events** (`kind: "stmt"`) instead (see Camera below).
-5. Sort events by `(start_time, order)` and emit in order: `self.wait(gap)` between them, plays as
-   `self.play(...)`, statement events as raw lines. Hold the final frame with a trailing `self.wait`.
+4. Lay out the timeline. **Two emission models** (`uses_tracking` picks):
+   - **Timeline model (default):** every animation becomes a track in one
+     `self.play(AnimationGroup(…, lag_ratio=0))`. Each animation carries its own `run_time`+`rate_func`
+     (baked in by `_bake`), and a `Succession(Wait(delay), anim)` offsets its start — so animations
+     **overlap exactly as laid out on the timeline** (different start *and* end times, across objects).
+     A `group_id` set becomes a nested `AnimationGroup(…, lag_ratio=…)` track; **sweeps** become tracks.
+     The whole group is shifted so the first animation is at t=0 (a leading `self.wait` covers the offset).
+   - **Sequential model (when the scene uses continuous camera tracking):** one `self.play()` per time
+     slot with `self.wait()` gaps — the camera-follow updater needs add/remove **statements** timed
+     *between* plays, which a single play can't express. Here keyframes sharing a `group_id` *or* a
+     `start_time` collapse into one parallel play; tracking emits **statement events** (`kind: "stmt"`).
+   Both route each animation through `_kf_anim` (camera → `_camera_anim`, object → `emit_animation`).
+5. `_bake(expr, run_time, rate_func)` inserts timing into an animation expression so it can live inside
+   an `AnimationGroup`/`Succession`: `.animate.m(…)` → `.animate(run_time=…, rate_func=…).m(…)`; an
+   Animation-class call gets the kwargs inserted before the final `)`. Hold the final frame with a
+   trailing `self.wait`.
 
 ## Camera (Phase 5)
 

@@ -12,6 +12,7 @@ export interface Transform2D {
 
 // A faded preview copy of an object at a resulting transform.
 export interface Ghost {
+  key: string;         // unique per ghost (an object can have several at once)
   obj: SceneObject;    // clone positioned at the resulting center
   scale: number;       // cumulative scale, applied about the object's center
   rotationDeg: number; // cumulative rotation (Manim CCW degrees)

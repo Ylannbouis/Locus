@@ -76,9 +76,12 @@ export function Timeline() {
   };
 
   const startDrag = (e: React.PointerEvent, kf: Keyframe, mode: 'move' | 'resize') => {
+    if (e.button !== 0) return; // only the primary button selects / starts a drag
     e.stopPropagation();
     setMenu(null);
     (e.target as Element).setPointerCapture?.(e.pointerId);
+    // Selection happens here (once). Doing it again in onClick would double-toggle
+    // a shift-click and cancel it out.
     selectKf(kf.id, e.shiftKey);
     setDrag({ kfId: kf.id, mode, startClientX: e.clientX, origStart: kf.start_time, origDur: kf.duration, curStart: kf.start_time, curDur: kf.duration });
   };
@@ -130,7 +133,7 @@ export function Timeline() {
         style={{ left: start * pxPerSec, width: w, background: meta.color }}
         title={`${meta.label} @ ${start.toFixed(2)}s · ${dur.toFixed(2)}s${kf.group_id ? ' · parallel' : ''}`}
         onPointerDown={e => startDrag(e, kf, 'move')}
-        onClick={e => { e.stopPropagation(); setMenu(null); selectKf(kf.id, e.shiftKey); }}
+        onClick={e => { e.stopPropagation(); setMenu(null); }}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); selectKf(kf.id, false); setMenu({ x: e.clientX, y: e.clientY, kfId: kf.id }); }}>
         {w > 40 && <span className="tl__kf-label">{meta.label}</span>}
         <span className="tl__kf-handle" onPointerDown={e => startDrag(e, kf, 'resize')} />

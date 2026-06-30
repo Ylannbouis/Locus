@@ -31,6 +31,31 @@ export function CanvasStage() {
   const [view, setView] = useState<View>({ scale: 1, offsetX: 0, offsetY: 0 });
   const [band, setBand] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [handleDrag, setHandleDrag] = useState<{ id: string; pos: Point2D } | null>(null);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+
+  // Hold Space (with a single object selected) to peek at every transform ghost
+  // for that object. Only swallow Space then, so it stays usable elsewhere.
+  useEffect(() => {
+    const isTyping = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      const tag = el?.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!el?.isContentEditable;
+    };
+    const down = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || isTyping(e.target)) return;
+      if (useProjectStore.getState().selectedObjectIds.length === 1) { e.preventDefault(); setSpaceHeld(true); }
+    };
+    const up = (e: KeyboardEvent) => { if (e.code === 'Space') setSpaceHeld(false); };
+    const blur = () => setSpaceHeld(false);
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', blur);
+    };
+  }, []);
   const centered = useRef(false);
   const viewRef = useRef(view); viewRef.current = view;
   const pan = useRef({ active: false, sx: 0, sy: 0, ox: 0, oy: 0 });
@@ -45,6 +70,7 @@ export function CanvasStage() {
   const selKf = scene?.timeline.keyframes.find(k => k.id === selectedKfIds[0]);
   const previewKf = selKf && (selKf.verb === 'move' || selKf.verb === 'scale' || selKf.verb === 'rotate')
     ? selKf : undefined;
+  const spacePreview = spaceHeld && selectedIds.length === 1;
 
   // ---- Camera viewport overlay -------------------------------------------
   // Shows the framing of the selected camera keyframe, or the scene's initial
@@ -61,7 +87,7 @@ export function CanvasStage() {
   const hasCameraKf = !!scene?.timeline.keyframes.some(k => k.object_id === CAMERA_ID);
   // Suppress the initial-framing overlay while previewing a move/scale/rotate so
   // the canvas isn't cluttered; a selected camera keyframe still shows it.
-  const showCamera = !!camKf || ((trackActive || hasCameraKf) && !previewKf);
+  const showCamera = !!camKf || ((trackActive || hasCameraKf) && !previewKf && !spacePreview);
   const focusObj = camKf && camParams.focus_object_id ? objects.find(o => o.id === camParams.focus_object_id) : undefined;
   const camZoom = camKf ? Number(camParams.zoom ?? 1) : (camTrack?.initial_zoom ?? 1);
   // For a focus keyframe, frame the object where it is at the keyframe's time
@@ -87,38 +113,49 @@ export function CanvasStage() {
     else updateCameraTrack({ initial_pan: { x: 0, y: 0 }, initial_zoom: 1 });
   };
 
-  // ---- Move / scale / rotate preview -------------------------------------
-  // When such a keyframe is selected, show a faded ghost of the object at the
-  // resulting transform — stacking any earlier move/scale/rotate keyframes. A
-  // move also gets a direction arrow and a draggable handle at the destination.
-  const previewObj = previewKf ? objects.find(o => o.id === previewKf.object_id) : undefined;
-
-  let ghost: Ghost | null = null;
-  let moveFrom: Point2D | null = null;
-  let moveTo: Point2D | null = null;
-  let beforePos: Point2D | null = null;
-  if (previewKf && previewObj && scene) {
-    const { before, after } = transformAfter(scene, previewKf);
-    beforePos = before.pos;
-    // While dragging this keyframe's handle, follow the cursor; else the keyframe.
-    const live = handleDrag && handleDrag.id === previewKf.id ? handleDrag.pos : null;
-    const dest = previewKf.verb === 'move' ? (live ?? after.pos) : after.pos;
-    ghost = { obj: { ...previewObj, position: dest }, scale: after.scale, rotationDeg: after.rotationDeg };
-    if (previewKf.verb === 'move') { moveFrom = before.pos; moveTo = dest; }
-  }
+  // ---- Move / scale / rotate previews ------------------------------------
+  // Each previewed transform keyframe gets a faded ghost of its object at the
+  // resulting transform (stacking earlier move/scale/rotate keyframes). Sources:
+  //   - selecting transform keyframes (shift-click for several), or
+  //   - holding Space with one object selected → all its transform keyframes.
+  // Moves also get a direction arrow; a single selected move is draggable.
   const isLatexLike = (o: SceneObject) => o.type === 'latex_text' || o.type === 'matrix';
-  const ghostLatex = ghost && isLatexLike(ghost.obj) ? [ghost] : [];
-  const ghostShapes = ghost && !isLatexLike(ghost.obj) ? [ghost] : [];
-  const previewFrozenIds = previewKf && previewObj ? [previewObj.id] : [];
+  const isXform = (v: string) => v === 'move' || v === 'scale' || v === 'rotate';
+
+  const previewKfs = scene
+    ? (spacePreview
+        ? scene.timeline.keyframes.filter(k => k.object_id === selectedIds[0] && isXform(k.verb))
+        : scene.timeline.keyframes.filter(k => selectedKfIds.includes(k.id) && isXform(k.verb)))
+    : [];
+  // A lone selected move keyframe is draggable; everything else is read-only.
+  const dragKf = (!spacePreview && previewKfs.length === 1 && previewKfs[0].verb === 'move') ? previewKfs[0] : null;
+
+  const previewItems = scene ? previewKfs.flatMap(kf => {
+    const obj = objects.find(o => o.id === kf.object_id);
+    if (!obj) return [];
+    const { before, after } = transformAfter(scene, kf);
+    const live = dragKf?.id === kf.id && handleDrag?.id === kf.id ? handleDrag.pos : null;
+    const dest = kf.verb === 'move' ? (live ?? after.pos) : after.pos;
+    const ghost: Ghost = { key: kf.id, obj: { ...obj, position: dest }, scale: after.scale, rotationDeg: after.rotationDeg };
+    return [{ kf, ghost, from: before.pos, to: dest, isMove: kf.verb === 'move' }];
+  }) : [];
+
+  const ghostLatex = previewItems.filter(it => isLatexLike(it.ghost.obj)).map(it => it.ghost);
+  const ghostShapes = previewItems.filter(it => !isLatexLike(it.ghost.obj)).map(it => it.ghost);
+  const previewArrows = previewItems.filter(it => it.isMove);
+  // Ghosted objects shouldn't be draggable themselves while previewing.
+  const previewFrozenIds = [...new Set(previewItems.map(it => it.kf.object_id))];
+  const dragItem = dragKf ? previewItems.find(it => it.kf.id === dragKf.id) : undefined;
 
   const commitMoveDestination = (x: number, y: number) => {
-    if (!previewKf || !beforePos) return;
-    const p = previewKf.params as Record<string, unknown>;
+    if (!dragKf || !scene) return;
+    const before = transformAfter(scene, dragKf).before.pos;
+    const p = dragKf.params as Record<string, unknown>;
     // Preserve the keyframe's mode: 'by' (delta) stays relative; otherwise 'to'.
     if (p.delta && !p.target_position) {
-      updateKeyframe(previewKf.id, { params: { ...p, delta: { x: round2(x - beforePos.x), y: round2(y - beforePos.y) } } });
+      updateKeyframe(dragKf.id, { params: { ...p, delta: { x: round2(x - before.x), y: round2(y - before.y) } } });
     } else {
-      updateKeyframe(previewKf.id, { params: { ...p, target_position: { x: round2(x), y: round2(y) } } });
+      updateKeyframe(dragKf.id, { params: { ...p, target_position: { x: round2(x), y: round2(y) } } });
     }
   };
 
@@ -284,13 +321,13 @@ export function CanvasStage() {
               onDragEnd={e => commitCameraPan(manimX(e.target.x() + camHalfWpx), manimY(e.target.y() + camHalfHpx))}
             />
           )}
-          {moveFrom && moveTo && (
-            <Arrow
-              points={[worldX(moveFrom.x), worldY(moveFrom.y), worldX(moveTo.x), worldY(moveTo.y)]}
+          {previewArrows.map(a => (
+            <Arrow key={`arr-${a.kf.id}`}
+              points={[worldX(a.from.x), worldY(a.from.y), worldX(a.to.x), worldY(a.to.y)]}
               stroke="#ea580c" fill="#ea580c" strokeWidth={2} dash={[9, 5]}
               pointerLength={11} pointerWidth={10} listening={false} opacity={0.9}
             />
-          )}
+          ))}
         </Layer>
         {ghostShapes.length > 0 && (
           <Layer listening={false} opacity={0.42}>
@@ -300,7 +337,7 @@ export function CanvasStage() {
               // Rotate/scale about the object's center; Konva rotation is CW on
               // screen, Manim degrees are CCW in math space → negate.
               return (
-                <Group key={g.obj.id} x={cx} y={cy} offsetX={cx} offsetY={cy}
+                <Group key={g.key} x={cx} y={cy} offsetX={cx} offsetY={cy}
                   scaleX={g.scale} scaleY={g.scale} rotation={-g.rotationDeg}>
                   <SceneNodes objects={[g.obj]} selectedIds={[]} onSelect={() => {}} onCommitDrag={() => {}} />
                 </Group>
@@ -308,15 +345,15 @@ export function CanvasStage() {
             })}
           </Layer>
         )}
-        {moveTo && previewKf?.verb === 'move' && previewObj && !isLatexLike(previewObj) && (
+        {dragItem && !isLatexLike(dragItem.ghost.obj) && (
           <Layer>
             <Circle
-              x={worldX(moveTo.x)} y={worldY(moveTo.y)}
+              x={worldX(dragItem.to.x)} y={worldY(dragItem.to.y)}
               radius={9 / view.scale} fill="#ea580c" stroke="#ffffff" strokeWidth={1.5 / view.scale}
               hitStrokeWidth={24 / view.scale}
               draggable
               onMouseDown={e => { e.cancelBubble = true; }}
-              onDragMove={e => setHandleDrag({ id: previewKf.id, pos: { x: manimX(e.target.x()), y: manimY(e.target.y()) } })}
+              onDragMove={e => setHandleDrag({ id: dragItem.kf.id, pos: { x: manimX(e.target.x()), y: manimY(e.target.y()) } })}
               onDragEnd={e => { commitMoveDestination(manimX(e.target.x()), manimY(e.target.y())); setHandleDrag(null); }}
             />
           </Layer>
@@ -343,9 +380,9 @@ export function CanvasStage() {
         view={view}
         ghosts={ghostLatex}
         nonInteractiveIds={previewFrozenIds}
-        moveHandle={moveTo && previewKf?.verb === 'move' && previewObj && isLatexLike(previewObj) ? {
-          pos: moveTo,
-          onDragMove: pos => setHandleDrag({ id: previewKf.id, pos }),
+        moveHandle={dragItem && isLatexLike(dragItem.ghost.obj) ? {
+          pos: dragItem.to,
+          onDragMove: pos => setHandleDrag({ id: dragItem.kf.id, pos }),
           onCommit: pos => { commitMoveDestination(pos.x, pos.y); setHandleDrag(null); },
         } : null}
       />

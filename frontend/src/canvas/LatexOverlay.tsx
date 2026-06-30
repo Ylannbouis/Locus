@@ -279,7 +279,7 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
           // space (y-up), which reads as clockwise once y is flipped → negate.
           return (
             <div
-              key={`ghost-${o.id}`}
+              key={`ghost-${g.key}`}
               style={{
                 position: 'absolute',
                 left: worldX(o.position.x),
