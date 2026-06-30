@@ -21,6 +21,13 @@ interface ProjectState {
   clearProject: () => void;
   selectScene: (id: string) => void;
 
+  // Scenes
+  addScene: () => void;
+  removeScene: (id: string) => void;
+  duplicateScene: (id: string) => void;
+  renameScene: (id: string, name: string) => void;
+  moveScene: (id: string, dir: -1 | 1) => void;
+
   // Selection
   selectObject: (id: string | null) => void;
   toggleSelect: (id: string) => void;
@@ -102,7 +109,60 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   clearProject: () => set({ project: null, selectedSceneId: null, selectedObjectIds: [], history: [], future: [], isDirty: false }),
 
-  selectScene: (id) => set({ selectedSceneId: id, selectedObjectIds: [] }),
+  selectScene: (id) => { useTimelineStore.getState().clearKf(); set({ selectedSceneId: id, selectedObjectIds: [] }); },
+
+  addScene: () => {
+    const id = newId('scene');
+    _mutate(set, get, draft => {
+      draft.scenes.push({
+        id, name: `Scene ${draft.scenes.length + 1}`, background_color: null,
+        objects: [], relationships: [], timeline: { keyframes: [], groups: [] },
+        camera_track: { initial_pan: { x: 0, y: 0 }, initial_zoom: 1 },
+        transition_in: null, transition_out: null,
+      });
+    });
+    useTimelineStore.getState().clearKf();
+    set({ selectedSceneId: id, selectedObjectIds: [] });
+  },
+
+  removeScene: (id) => {
+    const { project } = get();
+    if (!project || project.scenes.length <= 1) return; // always keep one scene
+    const idx = project.scenes.findIndex(s => s.id === id);
+    _mutate(set, get, draft => { draft.scenes = draft.scenes.filter(s => s.id !== id); });
+    if (get().selectedSceneId === id) {
+      const remaining = get().project!.scenes;
+      useTimelineStore.getState().clearKf();
+      set({ selectedSceneId: remaining[Math.min(idx, remaining.length - 1)]?.id ?? null, selectedObjectIds: [] });
+    }
+  },
+
+  duplicateScene: (id) => {
+    const newSceneId = newId('scene');
+    _mutate(set, get, draft => {
+      const idx = draft.scenes.findIndex(s => s.id === id);
+      if (idx < 0) return;
+      const clone = JSON.parse(JSON.stringify(draft.scenes[idx])) as Scene;
+      clone.id = newSceneId;
+      clone.name = `${draft.scenes[idx].name} copy`;
+      draft.scenes.splice(idx + 1, 0, clone);
+    });
+    useTimelineStore.getState().clearKf();
+    set({ selectedSceneId: newSceneId, selectedObjectIds: [] });
+  },
+
+  renameScene: (id, name) => _mutate(set, get, draft => {
+    const s = draft.scenes.find(sc => sc.id === id);
+    if (s) s.name = name;
+  }),
+
+  moveScene: (id, dir) => _mutate(set, get, draft => {
+    const idx = draft.scenes.findIndex(s => s.id === id);
+    const j = idx + dir;
+    if (idx < 0 || j < 0 || j >= draft.scenes.length) return;
+    const [s] = draft.scenes.splice(idx, 1);
+    draft.scenes.splice(j, 0, s);
+  }),
 
   selectObject: (id) => { useTimelineStore.getState().clearKf(); set({ selectedObjectIds: id ? [id] : [] }); },
 

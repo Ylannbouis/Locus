@@ -14,7 +14,7 @@ storage is JSON files on disk and the render queue is an in-process `asyncio.Que
 | `codegen/` | IR `Scene` → Manim Python script. See `codegen/CLAUDE.md`. |
 | `render/queue.py` | In-process job registry + pub/sub for progress events. |
 | `render/worker.py` | Pulls jobs, runs Manim as a subprocess, locates the output MP4. |
-| `render/stitch.py` | ffmpeg concat of per-scene renders (multi-scene export). |
+| `render/stitch.py` | ffmpeg `concat_scenes` / `crossfade_scenes` (xfade) for multi-scene export, `zip_dir` for PNG sequences, `probe_duration` (ffprobe). All via blocking `subprocess.run` (see rule 1). |
 
 ## Run / develop
 
@@ -36,7 +36,7 @@ These come from running on the Windows asyncio **SelectorEventLoop** under uvico
 1. **No `asyncio.create_subprocess_exec` / `create_subprocess_shell`.** They raise
    `NotImplementedError` (whose `str()` is `""`, so it surfaces as a blank/empty error) on the
    SelectorEventLoop. Always run blocking `subprocess.run` / `Popen` via `asyncio.to_thread`.
-   Applied in `deps_check.py` and `render/worker.py`.
+   Applied in `deps_check.py`, `render/worker.py`, and `render/stitch.py` (ffmpeg/ffprobe).
 2. **Invoke Manim as `[sys.executable, "-m", "manim", "render", ...]`** — never `["manim", ...]`
    (the venv isn't on PATH, so a bare `manim` subprocess fails with `FileNotFoundError`).
    ffmpeg / pdflatex are system tools resolved via PATH — those are fine to call by name.
@@ -49,13 +49,23 @@ These come from running on the Windows asyncio **SelectorEventLoop** under uvico
 ## Render pipeline
 
 `POST /api/render` (or `/api/render/morph-preview`) → `queue.enqueue(RenderJob)` → the single
-background worker (`run_worker`, started in `main.lifespan`) processes one job at a time:
-generate script → write `scene.py` under the job dir → run Manim with `-ql` (preview) or `-qh`
-(final) → find the newest `*.mp4` excluding `partial_movie_files` → mark job `done`. Progress is
-nudged by a ticker task (Manim's stdout is sparse) and pushed to subscribers; the client watches
-via `WS /ws/render/{job_id}` and downloads from `/api/render/{job_id}/download`.
+background worker (`run_worker`, started in `main.lifespan`) processes one job at a time. For each
+scene to render: generate script → write `scene.py` under the job dir → run Manim (`_build_cmd`:
+`-ql`/`-qh` + optional `--resolution`/`--fps`/`--format`/`-s`/`-t`) → locate the output
+(`_find_output` is format-aware). Progress is nudged by a ticker (Manim's stdout is sparse) and
+pushed to subscribers; the client watches via `WS /ws/render/{job_id}` and downloads from
+`/api/render/{job_id}/download` (media type inferred from the file suffix).
 
-`RenderJob.mode` is `"scene"` (normal) or `"morph"` (a 1s standalone `morph_equation` preview).
+- `RenderJob.scene_id` is a specific scene, or **`None` = every scene**. Multi-scene **mp4** jobs
+  render each scene then stitch (`crossfade_scenes` when `transition`, else `concat_scenes`); other
+  formats / morph render a single scene.
+- `RenderJob.format` ∈ `mp4 | gif | png | still`. `png` returns the frame *directory*, which the
+  worker zips for download; `still` uses `-s` (last frame); `transparent` adds `-t` (non-mp4 only).
+- `RenderJob.mode` is `"scene"` (normal) or `"morph"` (a 1s standalone `morph_equation` preview).
+
+`GET /api/projects/{id}/scenes/{scene_id}/script` ejects the generated Manim `.py` (one-way). If
+`frontend/dist` exists it's mounted at `/` (single-process / packaged mode); API + WS routes are
+registered first so they win over the catch-all SPA mount.
 
 ## Conventions
 

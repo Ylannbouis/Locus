@@ -320,12 +320,18 @@ class ProjectSummary(BaseModel):
     scene_count: int
 
 
+RenderFormat = Literal["mp4", "gif", "png", "still"]
+
+
 class RenderRequest(BaseModel):
     project_id: str
-    scene_id: Optional[str] = None  # None = stitch all scenes
+    scene_id: Optional[str] = None  # None = render every scene and stitch them
     quality: Literal["preview", "final"] = "preview"
     resolution: Optional[ResolutionPreset] = None
     fps: Optional[int] = None
+    format: RenderFormat = "mp4"
+    transparent: bool = False
+    transition: bool = True  # crossfade between scenes when stitching all scenes
 
 
 class MorphPreviewRequest(BaseModel):
@@ -341,6 +347,11 @@ class RenderJob(BaseModel):
     quality: str
     mode: str = "scene"  # "scene" | "morph"
     keyframe_id: Optional[str] = None
+    format: RenderFormat = "mp4"
+    resolution: Optional[str] = None  # ResolutionPreset value, or None for quality default
+    fps: Optional[int] = None
+    transparent: bool = False
+    transition: bool = True
     status: Literal["queued", "running", "done", "error"] = "queued"
     progress: int = 0
     message: str = ""

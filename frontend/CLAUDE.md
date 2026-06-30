@@ -20,7 +20,7 @@ Stack: React 19 + react-konva + zustand + immer + katex + axios. Dev server on *
 | `inspector/` | Per-type property editors (right sidebar). |
 | `outliner/` | Object tree: select, z-order, show/hide, delete, group/ungroup. |
 | `timeline/` | Keyframe timeline UI (incl. a dedicated camera track) + per-keyframe inspector + its own UI-only store. |
-| `components/` | `DepGate` (blocks until deps OK), `ProjectHome`, `EditorShell` (layout), `AddPanel`, `RenderPanel`. |
+| `components/` | `DepGate` (blocks until deps OK), `ProjectHome`, `EditorShell` (layout), `AddPanel`, `ScenePanel` (multi-scene list), `RenderPanel` (export options), `CodeView` (eject-to-code / JSON modal). |
 
 `App.tsx`: `DepGate` → (`EditorShell` if a project is loaded, else `ProjectHome`).
 
@@ -74,6 +74,19 @@ codegen is the source of truth for the actual animation).
 - The **camera** viewport rectangle (cyan, `CAMERA_ID`-driven) shows the framing of a selected camera
   keyframe, or the scene's initial framing; drag it to set the pan, zoom/Reset live in a floating
   `.camera-hud`. It's suppressed while a move/scale/rotate keyframe is selected.
+
+## Scenes & export (Phase 6)
+
+- A project has multiple `scenes`; `ScenePanel` does add/delete/duplicate/reorder/inline-rename via
+  store actions (`addScene`/`removeScene`/`duplicateScene`/`moveScene`/`renameScene`). `selectedSceneId`
+  is the active scene; always keep ≥1 scene.
+- `RenderPanel` builds a `RenderOptions` (format mp4/gif/png/still, resolution preset, fps, transparent,
+  crossfade) and calls `renderStore.triggerRender(projectId, sceneId|null, opts)` — **`sceneId === null`
+  renders & stitches all scenes** (mp4 only; the panel disables "all scenes" for other formats). Quality
+  is derived from resolution (480p → `preview`, else `final`). Download extension/preview adapts to the
+  job's `format` (mp4 → `<video>`, gif/still → `<img>`, png → zip download).
+- `CodeView` shows the ejected Manim Python (`getSceneScript`, saved first so the backend sees the
+  latest IR) and the project JSON, read-only — the JSON is the source of truth, code export is one-way.
 
 ## When changing the IR
 

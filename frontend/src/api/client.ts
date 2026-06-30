@@ -17,6 +17,10 @@ export const getProject = (id: string): Promise<Project> =>
 export const saveProject = (project: Project): Promise<Project> =>
   http.put(`/api/projects/${project.id}`, project).then(r => r.data);
 
+// Eject to code: the generated Manim script for one scene (one-way).
+export const getSceneScript = (projectId: string, sceneId: string): Promise<string> =>
+  http.get(`/api/projects/${projectId}/scenes/${sceneId}/script`).then(r => r.data.script);
+
 // Deps
 export const getDeps = (): Promise<DepsResult> =>
   http.get('/api/system/deps').then(r => r.data);

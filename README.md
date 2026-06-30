@@ -73,7 +73,7 @@ mas/
 | 3 | Full animation system + timeline UI | ✓ Done |
 | 4 | Math-specific features (equation morphing, plots) | ✓ Done |
 | 5 | Camera system | ✓ Done |
-| 6 | Multi-scene, export formats, packaging | Pending |
+| 6 | Multi-scene, export formats, packaging | ✓ Done |
 
 ## Save File Format
 

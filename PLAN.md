@@ -77,15 +77,17 @@ put a fade and a write-on on a timeline → render an MP4 → download**. Everyt
 - Canvas viewport-rectangle overlay; drag to set pan target; camera reset.
 - **Checkpoint:** camera animation integrated. ✅ verified — a scene with initial framing + focus-on-object + pan/zoom (and a camera move grouped in parallel with an object animation) renders to MP4 via `MovingCameraScene` ("Played 5 animations"); zoomed frame inspected.
 
-### Phase 6 — Export, multi-scene, packaging ⬜
-- Multiple scenes per project: list panel, add/delete/reorder/duplicate.
-- Scene transitions via ffmpeg `xfade`; full-project stitch (`ffmpeg concat`).
-- Export formats: GIF, PNG sequence, single-frame still; transparent background (PNG seq).
+### Phase 6 — Export, multi-scene, packaging ✅
+- Multiple scenes per project: list panel, add/delete/reorder/duplicate, inline rename (`ScenePanel`).
+- Scene transitions via ffmpeg `xfade`; full-project stitch (`ffmpeg concat` or chained crossfade).
+- Export formats: GIF, PNG sequence (zipped), single-frame still; transparent background.
 - Resolution presets (480p/720p/1080p/4K) + custom FPS.
-- "Eject to code" (one-way export of the generated `.py`).
-- Read-only code/JSON view panel.
-- Finalize `setup.ps1`; post-v1 packaging skeleton (PyInstaller + embedded static frontend).
-- **Checkpoint:** v1 feature-complete.
+- "Eject to code" (one-way export of the generated `.py`) + read-only code/JSON view panel (`CodeView`).
+- Backend serves the built frontend (`frontend/dist`) for single-process running; `scripts/package.ps1`
+  builds the frontend and documents the PyInstaller bundle skeleton.
+- **Checkpoint:** v1 feature-complete. ✅ verified — a 2-scene project renders each scene and
+  stitches them with a crossfade to MP4 (duration + transition frame inspected); GIF, still-PNG, and
+  zipped PNG-sequence exports all produce valid files.
 
 ---
 

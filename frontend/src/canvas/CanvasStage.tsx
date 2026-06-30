@@ -243,6 +243,12 @@ export function CanvasStage() {
         scaleX={view.scale}
         scaleY={view.scale}
         onMouseDown={onStageMouseDown}
+        onMouseMove={e => {
+          // Reset the cursor over empty canvas; shapes set 'move' on hover. This
+          // also recovers if a hovered shape disappears (e.g. is deleted).
+          const stage = e.target.getStage();
+          if (stage && e.target === stage) stage.container().style.cursor = 'default';
+        }}
       >
         <Layer>
           <Rect

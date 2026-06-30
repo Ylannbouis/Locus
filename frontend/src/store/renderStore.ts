@@ -1,12 +1,21 @@
 import { create } from 'zustand';
-import type { RenderJob } from '../types/ir';
+import type { RenderFormat, RenderJob, ResolutionPreset } from '../types/ir';
 import { startRender, startMorphPreview, wsRenderUrl } from '../api/client';
+
+export interface RenderOptions {
+  quality: 'preview' | 'final';
+  format?: RenderFormat;
+  resolution?: ResolutionPreset | null;
+  fps?: number | null;
+  transparent?: boolean;
+  transition?: boolean;
+}
 
 interface RenderState {
   job: RenderJob | null;
   videoUrl: string | null;
   isRendering: boolean;
-  triggerRender: (projectId: string, sceneId: string | null, quality: 'preview' | 'final') => Promise<void>;
+  triggerRender: (projectId: string, sceneId: string | null, opts: RenderOptions) => Promise<void>;
   triggerMorphPreview: (projectId: string, sceneId: string, keyframeId: string) => Promise<void>;
   reset: () => void;
 }
@@ -84,13 +93,14 @@ export const useRenderStore = create<RenderState>((set) => {
       set({ job: null, videoUrl: null, isRendering: false });
     },
 
-    triggerRender: (projectId, sceneId, quality) => launchJob(
-      () => startRender({ project_id: projectId, scene_id: sceneId, quality }),
+    triggerRender: (projectId, sceneId, opts) => launchJob(
+      () => startRender({ project_id: projectId, scene_id: sceneId, ...opts }),
       {
         job_id: '',
         project_id: projectId,
         scene_id: sceneId,
-        quality,
+        quality: opts.quality,
+        format: opts.format,
         status: 'queued',
         progress: 0,
         message: 'Queued…',

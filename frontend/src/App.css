@@ -222,12 +222,39 @@ body {
   overflow: hidden;
 }
 
+.editor-shell__scenebar {
+  flex-shrink: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-shell__resizer {
+  flex-shrink: 0;
+  height: 8px;
+  margin-top: -4px;       /* overlap the border for a wider grab target */
+  z-index: 5;
+  cursor: ns-resize;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.editor-shell__resizer::after {
+  content: '';
+  width: 44px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+}
+.editor-shell__resizer:hover::after { background: var(--accent); }
+
 .editor-shell__timeline {
   height: 220px;
   flex-shrink: 0;
   background: var(--surface);
   border-top: 1px solid var(--border);
   padding: 8px 12px;
+  overflow: hidden;
 }
 
 .canvas-placeholder {
@@ -281,6 +308,64 @@ body {
 .render-panel__video { display: flex; flex-direction: column; gap: 8px; }
 .render-panel__player { width: 100%; border-radius: 6px; border: 1px solid var(--border); background: #000; }
 .render-panel__download { text-align: center; text-decoration: none; display: block; }
+.render-panel__head { display: flex; align-items: center; justify-content: space-between; }
+
+/* ---------------------------------------------------------------------------
+   Scene bar (horizontal, above the canvas)
+--------------------------------------------------------------------------- */
+.scene-bar { display: flex; align-items: center; gap: 10px; padding: 5px 12px; overflow-x: auto; }
+.scene-bar__label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); flex-shrink: 0; }
+.scene-bar__tabs { display: flex; align-items: center; gap: 6px; }
+.scene-tab {
+  display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface2); cursor: pointer;
+  font-size: 13px; white-space: nowrap; flex-shrink: 0;
+}
+.scene-tab:hover { border-color: var(--text-dim); }
+.scene-tab.is-active { border-color: var(--accent); background: var(--bg3); }
+.scene-tab__num { font-size: 10px; color: var(--text-dim); }
+.scene-tab__name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.scene-tab__rename { font-size: 13px; padding: 1px 4px; width: 110px; border: 1px solid var(--accent); border-radius: 4px; background: var(--surface); color: var(--text); }
+.scene-tab__actions { display: flex; align-items: center; gap: 1px; margin-left: 2px; }
+.scene-tab__actions button {
+  background: none; border: none; color: var(--text-dim); cursor: pointer;
+  font-size: 13px; padding: 0 3px; border-radius: 4px; line-height: 1;
+}
+.scene-tab__actions button:hover:not(:disabled) { background: var(--surface); color: var(--text); }
+.scene-tab__actions button:disabled { opacity: 0.3; cursor: default; }
+.scene-tab__del:hover:not(:disabled) { color: var(--danger); }
+.scene-bar__add {
+  flex-shrink: 0; background: none; border: 1px dashed var(--border); border-radius: 6px;
+  padding: 4px 10px; cursor: pointer; color: var(--text-dim); font-size: 12px;
+}
+.scene-bar__add:hover { color: var(--text); border-color: var(--accent); }
+
+/* ---------------------------------------------------------------------------
+   Code / JSON view modal
+--------------------------------------------------------------------------- */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 100; background: rgba(15, 23, 42, 0.55);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.code-view {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  width: min(900px, 100%); max-height: 88vh; display: flex; flex-direction: column;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+.code-view__head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.code-view__tabs { display: flex; gap: 4px; }
+.code-view__tab {
+  background: none; border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px;
+  font-size: 13px; cursor: pointer; color: var(--text-dim);
+}
+.code-view__tab.is-active { background: var(--bg3); color: var(--accent); border-color: var(--accent); }
+.code-view__head-actions { display: flex; gap: 6px; }
+.code-view__hint { color: var(--text-dim); font-size: 12px; margin: 8px 14px 0; }
+.code-view__pre {
+  margin: 10px 14px 14px; overflow: auto; flex: 1; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 6px; padding: 12px;
+  font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.5; color: var(--text);
+}
 
 /* ---------------------------------------------------------------------------
    Shared panel bits

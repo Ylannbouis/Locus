@@ -36,6 +36,9 @@ interface Props {
 }
 
 const PXU = PX_PER_UNIT;
+// Extra clickable padding (world px) around thin/open shapes so lines, arrows
+// and curves are easy to grab even where they're only a couple of pixels wide.
+const HIT = 16;
 
 function rng(v: unknown, fb: number[]): number[] {
   return Array.isArray(v) && v.length >= 2 ? (v as number[]) : fb;
@@ -134,8 +137,14 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
     const fill = hexToRgba(o.style.fill_color, o.style.fill_opacity ?? 0);
     const sel = isSel ? { shadowColor: '#2563eb', shadowBlur: 10, shadowOpacity: 1 } : {};
     const pos = { x: worldX(o.position.x), y: worldY(o.position.y) };
+    // Show the move cursor over any selectable object (matches the equations).
+    const hover = isFrozen ? {} : {
+      onMouseEnter: (e: Konva.KonvaEventObject<MouseEvent>) => { const st = e.target.getStage(); if (st) st.container().style.cursor = 'move'; },
+      onMouseLeave: (e: Konva.KonvaEventObject<MouseEvent>) => { const st = e.target.getStage(); if (st) st.container().style.cursor = 'default'; },
+    };
     const drag = isFrozen ? { draggable: false, listening: false } : {
       draggable: true,
+      ...hover,
       onMouseDown: (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; },
       onClick: (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey); },
       onDragStart: (e: Konva.KonvaEventObject<DragEvent>) => { if (!isSel) onSelect(o.id, false); void e; },
@@ -159,12 +168,12 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
       if (st === 'line' || st === 'dashed_line') {
         const pts = [worldX(p.start_point?.x ?? 0), worldY(p.start_point?.y ?? 0), worldX(p.end_point?.x ?? 0), worldY(p.end_point?.y ?? 0)];
         const d = Number(p.dash_length ?? 0.15) * PXU;
-        return <Line {...common} points={pts} stroke={stroke} strokeWidth={strokeWidth} dash={st === 'dashed_line' ? [d, d] : undefined} />;
+        return <Line {...common} points={pts} stroke={stroke} strokeWidth={strokeWidth} hitStrokeWidth={HIT} dash={st === 'dashed_line' ? [d, d] : undefined} />;
       }
       if (st === 'arrow' || st === 'double_arrow') {
         const pts = [worldX(p.start_point?.x ?? 0), worldY(p.start_point?.y ?? 0), worldX(p.end_point?.x ?? 0), worldY(p.end_point?.y ?? 0)];
         const tip = Number(p.tip_length ?? 0.3) * PXU;
-        return <Arrow {...common} points={pts} stroke={stroke} fill={stroke} strokeWidth={strokeWidth}
+        return <Arrow {...common} points={pts} stroke={stroke} fill={stroke} strokeWidth={strokeWidth} hitStrokeWidth={HIT}
           pointerLength={tip} pointerWidth={tip * 0.9} pointerAtBeginning={st === 'double_arrow'} />;
       }
       // rectangle (default)
@@ -206,8 +215,8 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
       if (pts.length < 4) return null;
       return (
         <Line key={o.id} points={pts} stroke={stroke} strokeWidth={strokeWidth} lineJoin="round" lineCap="round"
-          listening={!isFrozen}
-          {...sel}
+          listening={!isFrozen} hitStrokeWidth={HIT}
+          {...hover} {...sel}
           onMouseDown={isFrozen ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }}
           onClick={pick} />
       );
@@ -220,7 +229,7 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
         const dir = (p.direction as { x: number; y: number }) ?? { x: 1, y: 0 };
         const tip = 0.25 * PXU;
         return <Arrow {...common} points={[0, 0, worldX(dir.x), worldY(dir.y)]} stroke={stroke} fill={stroke}
-          strokeWidth={strokeWidth} pointerLength={tip} pointerWidth={tip * 0.9} />;
+          strokeWidth={strokeWidth} hitStrokeWidth={HIT} pointerLength={tip} pointerWidth={tip * 0.9} />;
       }
 
       if (p.subtype === 'angle') {
@@ -247,7 +256,7 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
           const ang = a1 + (delta * i) / N;
           pts.push(worldX(v[0] + R * Math.cos(ang)), worldY(v[1] + R * Math.sin(ang)));
         }
-        return <Line key={o.id} points={pts} stroke={stroke} strokeWidth={strokeWidth} listening={!isFrozen} {...sel}
+        return <Line key={o.id} points={pts} stroke={stroke} strokeWidth={strokeWidth} listening={!isFrozen} hitStrokeWidth={HIT} {...hover} {...sel}
           onMouseDown={isFrozen ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }} onClick={pick} />;
       }
 
@@ -262,7 +271,7 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
         else if (dir === 'UP') d = bracePath(worldX(b.cx - b.hw), worldX(b.cx + b.hw), worldY(b.cy + b.hh + buff), depth, 'h', -1);
         else if (dir === 'LEFT') d = bracePath(worldY(b.cy - b.hh), worldY(b.cy + b.hh), worldX(b.cx - b.hw - buff), depth, 'v', -1);
         else d = bracePath(worldY(b.cy - b.hh), worldY(b.cy + b.hh), worldX(b.cx + b.hw + buff), depth, 'v', +1);
-        return <Path key={o.id} data={d} stroke={stroke} strokeWidth={2} listening={!isFrozen} {...sel}
+        return <Path key={o.id} data={d} stroke={stroke} strokeWidth={2} listening={!isFrozen} hitStrokeWidth={HIT} {...hover} {...sel}
           onMouseDown={isFrozen ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }} onClick={pick} />;
       }
 

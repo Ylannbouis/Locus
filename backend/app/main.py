@@ -9,9 +9,11 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import deps_check
+from app.codegen.scene import generate_scene_script
 from app.models.ir import (
     MorphPreviewRequest, Project, ProjectSummary, RenderJob, RenderRequest,
 )
@@ -23,6 +25,10 @@ from app.storage.projects import (
     load_project,
     save_project,
 )
+
+_MEDIA_TYPES = {
+    ".mp4": "video/mp4", ".gif": "image/gif", ".png": "image/png", ".zip": "application/zip",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +121,11 @@ async def post_render(req: RenderRequest) -> dict[str, str]:
         project_id=req.project_id,
         scene_id=req.scene_id,
         quality=req.quality,
+        format=req.format,
+        resolution=req.resolution.value if req.resolution else None,
+        fps=req.fps,
+        transparent=req.transparent,
+        transition=req.transition,
     )
     rq.enqueue(job)
     return {"job_id": job_id}
@@ -151,7 +162,24 @@ async def download_render(job_id: str) -> FileResponse:
     path = Path(job.output_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Output file missing")
-    return FileResponse(str(path), media_type="video/mp4", filename=path.name)
+    media_type = _MEDIA_TYPES.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(str(path), media_type=media_type, filename=path.name)
+
+
+# ---------------------------------------------------------------------------
+# Eject to code — return the generated Manim script for a scene (one-way)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/projects/{project_id}/scenes/{scene_id}/script")
+async def get_scene_script(project_id: str, scene_id: str) -> dict[str, str]:
+    try:
+        project = load_project(project_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Project not found")
+    scene = next((s for s in project.scenes if s.id == scene_id), None)
+    if scene is None:
+        raise HTTPException(status_code=404, detail="Scene not found")
+    return {"script": generate_scene_script(project, scene)}
 
 
 # ---------------------------------------------------------------------------
@@ -189,3 +217,15 @@ async def ws_render(websocket: WebSocket, job_id: str) -> None:
     finally:
         rq.unsubscribe(job_id, sub_q)
     await websocket.close()
+
+
+# ---------------------------------------------------------------------------
+# Packaged / production mode: serve the built frontend if it exists.
+# In dev the frontend runs on Vite (5173); this mount is a no-op then. API and
+# WebSocket routes are registered above, so they take precedence over this
+# catch-all SPA mount.
+# ---------------------------------------------------------------------------
+
+_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if _DIST.is_dir():
+    app.mount("/", StaticFiles(directory=str(_DIST), html=True), name="frontend")

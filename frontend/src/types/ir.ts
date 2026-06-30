@@ -152,12 +152,17 @@ export interface ProjectSummary {
   scene_count: number;
 }
 
+export type RenderFormat = 'mp4' | 'gif' | 'png' | 'still';
+
 export interface RenderRequest {
   project_id: string;
   scene_id?: string | null;
   quality: 'preview' | 'final';
   resolution?: ResolutionPreset | null;
   fps?: number | null;
+  format?: RenderFormat;
+  transparent?: boolean;
+  transition?: boolean;
 }
 
 export interface RenderJob {
@@ -165,6 +170,7 @@ export interface RenderJob {
   project_id: string;
   scene_id?: string | null;
   quality: string;
+  format?: RenderFormat;
   status: 'queued' | 'running' | 'done' | 'error';
   progress: number;
   message: string;
