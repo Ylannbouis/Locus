@@ -16,10 +16,10 @@ Stack: React 19 + react-konva + zustand + immer + katex + axios. Dev server on *
 | `store/renderStore.ts` | Render/morph-preview job state + WebSocket progress subscription. |
 | `store/objectFactory.ts` | `newId()` + factories that build default `SceneObject`s per type. |
 | `api/client.ts` | Thin axios wrappers over the REST API + the WS URL helper. Calls same-origin `/api`, `/ws` (proxied). |
-| `canvas/` | Konva stage, coordinate model, scene-node rendering, LaTeX overlay, plot/geometry sampling. |
+| `canvas/` | Konva stage, coordinate model, scene-node rendering, LaTeX overlay, plot/geometry sampling, `motion.ts` (timeline transform math), camera viewport overlay + move/scale/rotate ghost previews. |
 | `inspector/` | Per-type property editors (right sidebar). |
 | `outliner/` | Object tree: select, z-order, show/hide, delete, group/ungroup. |
-| `timeline/` | Keyframe timeline UI + per-keyframe inspector + its own UI-only store. |
+| `timeline/` | Keyframe timeline UI (incl. a dedicated camera track) + per-keyframe inspector + its own UI-only store. |
 | `components/` | `DepGate` (blocks until deps OK), `ProjectHome`, `EditorShell` (layout), `AddPanel`, `RenderPanel`. |
 
 `App.tsx`: `DepGate` → (`EditorShell` if a project is loaded, else `ProjectHome`).
@@ -55,6 +55,25 @@ Shapes render in Konva (`canvas/SceneNodes.tsx`); equations and matrices render 
 HTML overlay (`canvas/LatexOverlay.tsx`) so they're crisp and selectable. Plot/geometry sampling
 (parametric curves, vector fields) is JS-side in `canvas/plotting.ts` for the live preview only —
 the *real* curve is produced by Manim at render time.
+
+## Timeline previews & camera overlay (`canvas/CanvasStage.tsx`, `canvas/motion.ts`)
+
+These are **editor-only** aids — they reflect the timeline but never touch the render (the backend
+codegen is the source of truth for the actual animation).
+
+- `motion.ts` `effectiveTransform(scene, objId, time)` accumulates every move/scale/rotate keyframe
+  *before* `time` (in `start_time` order, mirroring Manim's sequential play) into `{pos, scale,
+  rotationDeg}`. `transformAfter(scene, kf)` returns `{before, after}` for one keyframe. So previews
+  **stack** prior transforms. `effectivePosition` (=`.pos`) feeds the camera-focus overlay.
+- Selecting a **move/scale/rotate** keyframe shows a faded **ghost** at the resulting transform —
+  Konva shapes inside a `<Group>` pivoted about the object's center; equations/matrices via the
+  `LatexOverlay` `ghosts` prop (CSS `rotate(${-deg})` — CSS/Konva rotation is CW on screen while
+  Manim degrees are CCW in math space, so **negate**). A **move** also draws a direction arrow and a
+  draggable destination handle (Konva circle for shapes; an HTML handle for LaTeX/matrix since those
+  live in the overlay above the canvas) → `updateKeyframe` commits the new `target_position`/`delta`.
+- The **camera** viewport rectangle (cyan, `CAMERA_ID`-driven) shows the framing of a selected camera
+  keyframe, or the scene's initial framing; drag it to set the pan, zoom/Reset live in a floating
+  `.camera-hud`. It's suppressed while a move/scale/rotate keyframe is selected.
 
 ## When changing the IR
 

@@ -63,7 +63,11 @@ uvicorn `--reload` safe (no orphaned reloader/worker processes).
 
 ## Status
 
-Phases 0–4 complete: end-to-end render pipeline, full object catalog, animation system +
-timeline UI, and math-specific features (parametric/implicit/vector-field plots, equation
-morphing with key-maps, `ValueTracker` parameter sweeps, geometry primitives). See `README.md`
-for the milestone table; `PLAN.md` for the full spec.
+Phases 0–5 complete: end-to-end render pipeline, full object catalog, animation system +
+timeline UI, math-specific features (parametric/implicit/vector-field plots, equation morphing
+with key-maps, `ValueTracker` parameter sweeps, geometry primitives), and the **camera system**
+(keyframeable pan/zoom/focus on a dedicated timeline track, continuous object tracking, codegen
+auto-switching to `MovingCameraScene`). The canvas also shows live **transform previews** —
+faded ghosts of where a selected move/scale/rotate keyframe lands (stacking earlier transforms),
+with a draggable destination handle for moves. See `README.md` for the milestone table;
+`PLAN.md` for the full spec. Phase 6 (multi-scene, export formats, packaging) is next.

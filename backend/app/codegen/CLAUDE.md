@@ -8,10 +8,10 @@ run by the render worker.
 
 | File | Role |
 |------|------|
-| `template.py` | The Jinja2 scaffold + `SCENE_CLASS_NAME = "MasScene"`. The construct body is pre-indented (8 spaces) and injected. Imports numpy fns (`sin`, `cos`, …) so plot expressions can use them bare. |
+| `template.py` | The Jinja2 scaffold + `SCENE_CLASS_NAME = "MasScene"`. `render_script(body, background_color, base_class="Scene")` — `base_class` becomes `MovingCameraScene` when the scene uses the camera. Construct body is pre-indented (8 spaces) and injected; imports numpy fns (`sin`, `cos`, …) so plot expressions can use them bare. |
 | `objects.py` | `emit_object(obj) -> (var, lines)`: Mobject construction + styling + placement, per object type/subtype. |
-| `animations.py` | `emit_animation(verb, var, params, var_map) -> expr`: one verb → the inner expression of a `self.play(...)`. |
-| `scene.py` | Orchestrator: `build_body` / `generate_scene_script` / `generate_morph_preview_script`. Ties objects + relationships + timeline together. |
+| `animations.py` | `emit_animation(verb, var, params, var_map) -> expr`: one **object** verb → the inner expression of a `self.play(...)`. (Camera verbs are handled in `scene.py`, not here.) |
+| `scene.py` | Orchestrator: `build_body` / `generate_scene_script` / `generate_morph_preview_script`. Ties objects + relationships + timeline + camera together. |
 
 ## Key conventions
 
@@ -55,8 +55,32 @@ dependencies are missing/hidden:
 4. Build timeline events: keyframes sharing a `group_id` collapse into one `self.play`
    (`AnimationGroup(lag_ratio=…)` when lag > 0, else plain parallel); ungrouped keyframes each get
    their own play. Parameter **sweeps** emit their own event animating the object's `ValueTracker`.
-5. Sort events by `start_time`; emit `self.wait(gap)` between them. Hold the final frame with a
-   trailing `self.wait`.
+   Every keyframe's animation goes through `_kf_anim` (routes camera keyframes to `_camera_anim`,
+   object keyframes to `emit_animation`). Continuous-tracking camera keyframes don't produce a play
+   — they emit **statement events** (`kind: "stmt"`) instead (see Camera below).
+5. Sort events by `(start_time, order)` and emit in order: `self.wait(gap)` between them, plays as
+   `self.play(...)`, statement events as raw lines. Hold the final frame with a trailing `self.wait`.
+
+## Camera (Phase 5)
+
+Camera keyframes reuse the normal `Keyframe` with the sentinel `object_id == CAMERA_ID`
+(`"__camera__"`) and verb `camera_move`; params are `pan {x,y}` (or `focus_object_id` to target an
+object's center) + an absolute `zoom` (and `track: true` for continuous follow). **No IR schema
+change** — it's all in the free-form `params` dict.
+
+- `_uses_camera(scene)` → any camera keyframe or a non-default `camera_track`. Drives the
+  `base_class` choice in `generate_scene_script` and the initial-framing emission in `build_body`.
+- `_camera_anim(kf, var_map)` → a one-shot `self.camera.frame.animate.move_to(…).set(width=config.frame_width / zoom)`
+  (focus → `<objvar>.get_center()`). Width is only emitted when `zoom` is present, so a pure pan
+  keeps the current zoom. `_zoom()` clamps non-positive/garbage zoom to 1.0 (guards `/ 0`).
+- **Continuous tracking** (`_is_track_kf`): emits a follow-updater over the keyframe's window as two
+  statement events — `add_updater` at `start` (`order` 0, before same-time plays) and
+  `remove_updater` at `start+duration` (`order` 2, after). **GOTCHA:** the start statement must run
+  `self.add(self.camera.frame)` *before* `add_updater` — the frame's updater only fires during
+  `self.play()` while the frame is in the scene's mobject list, otherwise the camera silently stays
+  put. (One-shot focus moves are explicit animations and don't need this.)
+- Initial framing (`camera_track.initial_pan/zoom`) is emitted as step 0 of `build_body`
+  (`self.camera.frame.move_to/set`).
 
 ## Adding a new object type / verb / subtype
 
@@ -64,6 +88,7 @@ dependencies are missing/hidden:
   differs), plus the frontend factory + inspector + canvas node. No IR schema change needed if it
   only adds props (props are a free-form dict).
 - New **animation verb**: add to `AnimationVerb` (both `ir.py` and `ir.ts`), handle it in
-  `emit_animation`, and add to `CREATION_VERBS` if it introduces the object to the scene.
-- A verb that can't emit (e.g. a transform with a missing target) returns `None`; the scene
-  builder drops it. Preserve that contract.
+  `emit_animation` (object verbs) or `_camera_anim`/`_kf_anim` (camera verbs), and add to
+  `CREATION_VERBS` if it introduces the object to the scene.
+- A verb that can't emit (e.g. a transform with a missing target, or a camera move with no
+  resolvable pan/focus) returns `None`; the scene builder drops it. Preserve that contract.

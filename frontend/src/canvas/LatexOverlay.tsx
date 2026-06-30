@@ -141,19 +141,18 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
   const [drag, setDrag] = useState<{ id: string; x: number; y: number } | null>(null);
   const dragRef = useRef<{ id: string; startSX: number; startSY: number; startX: number; startY: number } | null>(null);
   const moveHandleRef = useRef<{ startSX: number; startSY: number; startX: number; startY: number } | null>(null);
-  const moveHandleLiveRef = useRef<Point2D | null>(null);
-
-  useEffect(() => { moveHandleLiveRef.current = null; }, [moveHandle?.pos.x, moveHandle?.pos.y]);
 
   useEffect(() => {
+    // Cursor position (scene units, y flipped) relative to a drag's start.
+    const handlePos = (mh: { startSX: number; startSY: number; startX: number; startY: number }, e: PointerEvent): Point2D => ({
+      x: mh.startX + (e.clientX - mh.startSX) / (view.scale * PX_PER_UNIT),
+      y: mh.startY - (e.clientY - mh.startSY) / (view.scale * PX_PER_UNIT),
+    });
+
     function onMove(e: PointerEvent) {
       const mh = moveHandleRef.current;
       if (mh && moveHandle) {
-        const dxUnits = (e.clientX - mh.startSX) / (view.scale * PX_PER_UNIT);
-        const dyUnits = -(e.clientY - mh.startSY) / (view.scale * PX_PER_UNIT);
-        const pos = { x: mh.startX + dxUnits, y: mh.startY + dyUnits };
-        moveHandleLiveRef.current = pos;
-        moveHandle.onDragMove(pos);
+        moveHandle.onDragMove(handlePos(mh, e));
         return;
       }
       const d = dragRef.current;
@@ -162,11 +161,12 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
       const dyUnits = -(e.clientY - d.startSY) / (view.scale * PX_PER_UNIT);
       setDrag({ id: d.id, x: d.startX + dxUnits, y: d.startY + dyUnits });
     }
-    function onUp() {
+    function onUp(e: PointerEvent) {
       const mh = moveHandleRef.current;
       if (mh && moveHandle) {
-        if (moveHandleLiveRef.current) moveHandle.onCommit(moveHandleLiveRef.current);
-        moveHandleLiveRef.current = null;
+        // Commit the final cursor position straight from the pointer-up event so
+        // the keyframe (and the inspector) always reflect where the handle landed.
+        moveHandle.onCommit(handlePos(mh, e));
         moveHandleRef.current = null;
         return;
       }
