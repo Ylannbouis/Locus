@@ -593,6 +593,8 @@ body {
    Audio track (voiceover clips) + playback transport
 --------------------------------------------------------------------------- */
 .tl__transport { font-size: 13px; padding: 3px 8px; }
+.tl__snap { font-size: 12px; padding: 3px 8px; }
+.tl__snap.is-on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .tl__time {
   font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-dim);
   min-width: 52px; text-align: right;

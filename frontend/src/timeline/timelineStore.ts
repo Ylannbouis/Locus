@@ -4,6 +4,8 @@ import type { AnimationVerb } from '../types/ir';
 // Sentinel object id for keyframes that drive the camera (mirrors the backend).
 export const CAMERA_ID = '__camera__';
 
+const SNAP_KEY = 'mas.tlSnap';
+
 // UI-only state for the timeline editor (not persisted with the project).
 interface TimelineUIState {
   selectedKfIds: string[];
@@ -11,12 +13,14 @@ interface TimelineUIState {
   pxPerSec: number;
   playhead: number; // seconds — audio-preview position marker
   playing: boolean;
+  snapEnabled: boolean; // drag-snapping to neighbouring edges (persisted)
   selectKf: (id: string, additive?: boolean) => void;
   selectAudio: (id: string | null) => void;
   clearKf: () => void; // clears the whole timeline selection (keyframes + audio)
   setPxPerSec: (v: number) => void;
   setPlayhead: (t: number) => void;
   setPlaying: (v: boolean) => void;
+  toggleSnap: () => void;
 }
 
 export const useTimelineStore = create<TimelineUIState>((set) => ({
@@ -25,6 +29,7 @@ export const useTimelineStore = create<TimelineUIState>((set) => ({
   pxPerSec: 90,
   playhead: 0,
   playing: false,
+  snapEnabled: localStorage.getItem(SNAP_KEY) !== '0', // default on
   selectKf: (id, additive) => set(s => {
     if (!additive) return { selectedKfIds: [id], selectedAudioId: null };
     return {
@@ -39,6 +44,11 @@ export const useTimelineStore = create<TimelineUIState>((set) => ({
   setPxPerSec: (v) => set({ pxPerSec: Math.max(20, Math.min(400, v)) }),
   setPlayhead: (t) => set({ playhead: Math.max(0, t) }),
   setPlaying: (v) => set({ playing: v }),
+  toggleSnap: () => set(s => {
+    const v = !s.snapEnabled;
+    localStorage.setItem(SNAP_KEY, v ? '1' : '0');
+    return { snapEnabled: v };
+  }),
 }));
 
 // Verb metadata: label + a color family for keyframe blocks.

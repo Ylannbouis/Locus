@@ -13,6 +13,9 @@ interface ProjectState {
   selectedSceneId: string | null;
   selectedObjectIds: string[];
   clipboard: SceneObject[];
+  // Audio-clip clipboard — scoped to a project (assets are per-project files).
+  // Copying objects clears it, so Ctrl+V always pastes the most recent copy.
+  audioClipboard: { projectId: string; clip: AudioClip } | null;
   history: Project[];
   future: Project[];
   isDirty: boolean;
@@ -67,6 +70,9 @@ interface ProjectState {
   updateAudioClip: (id: string, patch: Partial<AudioClip>) => void;
   removeAudioClip: (id: string) => void;
   splitAudioClip: (id: string, atTime: number) => void;
+  copyAudioClip: (id: string) => void;
+  pasteAudioClip: (atTime?: number) => void; // defaults to the playhead; pastes into the *active* scene
+  duplicateAudioClip: (id: string) => void;
 
   // Camera
   updateCameraTrack: (patch: Partial<CameraTrack>) => void;
@@ -109,6 +115,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   selectedSceneId: null,
   selectedObjectIds: [],
   clipboard: [],
+  audioClipboard: null,
   history: [],
   future: [],
   isDirty: false,
@@ -270,7 +277,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const { project, selectedSceneId, selectedObjectIds } = get();
     const scene = activeScene(project, selectedSceneId);
     if (!scene || !selectedObjectIds.length) return;
-    set({ clipboard: withGroupChildren(scene, selectedObjectIds).map(o => JSON.parse(JSON.stringify(o))) });
+    set({
+      clipboard: withGroupChildren(scene, selectedObjectIds).map(o => JSON.parse(JSON.stringify(o))),
+      audioClipboard: null, // objects copied last -> Ctrl+V pastes objects
+    });
   },
 
   paste: () => {
@@ -405,6 +415,44 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     });
   },
 
+  copyAudioClip: (id) => {
+    const { project, selectedSceneId } = get();
+    const scene = activeScene(project, selectedSceneId);
+    const clip = scene?.audio?.find(c => c.id === id);
+    if (!project || !clip) return;
+    set({ audioClipboard: { projectId: project.id, clip: JSON.parse(JSON.stringify(clip)) } });
+  },
+
+  pasteAudioClip: (atTime) => {
+    const { audioClipboard, project } = get();
+    // Assets live under one project's dir, so the clipboard doesn't cross projects.
+    if (!audioClipboard || !project || audioClipboard.projectId !== project.id) return;
+    const t = atTime ?? useTimelineStore.getState().playhead;
+    const clip: AudioClip = {
+      ...JSON.parse(JSON.stringify(audioClipboard.clip)),
+      id: newId('au'),
+      start_time: Math.max(0, Math.round(t * 1000) / 1000),
+    };
+    _mutate(set, get, draft => {
+      const scene = activeScene(draft, get().selectedSceneId);
+      if (!scene) return;
+      if (!scene.audio) scene.audio = [];
+      scene.audio.push(clip);
+    });
+    useTimelineStore.getState().selectAudio(clip.id);
+  },
+
+  duplicateAudioClip: (id) => {
+    const { project, selectedSceneId } = get();
+    const src = activeScene(project, selectedSceneId)?.audio?.find(c => c.id === id);
+    if (!src) return;
+    const copy: AudioClip = { ...src, id: newId('au'), start_time: src.start_time + 0.2 };
+    _mutate(set, get, draft => {
+      activeScene(draft, get().selectedSceneId)?.audio?.push(copy);
+    });
+    useTimelineStore.getState().selectAudio(copy.id);
+  },
+
   splitAudioClip: (id, atTime) => _mutate(set, get, draft => {
     const scene = activeScene(draft, get().selectedSceneId);
     const clip = scene?.audio?.find(c => c.id === id);
@@ -496,9 +544,12 @@ if (typeof window !== 'undefined') {
     if (ctrl && e.key === 'z' && !e.shiftKey) { e.preventDefault(); s.undo(); return; }
     if (ctrl && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); s.redo(); return; }
     if (_isTyping(e.target)) return;
-    if (ctrl && e.key === 'c') { e.preventDefault(); s.copySelection(); return; }
-    if (ctrl && e.key === 'v') { e.preventDefault(); s.paste(); return; }
-    if (ctrl && e.key === 'd') { e.preventDefault(); s.duplicateSelection(); return; }
+    // Copy/paste routes to the audio clipboard when an audio clip is selected
+    // (timeline selection and object selection are mutually exclusive).
+    const audioId = useTimelineStore.getState().selectedAudioId;
+    if (ctrl && e.key === 'c') { e.preventDefault(); if (audioId) s.copyAudioClip(audioId); else s.copySelection(); return; }
+    if (ctrl && e.key === 'v') { e.preventDefault(); if (s.audioClipboard) s.pasteAudioClip(); else s.paste(); return; }
+    if (ctrl && e.key === 'd') { e.preventDefault(); if (audioId) s.duplicateAudioClip(audioId); else s.duplicateSelection(); return; }
     if (ctrl && e.key === 'g') { e.preventDefault(); s.groupSelected(); return; }
     if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault(); // also stops Backspace from navigating back

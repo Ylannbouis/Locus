@@ -128,6 +128,16 @@ codegen is the source of truth for the actual animation).
   updates don't re-render the whole timeline. Timeline selection is exclusive three ways: keyframes
   vs audio clip vs scene object (`clearKf()` clears both timeline kinds; the right sidebar shows
   `AudioClipInspector` / `KeyframeInspector` / `Inspector` accordingly).
+- **Audio clipboard**: Ctrl+C on a selected clip (or right-click → Copy) fills
+  `projectStore.audioClipboard`; Ctrl+V pastes into the *active* scene at the playhead (or
+  right-click the audio lane → "Paste clip here"), so clips move across scenes. `copySelection`
+  (objects) clears the audio clipboard — Ctrl+V always pastes whatever was copied last. The
+  clipboard carries a `projectId` and refuses to paste into another project (assets are per-project
+  files). Ctrl+D duplicates the selected clip.
+- **Snapping** (`timelineStore.snapEnabled`, 🧲 toolbar toggle, persisted to `localStorage`, Alt
+  bypasses): while dragging/trimming/resizing, the dragged edge snaps within `SNAP_PX` (8px) to the
+  edges of *same-lane* items (same object's keyframes / other audio clips), t=0, and the playhead.
+  Targets are captured once at drag start (`edgeTargets`) into the drag state.
 
 ## Scenes & export (Phase 6)
 

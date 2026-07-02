@@ -10,6 +10,40 @@ import type { AnimationVerb, AudioClip, Keyframe, SceneObject } from '../types/i
 const ROW_H = 30;
 const AUDIO_ROW_H = 46; // taller so the waveform is readable
 const LABEL_W = 150;
+const SNAP_PX = 8; // snap radius in screen px (converted to seconds via pxPerSec)
+
+// Nearest snap target within the radius, or null. Targets are the edges of the
+// other items in the same lane plus t=0 and the playhead.
+function snapTo(value: number, targets: number[], pxPerSec: number): number | null {
+  const thresh = SNAP_PX / pxPerSec;
+  let best: number | null = null;
+  let bestD = thresh;
+  for (const t of targets) {
+    const d = Math.abs(t - value);
+    if (d < bestD) { bestD = d; best = t; }
+  }
+  return best;
+}
+
+// Snap a block being *moved*: try both its left and right edge, keep the closer hit.
+function snapMove(start: number, dur: number, targets: number[], pxPerSec: number): number {
+  const s = snapTo(start, targets, pxPerSec);
+  const e = snapTo(start + dur, targets, pxPerSec);
+  const dS = s === null ? Infinity : Math.abs(s - start);
+  const dE = e === null ? Infinity : Math.abs(e - (start + dur));
+  if (dS <= dE && s !== null) return s;
+  if (e !== null) return e - dur;
+  return start;
+}
+
+function edgeTargets(items: { id: string; start_time: number; duration: number }[], excludeId: string): number[] {
+  const t = [0, useTimelineStore.getState().playhead];
+  for (const it of items) {
+    if (it.id === excludeId) continue;
+    t.push(it.start_time, it.start_time + it.duration);
+  }
+  return t;
+}
 
 function defaultVerb(o: SceneObject): AnimationVerb {
   if (o.type === 'latex_text' || o.type === 'matrix') return 'write';
@@ -45,6 +79,7 @@ interface DragState {
   origDur: number;
   curStart: number;
   curDur: number;
+  targets: number[]; // same-lane edges (+ 0 and playhead), captured at drag start
 }
 
 // Audio-clip drag: move, or trim from either edge. Trimming the left edge
@@ -55,11 +90,13 @@ interface AudioDragState {
   startClientX: number;
   orig: AudioClip;
   cur: { start: number; offset: number; dur: number };
+  targets: number[];
 }
 
 type MenuState =
   | { kind: 'kf'; x: number; y: number; id: string }
-  | { kind: 'clip'; x: number; y: number; id: string; time: number }; // time = where the right-click landed
+  | { kind: 'clip'; x: number; y: number; id: string; time: number } // time = where the right-click landed
+  | { kind: 'lane'; x: number; y: number; time: number }; // empty audio-lane menu (paste target)
 
 // The playhead line + toolbar readout subscribe to the playhead on their own,
 // so the 60fps rAF updates during playback don't re-render the whole timeline.
@@ -87,6 +124,10 @@ export function Timeline() {
   const updateAudioClip = useProjectStore(s => s.updateAudioClip);
   const removeAudioClip = useProjectStore(s => s.removeAudioClip);
   const splitAudioClip = useProjectStore(s => s.splitAudioClip);
+  const copyAudioClip = useProjectStore(s => s.copyAudioClip);
+  const pasteAudioClip = useProjectStore(s => s.pasteAudioClip);
+  const duplicateAudioClip = useProjectStore(s => s.duplicateAudioClip);
+  const audioClipboard = useProjectStore(s => s.audioClipboard);
 
   // Individual selectors (not a whole-store destructure): the playhead updates
   // at 60fps during playback and must not re-render the whole timeline — only
@@ -100,6 +141,8 @@ export function Timeline() {
   const clearKf = useTimelineStore(s => s.clearKf);
   const setPxPerSec = useTimelineStore(s => s.setPxPerSec);
   const setPlayhead = useTimelineStore(s => s.setPlayhead);
+  const snapEnabled = useTimelineStore(s => s.snapEnabled);
+  const toggleSnap = useTimelineStore(s => s.toggleSnap);
 
   const [drag, setDrag] = useState<DragState | null>(null);
   const [aDrag, setADrag] = useState<AudioDragState | null>(null);
@@ -155,28 +198,50 @@ export function Timeline() {
   };
 
   // ---- drag handling (commit once on pointer-up) -------------------------
+  // Snapping pulls the dragged edge onto neighbouring edges in the same lane
+  // (plus t=0 and the playhead) when within SNAP_PX. Toggle with the 🧲
+  // button; hold Alt to bypass it for one drag.
   const onPointerMove = (e: React.PointerEvent) => {
+    const snapOn = snapEnabled && !e.altKey;
     if (drag) {
       const dx = (e.clientX - drag.startClientX) / pxPerSec;
       if (drag.mode === 'move') {
-        setDrag({ ...drag, curStart: Math.max(0, drag.origStart + dx) });
+        let start = Math.max(0, drag.origStart + dx);
+        if (snapOn) start = Math.max(0, snapMove(start, drag.origDur, drag.targets, pxPerSec));
+        setDrag({ ...drag, curStart: start });
       } else {
-        setDrag({ ...drag, curDur: Math.max(0.1, drag.origDur + dx) });
+        let dur = drag.origDur + dx;
+        if (snapOn) {
+          const end = snapTo(drag.origStart + dur, drag.targets, pxPerSec);
+          if (end !== null) dur = end - drag.origStart;
+        }
+        setDrag({ ...drag, curDur: Math.max(0.1, dur) });
       }
     } else if (aDrag) {
       const dx = (e.clientX - aDrag.startClientX) / pxPerSec;
       const o = aDrag.orig;
       if (aDrag.mode === 'move') {
-        setADrag({ ...aDrag, cur: { ...aDrag.cur, start: Math.max(0, o.start_time + dx) } });
+        let start = Math.max(0, o.start_time + dx);
+        if (snapOn) start = Math.max(0, snapMove(start, o.duration, aDrag.targets, pxPerSec));
+        setADrag({ ...aDrag, cur: { ...aDrag.cur, start } });
       } else if (aDrag.mode === 'trim-l') {
+        let d = dx;
+        if (snapOn) {
+          const edge = snapTo(o.start_time + dx, aDrag.targets, pxPerSec);
+          if (edge !== null) d = edge - o.start_time;
+        }
         // Can't trim before the source's own start (offset >= 0), before t=0,
         // or past the right edge.
-        const d = Math.max(-Math.min(o.offset, o.start_time), Math.min(dx, o.duration - 0.1));
+        d = Math.max(-Math.min(o.offset, o.start_time), Math.min(d, o.duration - 0.1));
         setADrag({ ...aDrag, cur: { start: o.start_time + d, offset: o.offset + d, dur: o.duration - d } });
       } else {
+        let dur = o.duration + dx;
+        if (snapOn) {
+          const end = snapTo(o.start_time + dur, aDrag.targets, pxPerSec);
+          if (end !== null) dur = end - o.start_time;
+        }
         const maxDur = o.source_duration > 0 ? o.source_duration - o.offset : Infinity;
-        const dur = Math.max(0.1, Math.min(o.duration + dx, maxDur));
-        setADrag({ ...aDrag, cur: { ...aDrag.cur, dur } });
+        setADrag({ ...aDrag, cur: { ...aDrag.cur, dur: Math.max(0.1, Math.min(dur, maxDur)) } });
       }
     }
   };
@@ -210,7 +275,12 @@ export function Timeline() {
     // Selection happens here (once). Doing it again in onClick would double-toggle
     // a shift-click and cancel it out.
     selectKf(kf.id, e.shiftKey);
-    setDrag({ kfId: kf.id, mode, startClientX: e.clientX, origStart: kf.start_time, origDur: kf.duration, curStart: kf.start_time, curDur: kf.duration });
+    setDrag({
+      kfId: kf.id, mode, startClientX: e.clientX, origStart: kf.start_time, origDur: kf.duration,
+      curStart: kf.start_time, curDur: kf.duration,
+      // Snap against the other keyframes in this lane (same object / camera).
+      targets: edgeTargets(keyframes.filter(k => k.object_id === kf.object_id), kf.id),
+    });
   };
 
   const startAudioDrag = (e: React.PointerEvent, clip: AudioClip, mode: AudioDragState['mode']) => {
@@ -222,6 +292,7 @@ export function Timeline() {
     setADrag({
       id: clip.id, mode, startClientX: e.clientX, orig: clip,
       cur: { start: clip.start_time, offset: clip.offset, dur: clip.duration },
+      targets: edgeTargets(audioClips, clip.id),
     });
   };
 
@@ -253,12 +324,6 @@ export function Timeline() {
     const copy: Keyframe = { ...kf, id: newId('kf'), start_time: kf.start_time + 0.2, group_id: null, params: { ...kf.params } };
     addKeyframe(copy);
     selectKf(copy.id);
-  };
-
-  const duplicateClip = (c: AudioClip) => {
-    const copy: AudioClip = { ...c, id: newId('au'), start_time: c.start_time + 0.2 };
-    addAudioClip(copy);
-    selectAudio(copy.id);
   };
 
   // ---- audio upload -------------------------------------------------------
@@ -358,6 +423,9 @@ export function Timeline() {
           {playing ? '⏸' : '▶'}
         </button>
         <PlayheadTime />
+        <button className={`btn tl__snap ${snapEnabled ? 'is-on' : 'btn--ghost'}`}
+          title={snapEnabled ? 'Snapping on — drags snap to neighbouring edges, t=0 and the playhead (hold Alt to bypass)' : 'Snapping off'}
+          onClick={toggleSnap}>🧲</button>
         <button className="btn btn--ghost tl__zoom" title="Zoom out" onClick={() => setPxPerSec(pxPerSec / 1.25)}>−</button>
         <button className="btn btn--ghost tl__zoom" title="Zoom in" onClick={() => setPxPerSec(pxPerSec * 1.25)}>+</button>
         <button className="btn" disabled={selectedKfIds.length < 2} onClick={() => groupKeyframes(selectedKfIds)}>Group ∥</button>
@@ -415,7 +483,11 @@ export function Timeline() {
               style={{ display: 'none' }} onChange={onAudioFile} />
           </div>
           <div className="tl__lane tl__lane--audio" style={{ height: audioLaneH }}
-            onDoubleClick={e => { e.stopPropagation(); fileRef.current?.click(); }}>
+            onDoubleClick={e => { e.stopPropagation(); fileRef.current?.click(); }}
+            onContextMenu={e => {
+              e.preventDefault(); e.stopPropagation();
+              setMenu({ kind: 'lane', x: e.clientX, y: e.clientY, time: laneTime(e) });
+            }}>
             {audioClips.map(c => renderClipBlock(c, clipRow.get(c.id) ?? 0))}
           </div>
 
@@ -479,11 +551,22 @@ export function Timeline() {
             <button className="tl__menu-item" onClick={() => { updateAudioClip(clip.id, { muted: !clip.muted }); setMenu(null); }}>
               {clip.muted ? 'Unmute' : 'Mute'}
             </button>
-            <button className="tl__menu-item" onClick={() => { duplicateClip(clip); setMenu(null); }}>Duplicate</button>
+            <button className="tl__menu-item" onClick={() => { copyAudioClip(clip.id); setMenu(null); }}>Copy (Ctrl+C)</button>
+            <button className="tl__menu-item" onClick={() => { duplicateAudioClip(clip.id); setMenu(null); }}>Duplicate</button>
             <button className="tl__menu-item tl__menu-item--danger" onClick={() => { removeAudioClip(clip.id); setMenu(null); }}>Delete</button>
           </div>
         );
       })()}
+
+      {menu?.kind === 'lane' && (
+        <div className="tl__menu" style={{ left: menu.x, top: menu.y }} onClick={e => e.stopPropagation()}>
+          <button className="tl__menu-item" disabled={!audioClipboard || audioClipboard.projectId !== project?.id}
+            onClick={() => { pasteAudioClip(menu.time); setMenu(null); }}>
+            Paste clip here ({menu.time.toFixed(2)}s)
+          </button>
+          <button className="tl__menu-item" onClick={() => { fileRef.current?.click(); setMenu(null); }}>Upload audio…</button>
+        </div>
+      )}
     </div>
   );
 }
