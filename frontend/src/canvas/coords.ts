@@ -48,3 +48,6 @@ export const screenToWorld = (sx: number, sy: number, view: View) => ({
 
 export const MIN_SCALE = 0.2;
 export const MAX_SCALE = 5;
+
+// Snap distance (screen pixels) for pulling a dragged object onto a center line.
+export const SNAP_PX = 8;

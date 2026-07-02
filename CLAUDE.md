@@ -72,3 +72,10 @@ reorderable `ScenePanel`, whole-project stitching via ffmpeg concat/crossfade, M
 sequence / still output at selectable resolution+fps, transparent background, eject-to-code +
 read-only code/JSON view). The backend can also serve the built frontend (`frontend/dist`) for
 single-process running. See `README.md` for the milestone table; `PLAN.md` for the full spec.
+
+Post-v1 editor/codegen refinements: on-canvas **axis tick numbers** (with editable size); **direct
+manipulation** — draggable line/arrow **endpoint handles** and **snap-to-center** (toggleable);
+**auto-numbered** duplicate default names; **"Duplicate final state"** (snapshot a scene's end-of-
+animation look into a static scene); timeline **sub-rows** for simultaneous same-object animations,
+which the codegen **fuses** into one chained `.animate` (move+scale+rotate that overlap in time); and
+a codegen fix so objects created part-way through don't pop in before their creation animation.

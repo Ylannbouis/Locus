@@ -2,7 +2,8 @@ import { create } from 'zustand';
 import { produce } from 'immer';
 import type { Project, Scene, SceneObject, Keyframe, Relationship, AnimationGroup, CameraTrack } from '../types/ir';
 import { saveProject } from '../api/client';
-import { newId } from './objectFactory';
+import { newId, uniqueName } from './objectFactory';
+import { computeFinalState } from './finalState';
 import { useTimelineStore } from '../timeline/timelineStore';
 
 const HISTORY_LIMIT = 50;
@@ -25,6 +26,7 @@ interface ProjectState {
   addScene: () => void;
   removeScene: (id: string) => void;
   duplicateScene: (id: string) => void;
+  duplicateSceneFinal: (id: string) => void;
   renameScene: (id: string, name: string) => void;
   moveScene: (id: string, dir: -1 | 1) => void;
 
@@ -151,6 +153,31 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ selectedSceneId: newSceneId, selectedObjectIds: [] });
   },
 
+  duplicateSceneFinal: (id) => {
+    const newSceneId = newId('scene');
+    _mutate(set, get, draft => {
+      const idx = draft.scenes.findIndex(s => s.id === id);
+      if (idx < 0) return;
+      const src = draft.scenes[idx];
+      const { objects, cameraTrack } = computeFinalState(src);
+      draft.scenes.splice(idx + 1, 0, {
+        id: newSceneId,
+        name: `${src.name} (final)`,
+        background_color: src.background_color,
+        objects,
+        // Keep static layout (relationships re-apply at render as before), drop
+        // the timeline — the end state is baked into the objects themselves.
+        relationships: JSON.parse(JSON.stringify(src.relationships)),
+        timeline: { keyframes: [], groups: [] },
+        camera_track: cameraTrack,
+        transition_in: src.transition_in ? { ...src.transition_in } : null,
+        transition_out: src.transition_out ? { ...src.transition_out } : null,
+      });
+    });
+    useTimelineStore.getState().clearKf();
+    set({ selectedSceneId: newSceneId, selectedObjectIds: [] });
+  },
+
   renameScene: (id, name) => _mutate(set, get, draft => {
     const s = draft.scenes.find(sc => sc.id === id);
     if (s) s.name = name;
@@ -176,7 +203,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   addObject: (obj) => _mutate(set, get, draft => {
     const scene = activeScene(draft, get().selectedSceneId);
-    scene?.objects.push(obj);
+    if (!scene) return;
+    // Auto-number a repeated default name: 2nd "Equation" -> "Equation 2", etc.
+    obj.name = uniqueName(scene.objects.map(o => o.name), obj.name);
+    scene.objects.push(obj);
   }, [obj.id]),
 
   updateObject: (id, patch) => _mutate(set, get, draft => {

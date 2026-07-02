@@ -8,6 +8,7 @@ export function ScenePanel() {
   const addScene = useProjectStore(s => s.addScene);
   const removeScene = useProjectStore(s => s.removeScene);
   const duplicateScene = useProjectStore(s => s.duplicateScene);
+  const duplicateSceneFinal = useProjectStore(s => s.duplicateSceneFinal);
   const renameScene = useProjectStore(s => s.renameScene);
   const moveScene = useProjectStore(s => s.moveScene);
 
@@ -57,6 +58,7 @@ export function ScenePanel() {
                   <button title="Move left" disabled={i === 0} onClick={() => moveScene(s.id, -1)}>‹</button>
                   <button title="Move right" disabled={i === scenes.length - 1} onClick={() => moveScene(s.id, 1)}>›</button>
                   <button title="Duplicate" onClick={() => duplicateScene(s.id)}>⧉</button>
+                  <button title="Duplicate final state (snapshot after all animations, no timeline)" onClick={() => duplicateSceneFinal(s.id)}>⏭</button>
                   <button className="scene-tab__del" title="Delete" disabled={scenes.length <= 1} onClick={() => removeScene(s.id)}>✕</button>
                 </span>
               )}

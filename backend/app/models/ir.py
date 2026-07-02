@@ -147,6 +147,7 @@ class CoordinateSystemProps(BaseModel):
     radius_max: Optional[float] = None
     azimuth_step: Optional[float] = None
     include_numbers: Optional[bool] = None
+    number_font_size: Optional[float] = None
 
 
 class GraphProps(BaseModel):

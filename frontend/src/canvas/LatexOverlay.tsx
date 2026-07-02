@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import katex from 'katex';
 import type { View } from './coords';
 import {
-  PX_PER_UNIT, MANIM_EM_UNITS_PER_PT,
+  PX_PER_UNIT, MANIM_EM_UNITS_PER_PT, SNAP_PX,
   MATRIX_H_PITCH, MATRIX_V_PITCH, MATRIX_BRACKET_BUFF,
   worldX, worldY,
 } from './coords';
 import { useProjectStore } from '../store/projectStore';
+import { useCanvasStore } from '../store/canvasStore';
 import { objectBounds, braceLabelPoint, vectorLabelPoint } from './geometry';
 import type { Ghost } from './motion';
 import type { Point2D, SceneObject } from '../types/ir';
@@ -26,6 +27,12 @@ interface Props {
   nonInteractiveIds?: string[];
   // Draggable destination handle for move keyframes on LaTeX/matrix objects.
   moveHandle?: MoveHandle | null;
+  // Live multi-select drag shared with the Konva layer: while `anchorId` is being
+  // dragged, other selected equations follow by (dx, dy). `onGroupDrag` is the
+  // shared state setter (stable) so a dragged equation publishes/clears the delta
+  // and the Konva shapes follow it too.
+  groupDrag?: { anchorId: string; dx: number; dy: number } | null;
+  onGroupDrag?: (v: { anchorId: string; dx: number; dy: number } | null) => void;
 }
 
 function renderTex(tex: string, displayMode = true): string {
@@ -130,7 +137,7 @@ function latexFontPx(o: SceneObject): number {
   return Number((o.props as any).font_size ?? 48) * MANIM_EM_UNITS_PER_PT * PX_PER_UNIT;
 }
 
-export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [], moveHandle = null }: Props) {
+export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [], moveHandle = null, groupDrag = null, onGroupDrag }: Props) {
   const selectedIds = useProjectStore(s => s.selectedObjectIds);
   const selectObject = useProjectStore(s => s.selectObject);
   const toggleSelect = useProjectStore(s => s.toggleSelect);
@@ -159,7 +166,19 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
       if (!d) return;
       const dxUnits = (e.clientX - d.startSX) / (view.scale * PX_PER_UNIT);
       const dyUnits = -(e.clientY - d.startSY) / (view.scale * PX_PER_UNIT);
-      setDrag({ id: d.id, x: d.startX + dxUnits, y: d.startY + dyUnits });
+      const sel = useProjectStore.getState().selectedObjectIds;
+      const isMulti = sel.length > 1 && sel.includes(d.id);
+      let nx = d.startX + dxUnits, ny = d.startY + dyUnits;
+      // Snap onto the center lines (x=0 / y=0) within SNAP_PX (screen px) — but not
+      // during a multi-select drag (snapping one member would shift the whole set).
+      if (!isMulti && useCanvasStore.getState().snapToCenter) {
+        const t = SNAP_PX / (view.scale * PX_PER_UNIT);
+        if (Math.abs(nx) <= t) nx = 0;
+        if (Math.abs(ny) <= t) ny = 0;
+      }
+      setDrag({ id: d.id, x: nx, y: ny });
+      // Drag the rest of the selection along live.
+      if (isMulti) onGroupDrag?.({ anchorId: d.id, dx: nx - d.startX, dy: ny - d.startY });
     }
     function onUp(e: PointerEvent) {
       const mh = moveHandleRef.current;
@@ -185,6 +204,7 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
           return null;
         });
         dragRef.current = null;
+        onGroupDrag?.(null);
       }
     }
     window.addEventListener('pointermove', onMove);
@@ -193,7 +213,7 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [view.scale, moveObject, moveHandle]);
+  }, [view.scale, moveObject, moveHandle, onGroupDrag]);
 
   const latexObjects = objects.filter(o => (o.type === 'latex_text' || o.type === 'matrix') && o.visible);
 
@@ -238,14 +258,19 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
           const color = (o.style.fill_color as string) || '#ffffff';
           const isSel = selectedIds.includes(o.id);
           const isFrozen = frozen.has(o.id);
-          const px = drag && drag.id === o.id ? drag.x : o.position.x;
-          const py = drag && drag.id === o.id ? drag.y : o.position.y;
+          // This equation is the drag anchor → use its live pos; otherwise if it's a
+          // non-anchor member of a live multi-drag, follow by the group delta.
+          const gd = groupDrag && groupDrag.anchorId !== o.id && isSel ? groupDrag : null;
+          const px = drag && drag.id === o.id ? drag.x : o.position.x + (gd ? gd.dx : 0);
+          const py = drag && drag.id === o.id ? drag.y : o.position.y + (gd ? gd.dy : 0);
 
+          // Baked rotation (Manim CCW degrees); CSS rotate is CW on screen, negate.
+          const rot = Number((o.props as any).rotation) || 0;
           const wrapperBase: React.CSSProperties = {
             position: 'absolute',
             left: worldX(px),
             top: worldY(py),
-            transform: 'translate(-50%, -50%)',
+            transform: `translate(-50%, -50%)${rot ? ` rotate(${-rot}deg)` : ''}`,
             fontSize: `${fontSize}px`,
             color,
             cursor: isFrozen ? 'default' : 'move',

@@ -4,6 +4,17 @@ export function newId(prefix = 'obj'): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+// Make `desired` unique against `existing` names by appending " 2", " 3", …
+// (e.g. a second "Equation" becomes "Equation 2"). Returns `desired` unchanged
+// when it's not already taken.
+export function uniqueName(existing: Iterable<string>, desired: string): string {
+  const taken = new Set(existing);
+  if (!desired || !taken.has(desired)) return desired;
+  let n = 2;
+  while (taken.has(`${desired} ${n}`)) n++;
+  return `${desired} ${n}`;
+}
+
 function base(partial: Partial<SceneObject>): SceneObject {
   return {
     id: newId(),

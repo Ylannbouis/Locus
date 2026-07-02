@@ -12,6 +12,25 @@ function defaultVerb(o: SceneObject): AnimationVerb {
   return 'create';
 }
 
+// Pack an object's keyframes into stacked sub-rows so ones that overlap in time
+// (i.e. play simultaneously) sit on separate rows within the object's lane
+// rather than colliding. Greedy first-fit by start time -> the fewest rows that
+// keep every overlapping pair apart. Returns each kf's row index + the row count.
+function packLanes(kfs: Keyframe[]): { row: Map<string, number>; count: number } {
+  const sorted = [...kfs].sort(
+    (a, b) => a.start_time - b.start_time || a.duration - b.duration || (a.id < b.id ? -1 : 1),
+  );
+  const laneEnds: number[] = []; // end time of the last kf placed in each row
+  const row = new Map<string, number>();
+  for (const kf of sorted) {
+    let lane = laneEnds.findIndex(end => kf.start_time >= end - 1e-6);
+    if (lane === -1) { lane = laneEnds.length; laneEnds.push(0); }
+    laneEnds[lane] = kf.start_time + kf.duration;
+    row.set(kf.id, lane);
+  }
+  return { row, count: Math.max(1, laneEnds.length) };
+}
+
 interface DragState {
   kfId: string;
   mode: 'move' | 'resize';
@@ -119,8 +138,10 @@ export function Timeline() {
   const selectedHaveGroup = keyframes.some(k => selectedKfIds.includes(k.id) && k.group_id);
   const cameraKfs = keyframes.filter(k => k.object_id === CAMERA_ID);
 
-  // One keyframe block, shared by the camera lane and every object lane.
-  const renderKfBlock = (kf: Keyframe) => {
+  // One keyframe block, shared by the camera lane and every object lane. `row`
+  // is its sub-row within the lane (0 = main row), used to stack simultaneous
+  // animations vertically.
+  const renderKfBlock = (kf: Keyframe, row = 0) => {
     const isDragging = drag?.kfId === kf.id;
     const start = isDragging ? drag!.curStart : kf.start_time;
     const dur = isDragging && drag!.mode === 'resize' ? drag!.curDur : kf.duration;
@@ -130,7 +151,7 @@ export function Timeline() {
     return (
       <div key={kf.id}
         className={`tl__kf ${sel ? 'tl__kf--sel' : ''} ${kf.group_id ? 'tl__kf--grouped' : ''}`}
-        style={{ left: start * pxPerSec, width: w, background: meta.color }}
+        style={{ left: start * pxPerSec, width: w, top: row * ROW_H + 4, height: ROW_H - 8, background: meta.color }}
         title={`${meta.label} @ ${start.toFixed(2)}s · ${dur.toFixed(2)}s${kf.group_id ? ' · parallel' : ''}`}
         onPointerDown={e => startDrag(e, kf, 'move')}
         onClick={e => { e.stopPropagation(); setMenu(null); }}
@@ -173,21 +194,24 @@ export function Timeline() {
           </div>
           <div className="tl__lane tl__lane--camera" style={{ height: ROW_H }}
             onDoubleClick={e => { e.stopPropagation(); addCameraKfAt(e); }}>
-            {cameraKfs.map(renderKfBlock)}
+            {cameraKfs.map(kf => renderKfBlock(kf))}
           </div>
 
           {objects.map(o => {
             const rowKfs = keyframes.filter(k => k.object_id === o.id);
+            // Simultaneous animations get their own sub-row; the lane grows to fit.
+            const { row, count } = packLanes(rowKfs);
+            const laneH = count * ROW_H;
             return (
               <Fragment key={o.id}>
                 <div className={`tl__label ${selectedObjIds.includes(o.id) ? 'tl__label--sel' : ''}`}
-                  style={{ height: ROW_H, paddingLeft: o.parent_id ? 22 : 8 }}
+                  style={{ height: laneH, paddingLeft: o.parent_id ? 22 : 8 }}
                   onClick={e => { e.stopPropagation(); selectObject(o.id); }}>
                   {o.name || o.type}
                 </div>
-                <div className="tl__lane" style={{ height: ROW_H }}
+                <div className="tl__lane" style={{ height: laneH }}
                   onDoubleClick={e => { e.stopPropagation(); addKfAt(o, e); }}>
-                  {rowKfs.map(renderKfBlock)}
+                  {rowKfs.map(kf => renderKfBlock(kf, row.get(kf.id) ?? 0))}
                 </div>
               </Fragment>
             );

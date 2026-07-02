@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 
 from app.models.ir import Project, Scene
-from app.codegen.animations import CREATION_VERBS, easing_func, emit_animation
+from app.codegen.animations import CREATION_VERBS, easing_func, emit_animation, emit_transform_chain
 from app.codegen.objects import (
     AXES_BOUND_GRAPHS, emit_object, tracker_name, var_name, _num, _point, _sweep,
 )
@@ -162,6 +162,70 @@ def _bake(expr: str, run_time: float, rate_func: str) -> str:
     return f"{expr[:-1]}, run_time={rt}, rate_func={rate_func})"
 
 
+# `.animate` transform verbs — multiple of these on the same object at the same
+# time must be chained into one `.animate` (they'd otherwise fight over state).
+_XFORM_ANIM = {"move", "scale", "rotate"}
+
+
+def _merge_units(members, var_map: dict[str, str]) -> list[tuple[str, float, str, float]]:
+    """Turn a set of keyframes into `(expr, run_time, rate_func, start_time)`
+    units, chaining move/scale/rotate on the *same object* that **overlap in
+    time** into a single `.animate` chain over the union window (they'd otherwise
+    fight over the mobject's state). Non-overlapping transforms and every other
+    verb stay one unit each. Order of first appearance is preserved."""
+    xform_by_obj: dict[str, list] = {}
+    order: list[tuple[str, object]] = []
+    for kf in members:
+        verb = _enum(kf.verb)
+        if verb in _XFORM_ANIM and var_map.get(kf.object_id):
+            if kf.object_id not in xform_by_obj:
+                order.append(("x", kf.object_id))
+            xform_by_obj.setdefault(kf.object_id, []).append(kf)
+        else:
+            a = _kf_anim(kf, var_map)
+            if a is not None:
+                order.append(("e", (a, max(0.01, float(kf.duration)),
+                                    easing_func(_enum(kf.easing)), float(kf.start_time))))
+
+    units: list[tuple[str, float, str, float]] = []
+    seen: set[str] = set()
+    for kind, val in order:
+        if kind == "e":
+            units.append(val)  # type: ignore[arg-type]
+            continue
+        obj_id = val  # type: ignore[assignment]
+        if obj_id in seen:
+            continue
+        seen.add(obj_id)
+        # Cluster this object's transforms by time overlap (transitively); each
+        # cluster of >1 collapses to one chained .animate over the union window,
+        # so overlapping move+scale+rotate combine even with slightly different
+        # start times / durations.
+        kfs = sorted(xform_by_obj[obj_id], key=lambda k: (float(k.start_time), float(k.duration)))
+        clusters: list[dict] = []
+        for kf in kfs:
+            s = float(kf.start_time)
+            e = s + max(0.01, float(kf.duration))
+            if clusters and s < clusters[-1]["end"] - 1e-6:
+                clusters[-1]["kfs"].append(kf)
+                clusters[-1]["end"] = max(clusters[-1]["end"], e)
+            else:
+                clusters.append({"start": s, "end": e, "kfs": [kf]})
+        for cl in clusters:
+            ckfs = cl["kfs"]
+            start, rt = cl["start"], max(0.01, cl["end"] - cl["start"])
+            rf = easing_func(_enum(ckfs[0].easing))
+            if len(ckfs) == 1:
+                a = _kf_anim(ckfs[0], var_map)
+                if a is not None:
+                    units.append((a, rt, rf, start))
+            else:
+                chain = emit_transform_chain(var_map[obj_id], [(_enum(k.verb), k.params or {}) for k in ckfs])
+                if chain is not None:
+                    units.append((chain, rt, rf, start))
+    return units
+
+
 def build_body(scene: Scene) -> str:
     # Emit in dependency order: plain objects, then graphs (need their axes),
     # then groups (need their children defined first).
@@ -243,6 +307,61 @@ def build_body(scene: Scene) -> str:
         lines.extend(rel_lines)
         lines.append("")
 
+    # 2b. An object introduced by a *delayed* creation verb (Write/Create/…) that
+    # also has a later non-introducer animation (fade-out, move, …) gets silently
+    # pre-added by Manim at t=0 — so it pops into view before its creation plays.
+    # Hide such objects until their creation animation draws them in (the timeline
+    # model runs everything in one self.play, so we restore opacity the instant the
+    # introducer begins — see the Restore(...) wrapping below).
+    ordered = sorted(keyframes, key=lambda k: k.start_time)
+    uses_tracking = any(_is_track_kf(kf, var_map) for kf in keyframes)
+    reveal_kf_id: dict[str, str] = {}  # obj_id -> the creation keyframe to un-hide at
+    if not uses_tracking:
+        kfs_by_obj: dict[str, list] = {}
+        for kf in keyframes:
+            kfs_by_obj.setdefault(kf.object_id, []).append(kf)
+        obj_by_id = {o.id: o for o in objects}
+
+        def _has_non_introducer(oid: str) -> bool:
+            return any(_enum(k.verb) not in CREATION_VERBS for k in kfs_by_obj.get(oid, []))
+
+        # Manim pre-adds an object at the play's start if it — *or any ancestor
+        # group* — is animated by a non-introducer (fade-out/move/…): a group's
+        # own animation pulls the whole VGroup (including a not-yet-created child)
+        # into the play. Such an object flashes before its creation unless hidden.
+        def _exposed_early(oid: str) -> bool:
+            if _has_non_introducer(oid):
+                return True
+            cur = obj_by_id.get(oid)
+            seen: set[str] = set()
+            while cur is not None and cur.parent_id and cur.parent_id not in seen:
+                seen.add(cur.parent_id)
+                if _has_non_introducer(cur.parent_id):
+                    return True
+                cur = obj_by_id.get(cur.parent_id)
+            return False
+
+        hide_vars: list[str] = []
+        for oid, oks in kfs_by_obj.items():
+            if oid not in var_map:
+                continue
+            oks = sorted(oks, key=lambda k: float(k.start_time))
+            first = oks[0]
+            if first.group_id or _enum(first.verb) not in CREATION_VERBS:
+                continue                                   # not intro'd by a lone creation verb
+            if float(first.start_time) <= 1e-3:
+                continue                                   # created at t=0 → no early window
+            if not _exposed_early(oid):
+                continue                                   # never pre-added → Manim won't flash it
+            reveal_kf_id[oid] = first.id
+            hide_vars.append(var_map[oid])
+        if hide_vars:
+            lines.append("# keep these hidden until their creation animation plays")
+            for v in hide_vars:
+                lines.append(f"{v}.save_state()")
+                lines.append(f"{v}.set_opacity(0)")
+            lines.append("")
+
     # 3. Pre-add objects that are not animated in by a creation verb.
     # Children of a group are represented by their VGroup (added/created via the
     # group), so don't add them individually — unless the group itself has a child
@@ -275,9 +394,8 @@ def build_body(scene: Scene) -> str:
             lines.append(f"self.add({var_map[obj.id]})")
         lines.append("")
 
-    # 4. Lay out the timeline. Two emission models:
-    ordered = sorted(keyframes, key=lambda k: k.start_time)
-    uses_tracking = any(_is_track_kf(kf, var_map) for kf in keyframes)
+    # 4. Lay out the timeline. Two emission models (`ordered` / `uses_tracking`
+    #    were computed above for the hide pass).
     played_any = False
 
     if uses_tracking:
@@ -298,19 +416,24 @@ def build_body(scene: Scene) -> str:
                 ungrouped_by_start.setdefault(round(float(kf.start_time), 4), []).append(kf)
 
         for start, members in ungrouped_by_start.items():
-            anims = [a for kf in members if (a := _kf_anim(kf, var_map)) is not None]
+            # Same object_id + same start → chain move/scale/rotate together.
+            anims = [e for e, _, _, _ in _merge_units(members, var_map)]
             if not anims:
                 continue
             events.append({"start": start, "run_time": max(0.01, max(float(k.duration) for k in members)),
                            "anims": anims, "easing": easing_func(_enum(members[0].easing)), "lag": 0.0})
         for gid, members in grouped.items():
-            anims = [a for kf in members if (a := _kf_anim(kf, var_map)) is not None]
+            lag = lag_by_group.get(gid, 0.0)
+            if lag <= 1e-9:
+                anims = [e for e, _, _, _ in _merge_units(members, var_map)]
+            else:
+                anims = [a for kf in members if (a := _kf_anim(kf, var_map)) is not None]
             if not anims:
                 continue
             events.append({"start": min(k.start_time for k in members),
                            "run_time": max(0.01, max(float(k.duration) for k in members)),
                            "anims": anims, "easing": easing_func(_enum(members[0].easing)),
-                           "lag": lag_by_group.get(gid, 0.0)})
+                           "lag": lag})
         for obj in objects:  # parameter sweeps
             if obj.id not in var_map:
                 continue
@@ -363,20 +486,40 @@ def build_body(scene: Scene) -> str:
         # times included.
         tracks: list[tuple[float, str]] = []
         grouped: dict[str, list] = {}
+        ungrouped: list = []
+        reveal_kf_ids = set(reveal_kf_id.values())
+        reveal_kfs: list = []
         for kf in ordered:
             if kf.group_id:
                 grouped.setdefault(kf.group_id, []).append(kf)
-                continue
+            elif kf.id in reveal_kf_ids:
+                reveal_kfs.append(kf)
+            else:
+                ungrouped.append(kf)
+        # Ungrouped: simultaneous move/scale/rotate on one object collapse to a
+        # single chained .animate track; everything else is one track each.
+        for expr, rt, rf, start in _merge_units(ungrouped, var_map):
+            tracks.append((start, _bake(expr, rt, rf)))
+        # A hidden-until-creation object: restore its opacity the instant before
+        # its introducer draws it in (it was set invisible + save_state'd above).
+        for kf in reveal_kfs:
             a = _kf_anim(kf, var_map)
-            if a is not None:
-                tracks.append((float(kf.start_time),
-                               _bake(a, max(0.01, float(kf.duration)), easing_func(_enum(kf.easing)))))
+            if a is None:
+                continue
+            baked = _bake(a, max(0.01, float(kf.duration)), easing_func(_enum(kf.easing)))
+            tracks.append((float(kf.start_time),
+                           f"Succession(Restore({var_map[kf.object_id]}, run_time=0.001), {baked})"))
         for gid, members in grouped.items():
-            exprs = [_bake(a, max(0.01, float(kf.duration)), easing_func(_enum(kf.easing)))
-                     for kf in members if (a := _kf_anim(kf, var_map)) is not None]
+            lag = round(lag_by_group.get(gid, 0.0), 4)
+            if lag <= 1e-9:
+                # Parallel group: members play together, so merge same-object
+                # transforms. (A staggered group is sequential — don't merge.)
+                exprs = [_bake(e, rt, rf) for e, rt, rf, _ in _merge_units(members, var_map)]
+            else:
+                exprs = [_bake(a, max(0.01, float(kf.duration)), easing_func(_enum(kf.easing)))
+                         for kf in members if (a := _kf_anim(kf, var_map)) is not None]
             if not exprs:
                 continue
-            lag = round(lag_by_group.get(gid, 0.0), 4)
             inner = exprs[0] if len(exprs) == 1 else f"AnimationGroup({', '.join(exprs)}, lag_ratio={lag})"
             tracks.append((min(float(k.start_time) for k in members), inner))
         for obj in objects:  # parameter sweeps

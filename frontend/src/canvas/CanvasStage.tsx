@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Stage, Layer, Rect, Arrow, Circle, Group } from 'react-konva';
 import type Konva from 'konva';
 import { useProjectStore } from '../store/projectStore';
+import { useCanvasStore } from '../store/canvasStore';
 import { useTimelineStore, CAMERA_ID } from '../timeline/timelineStore';
 import type { Point2D, SceneObject } from '../types/ir';
 import { LatexOverlay } from './LatexOverlay';
@@ -22,14 +23,22 @@ export function CanvasStage() {
   const toggleSelect = useProjectStore(s => s.toggleSelect);
   const moveObject = useProjectStore(s => s.moveObject);
   const moveObjectsBy = useProjectStore(s => s.moveObjectsBy);
+  const updateObject = useProjectStore(s => s.updateObject);
   const updateKeyframe = useProjectStore(s => s.updateKeyframe);
   const updateCameraTrack = useProjectStore(s => s.updateCameraTrack);
+  const snapToCenter = useCanvasStore(s => s.snapToCenter);
+  const setSnapToCenter = useCanvasStore(s => s.setSnapToCenter);
   const selectedKfIds = useTimelineStore(s => s.selectedKfIds);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [view, setView] = useState<View>({ scale: 1, offsetX: 0, offsetY: 0 });
   const [band, setBand] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  // Live endpoint while dragging a selected line-like shape's handle (committed on release).
+  const [endpointDrag, setEndpointDrag] = useState<{ id: string; which: 'start' | 'end'; point: Point2D } | null>(null);
+  // Live delta while dragging a multi-selection: the anchor is dragged, everything
+  // else (Konva shapes + overlay equations) follows by (dx, dy) until release.
+  const [groupDrag, setGroupDrag] = useState<{ anchorId: string; dx: number; dy: number } | null>(null);
   const [handleDrag, setHandleDrag] = useState<{ id: string; pos: Point2D } | null>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
 
@@ -259,6 +268,14 @@ export function CanvasStage() {
     else if (!selectedIds.includes(id)) selectObject(id);
   }
 
+  // While dragging one member of a multi-selection, publish the live delta so the
+  // rest of the selection (Konva + overlay) follows in real time.
+  function onNodeDragMove(obj: SceneObject, node: Konva.Node) {
+    if (selectedIds.length > 1 && selectedIds.includes(obj.id)) {
+      setGroupDrag({ anchorId: obj.id, dx: manimX(node.x()) - obj.position.x, dy: manimY(node.y()) - obj.position.y });
+    }
+  }
+
   // Commit a drag: if the dragged object is part of a multi-selection, move the
   // whole selection by the same delta; otherwise just move the one object.
   function commitDrag(obj: SceneObject, node: Konva.Node) {
@@ -268,6 +285,17 @@ export function CanvasStage() {
     } else {
       moveObject(obj.id, nx, ny);
     }
+    setGroupDrag(null);
+  }
+
+  // Commit a dragged line-like endpoint (start/end point, in the shape's local coords).
+  function commitEndpoint(id: string, which: 'start' | 'end', point: Point2D) {
+    const o = objects.find(ob => ob.id === id);
+    if (o) {
+      const key = which === 'start' ? 'start_point' : 'end_point';
+      updateObject(id, { props: { ...o.props, [key]: { x: round2(point.x), y: round2(point.y) } } });
+    }
+    setEndpointDrag(null);
   }
 
   return (
@@ -304,6 +332,12 @@ export function CanvasStage() {
             onSelect={handleSelect}
             onCommitDrag={commitDrag}
             nonInteractiveIds={previewFrozenIds}
+            viewScale={view.scale}
+            endpointDrag={endpointDrag}
+            onEndpointDrag={(id, which, point) => setEndpointDrag({ id, which, point })}
+            onEndpointCommit={commitEndpoint}
+            groupDrag={groupDrag}
+            onNodeDragMove={onNodeDragMove}
           />
           {showCamera && (
             <Rect
@@ -380,6 +414,8 @@ export function CanvasStage() {
         view={view}
         ghosts={ghostLatex}
         nonInteractiveIds={previewFrozenIds}
+        groupDrag={groupDrag}
+        onGroupDrag={setGroupDrag}
         moveHandle={dragItem && isLatexLike(dragItem.ghost.obj) ? {
           pos: dragItem.to,
           onDragMove: pos => setHandleDrag({ id: dragItem.kf.id, pos }),
@@ -395,6 +431,11 @@ export function CanvasStage() {
           width: Math.abs(band.x1 - band.x0), height: Math.abs(band.y1 - band.y0),
         }} />
       )}
+
+      <label className="canvas-toolbar" title="Snap objects to the center lines while dragging">
+        <input type="checkbox" checked={snapToCenter} onChange={e => setSnapToCenter(e.target.checked)} />
+        Snap to center
+      </label>
 
       {objects.length === 0 && (
         <div className="canvas-empty">Add an object from the left panel to begin.</div>

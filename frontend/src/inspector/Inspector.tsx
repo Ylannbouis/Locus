@@ -196,10 +196,16 @@ export function Inspector() {
               </div>
             )}
           {subtype !== 'number_plane' && (
-            <label className="field field--check">
-              <input type="checkbox" checked={!!props.include_numbers} onChange={e => setProp({ include_numbers: e.target.checked })} />
-              <span>Show numbers</span>
-            </label>
+            <>
+              <label className="field field--check">
+                <input type="checkbox" checked={!!props.include_numbers} onChange={e => setProp({ include_numbers: e.target.checked })} />
+                <span>Show numbers</span>
+              </label>
+              {props.include_numbers && (
+                <NumberField label="Number size" value={Number(props.number_font_size ?? 36)} step={1}
+                  onChange={v => setProp({ number_font_size: Math.max(1, Math.round(v)) })} />
+              )}
+            </>
           )}
           {subtype === 'axes' && (
             <>

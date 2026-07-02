@@ -75,6 +75,16 @@ def _np(p: Any) -> str:
     return f"np.array([{x}, {y}, 0.0])"
 
 
+def _fmt_num(v: float) -> str:
+    # Emit whole numbers without a trailing ".0". Manim's NumberLine infers the
+    # tick label decimal count from the *string form of the step* (str(1.0)
+    # -> "1.0" -> one decimal place), so an integer step must render as "1" for
+    # whole-number ticks to show without decimals in the render.
+    if v == int(v):
+        return str(int(v))
+    return str(v)
+
+
 def _range(lst: Any, default: list[float]) -> str:
     if not isinstance(lst, (list, tuple)) or len(lst) < 2:
         lst = default
@@ -82,7 +92,7 @@ def _range(lst: Any, default: list[float]) -> str:
     # A non-positive step makes Manim's tick generation hang/raise — clamp it.
     if len(vals) >= 3 and vals[2] <= 0:
         vals[2] = 1.0
-    return "[" + ", ".join(str(v) for v in vals) + "]"
+    return "[" + ", ".join(_fmt_num(v) for v in vals) + "]"
 
 
 def _otype(obj: SceneObject) -> str:
@@ -149,13 +159,19 @@ def _emit_construct(obj: SceneObject) -> str:
             inc = bool(props.get("include_numbers", True))
             # No arrow tips by default (matches the canvas preview); opt in via props.
             tips = bool(props.get("tips", False))
+            axis_cfg = f"'include_numbers': {inc}"
+            if props.get("number_font_size") is not None:
+                axis_cfg += f", 'font_size': {_num(props.get('number_font_size'), 36)}"
             return (f"Axes(x_range={xr}, y_range={yr}, x_length={xl}, y_length={yl}, "
-                    f"tips={tips}, axis_config={{'include_numbers': {inc}}})")
+                    f"tips={tips}, axis_config={{{axis_cfg}}})")
         if subtype == "number_line":
             xr = _range(props.get("x_range"), [-5, 5, 1])
             length = _num(props.get("length"), 8.0)
             inc = bool(props.get("include_numbers", True))
-            return f"NumberLine(x_range={xr}, length={length}, include_numbers={inc})"
+            fs = ""
+            if props.get("number_font_size") is not None:
+                fs = f", font_size={_num(props.get('number_font_size'), 36)}"
+            return f"NumberLine(x_range={xr}, length={length}, include_numbers={inc}{fs})"
         if subtype == "number_plane":
             xr = _range(props.get("x_range"), [-5, 5, 1])
             yr = _range(props.get("y_range"), [-3, 3, 1])
@@ -377,6 +393,13 @@ def emit_object(obj: SceneObject) -> tuple[str, list[str]]:
             lines.append(f"{var}.move_to(np.array([{x}, {y}, 0.0]))")
     else:
         lines.append(f"{var}.move_to(np.array([{x}, {y}, 0.0]))")
+
+    # Baked rotation (center-based, Manim CCW degrees). Point-based shapes bake
+    # rotation into their own points instead, so they never carry this prop;
+    # graphs follow their axes and are never rotated independently.
+    rot = _num(props.get("rotation"), 0.0)
+    if abs(rot) > 1e-9 and otype != "graph":
+        lines.append(f"{var}.rotate({rot} * DEGREES)")
 
     if obj.z_index:
         lines.append(f"{var}.set_z_index({int(obj.z_index)})")

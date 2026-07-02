@@ -14,12 +14,14 @@ Stack: React 19 + react-konva + zustand + immer + katex + axios. Dev server on *
 | `types/ir.ts` | **TS mirror of `backend/app/models/ir.py`.** Keep in sync by hand — no codegen between them. |
 | `store/projectStore.ts` | Main Zustand store: the `Project`, selection, undo/redo, autosave, clipboard, grouping, all IR mutations. Plus global keyboard shortcuts. |
 | `store/renderStore.ts` | Render/morph-preview job state + WebSocket progress subscription. |
-| `store/objectFactory.ts` | `newId()` + factories that build default `SceneObject`s per type. |
+| `store/objectFactory.ts` | `newId()` + `uniqueName()` (auto-numbers a repeated default name → "Equation 2") + factories that build default `SceneObject`s per type. |
+| `store/finalState.ts` | `computeFinalState(scene)` — bakes a scene's end-of-animation look (final position/size/rotation, drops faded-out objects, swaps transform sources→targets, final camera framing) into a static, timeline-less scene for "Duplicate final state". |
+| `store/canvasStore.ts` | UI-only canvas prefs (snap-to-center), persisted to `localStorage`. |
 | `api/client.ts` | Thin axios wrappers over the REST API + the WS URL helper. Calls same-origin `/api`, `/ws` (proxied). |
-| `canvas/` | Konva stage, coordinate model, scene-node rendering, LaTeX overlay, plot/geometry sampling, `motion.ts` (timeline transform math), camera viewport overlay + move/scale/rotate ghost previews. |
+| `canvas/` | Konva stage, coordinate model, scene-node rendering, LaTeX overlay, plot/geometry sampling, `motion.ts` (timeline transform math), camera viewport overlay + ghost previews, draggable endpoint handles, center-snapping. |
 | `inspector/` | Per-type property editors (right sidebar). |
 | `outliner/` | Object tree: select, z-order, show/hide, delete, group/ungroup. |
-| `timeline/` | Keyframe timeline UI (incl. a dedicated camera track) + per-keyframe inspector + its own UI-only store. |
+| `timeline/` | Keyframe timeline UI (incl. a dedicated camera track) + per-keyframe inspector + its own UI-only store. Overlapping same-object keyframes auto-stack into sub-rows (`packLanes`). |
 | `components/` | `DepGate` (blocks until deps OK), `ProjectHome`, `EditorShell` (layout), `AddPanel`, `ScenePanel` (multi-scene list), `RenderPanel` (export options), `CodeView` (eject-to-code / JSON modal). |
 
 `App.tsx`: `DepGate` → (`EditorShell` if a project is loaded, else `ProjectHome`).
@@ -56,6 +58,33 @@ HTML overlay (`canvas/LatexOverlay.tsx`) so they're crisp and selectable. Plot/g
 (parametric curves, vector fields) is JS-side in `canvas/plotting.ts` for the live preview only —
 the *real* curve is produced by Manim at render time.
 
+Coordinate systems draw their tick **numbers** on the canvas when `include_numbers` is set, sized
+by a `number_font_size` prop; whole-number ticks render without a trailing `.0` (`fmtNum`). Shapes
+and text also honor a generic baked-transform prop **`rotation`** (degrees, CCW) — applied via
+Konva/CSS rotation, *negated* since screen rotation is CW while Manim degrees are CCW — so a
+"Duplicate final state" scene (which bakes accumulated rotation into `rotation` and scale into the
+size props) looks identical to the render. Keep these props in sync with the codegen (`objects.py`
+applies `.rotate(rot * DEGREES)`).
+
+## Direct manipulation & snapping (`canvas/SceneNodes.tsx`, `canvas/CanvasStage.tsx`)
+
+- **Line-like shapes** (`line`/`dashed_line`/`arrow`/`double_arrow`) render inside a `<Group>` at
+  their `position` so draggable **endpoint handles** share the translation (no lag when the whole
+  shape moves). A single `arrow` exposes only its tip (`end_point`); the others expose both ends.
+  While an endpoint is dragged, an `endpointDrag` live-override makes the shape follow; release
+  commits `start_point`/`end_point` via `updateObject` (one undo entry). Handles keep a constant
+  on-screen size (`radius / viewScale`) and are hidden on ghost/preview copies.
+- **Snap to center:** dragging an object snaps onto the horizontal/vertical center lines within
+  `SNAP_PX` (screen px) of the Manim origin. Konva drags use a shared `dragBoundFunc` (the origin
+  sits at the stage's own `x`/`y` in absolute coords); the LaTeX overlay converts `SNAP_PX` to units.
+  Toggle via the `.canvas-toolbar` checkbox → `canvasStore.snapToCenter` (persisted). Suppressed
+  while several objects are selected.
+- **Multi-select drag:** dragging one member of a multi-selection moves the whole set live via a
+  shared `groupDrag = {anchorId, dx, dy}` — the dragged anchor is driven by Konva/overlay while every
+  *other* selected object (Konva shape **and** overlay equation) renders offset by `(dx, dy)`. The
+  anchor keeps its stored position so react-konva doesn't reset it mid-drag (only *changed* props are
+  re-applied). Release commits once via `moveObjectsBy` and clears `groupDrag`.
+
 ## Timeline previews & camera overlay (`canvas/CanvasStage.tsx`, `canvas/motion.ts`)
 
 These are **editor-only** aids — they reflect the timeline but never touch the render (the backend
@@ -81,8 +110,9 @@ codegen is the source of truth for the actual animation).
 ## Scenes & export (Phase 6)
 
 - A project has multiple `scenes`; `ScenePanel` does add/delete/duplicate/reorder/inline-rename via
-  store actions (`addScene`/`removeScene`/`duplicateScene`/`moveScene`/`renameScene`). `selectedSceneId`
-  is the active scene; always keep ≥1 scene.
+  store actions (`addScene`/`removeScene`/`duplicateScene`/`duplicateSceneFinal`/`moveScene`/`renameScene`).
+  `duplicateSceneFinal` snapshots the scene's end-of-animation state (via `computeFinalState`, relationships
+  kept, timeline dropped) into a new scene. `selectedSceneId` is the active scene; always keep ≥1 scene.
 - `RenderPanel` builds a `RenderOptions` (format mp4/gif/png/still, resolution preset, fps, transparent,
   crossfade) and calls `renderStore.triggerRender(projectId, sceneId|null, opts)` — **`sceneId === null`
   renders & stitches all scenes** (mp4 only; the panel disables "all scenes" for other formats). Quality

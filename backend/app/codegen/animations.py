@@ -126,5 +126,35 @@ def emit_animation(verb: str, var: str, params: dict[str, Any] | None = None,
     return None
 
 
+# move/scale/rotate are `.animate` transforms; two separate `.animate`
+# animations on the same mobject in one play fight over its state. When they run
+# simultaneously we chain them onto one `.animate` instead (Manim applies the
+# whole chain as a single interpolation). Chain order is fixed move->scale->
+# rotate; the final target is order-independent (shift moves the center; scale
+# and rotate about that center commute), so any consistent order is equivalent.
+_CHAIN_ORDER = {"move": 0, "scale": 1, "rotate": 2}
+
+
+def emit_transform_chain(var: str, items: list[tuple[str, dict]]) -> str | None:
+    """Chain simultaneous move/scale/rotate onto one `.animate`. `items` is a
+    list of (verb, params). Returns e.g. `m.animate.shift(v).scale(2).rotate(...)`,
+    or None if nothing emits."""
+    parts: list[str] = []
+    for verb, params in sorted(items, key=lambda it: _CHAIN_ORDER.get(it[0], 9)):
+        params = params or {}
+        if verb == "move":
+            tp = params.get("target_position")
+            dl = params.get("delta")
+            if isinstance(tp, dict):
+                parts.append(f".move_to({_vec(tp)})")
+            elif isinstance(dl, dict):
+                parts.append(f".shift({_vec(dl)})")
+        elif verb == "scale":
+            parts.append(f".scale({_num(params.get('factor'), 1.5)})")
+        elif verb == "rotate":
+            parts.append(f".rotate({_num(params.get('angle_degrees'), 90.0)} * DEGREES)")
+    return f"{var}.animate" + "".join(parts) if parts else None
+
+
 def easing_func(easing: str) -> str:
     return EASING_MAP.get(easing, "smooth")

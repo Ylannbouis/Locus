@@ -1,9 +1,29 @@
-import { Rect, Circle as KCircle, Ellipse, Line, Arrow, Group, Path } from 'react-konva';
+import { Rect, Circle as KCircle, Ellipse, Line, Arrow, Group, Path, Text } from 'react-konva';
 import type Konva from 'konva';
-import type { SceneObject } from '../types/ir';
-import { PX_PER_UNIT, worldX, worldY } from './coords';
+import type { Point2D, SceneObject } from '../types/ir';
+import { PX_PER_UNIT, MANIM_EM_UNITS_PER_PT, SNAP_PX, worldX, worldY, manimX, manimY } from './coords';
 import { samplePlot, sampleParametric, sampleVectorField, vectorFieldColor } from './plotting';
 import { objectBounds, lineSegment, intersect, BRACE_BUFF, BRACE_DEPTH } from './geometry';
+import { useCanvasStore } from '../store/canvasStore';
+import { useProjectStore } from '../store/projectStore';
+
+// Snap a node's drag onto the horizontal/vertical center lines when it lands
+// within SNAP_PX of them. dragBoundFunc works in absolute (screen) pixels, and
+// the Manim origin sits at the stage's own (x, y), so snapping each axis to the
+// stage position pulls the object's drag reference onto that center line.
+// Skipped while several objects are selected (a group move shouldn't snap on one
+// member's edge, which would shift the whole group unexpectedly).
+function snapDragBound(this: Konva.Node, pos: { x: number; y: number }) {
+  if (!useCanvasStore.getState().snapToCenter) return pos;
+  if (useProjectStore.getState().selectedObjectIds.length > 1) return pos;
+  const stage = this.getStage();
+  if (!stage) return pos;
+  const cx = stage.x(), cy = stage.y();
+  return {
+    x: Math.abs(pos.x - cx) <= SNAP_PX ? cx : pos.x,
+    y: Math.abs(pos.y - cy) <= SNAP_PX ? cy : pos.y,
+  };
+}
 
 // Build an SVG path for a brace along a baseline (world px). axis 'h' or 'v';
 // `sign` is the direction the tip points (away from the target).
@@ -33,6 +53,16 @@ interface Props {
   // Objects being edited via a move/scale/rotate keyframe preview must not steal
   // pointer events from the destination drag handle.
   nonInteractiveIds?: string[];
+  // Current view scale, so on-canvas handles keep a constant screen size.
+  viewScale?: number;
+  // Live override + callbacks for dragging a selected line-like shape's endpoints.
+  endpointDrag?: { id: string; which: 'start' | 'end'; point: Point2D } | null;
+  onEndpointDrag?: (id: string, which: 'start' | 'end', point: Point2D) => void;
+  onEndpointCommit?: (id: string, which: 'start' | 'end', point: Point2D) => void;
+  // Live multi-select drag: while `anchorId` is being dragged, every *other*
+  // selected object renders offset by (dx, dy) so the whole set moves together.
+  groupDrag?: { anchorId: string; dx: number; dy: number } | null;
+  onNodeDragMove?: (o: SceneObject, node: Konva.Node) => void;
 }
 
 const PXU = PX_PER_UNIT;
@@ -42,6 +72,20 @@ const HIT = 16;
 
 function rng(v: unknown, fb: number[]): number[] {
   return Array.isArray(v) && v.length >= 2 ? (v as number[]) : fb;
+}
+
+// Format a tick value for display: trim floating-point fuzz and drop the
+// decimal point entirely for whole numbers (so 2 shows as "2", not "2.0").
+function fmtNum(v: number): string {
+  const r = Math.round(v * 1e6) / 1e6;
+  if (Object.is(r, -0)) return '0';
+  return String(r);
+}
+
+// Manim number font_size (points) -> world px, using the same em calibration
+// as the KaTeX overlay so preview sizes track the render roughly.
+function numberPx(fs: number): number {
+  return fs * MANIM_EM_UNITS_PER_PT * PX_PER_UNIT;
 }
 
 // Tick values from min..max, guarding against non-positive steps (infinite
@@ -62,6 +106,8 @@ function coordChildren(o: SceneObject, stroke: string, sw: number) {
   const st = p.subtype;
   const els: React.ReactNode[] = [];
   const faint = hexToRgba(o.style.stroke_color, 0.25);
+  const showNums = !!p.include_numbers;
+  const fs = numberPx(Number(p.number_font_size ?? 36));
 
   if (st === 'number_line') {
     const len = Number(p.length ?? 8) * PXU;
@@ -71,6 +117,11 @@ function coordChildren(o: SceneObject, stroke: string, sw: number) {
     for (const x of safeTicks(xmin, xmax, xstep)) {
       const px = ((x - (xmin + xmax) / 2) / span) * len;
       els.push(<Line key={`t${x}`} points={[px, -6, px, 6]} stroke={stroke} strokeWidth={sw} />);
+      if (showNums) {
+        const label = fmtNum(x);
+        els.push(<Text key={`n${x}`} text={label} x={px} y={10} fontSize={fs} fill={stroke}
+          offsetX={(label.length * fs * 0.55) / 2} />);
+      }
     }
     return els;
   }
@@ -113,17 +164,27 @@ function coordChildren(o: SceneObject, stroke: string, sw: number) {
       if (Math.abs(x) < 1e-9) continue;
       const px = dataXpx(x);
       els.push(<Line key={`tx${x}`} points={[px, axisYpx - 5, px, axisYpx + 5]} stroke={stroke} strokeWidth={sw} />);
+      if (showNums) {
+        const label = fmtNum(x);
+        els.push(<Text key={`nx${x}`} text={label} x={px} y={axisYpx + 8} fontSize={fs} fill={stroke}
+          offsetX={(label.length * fs * 0.55) / 2} />);
+      }
     }
     for (const y of safeTicks(ymin, ymax, ystep)) {
       if (Math.abs(y) < 1e-9) continue;
       const py = dataYpx(y);
       els.push(<Line key={`ty${y}`} points={[axisXpx - 5, py, axisXpx + 5, py]} stroke={stroke} strokeWidth={sw} />);
+      if (showNums) {
+        const label = fmtNum(y);
+        els.push(<Text key={`ny${y}`} text={label} x={axisXpx - 8} y={py} fontSize={fs} fill={stroke}
+          offsetX={label.length * fs * 0.55} offsetY={fs / 2} />);
+      }
     }
   }
   return els;
 }
 
-export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonInteractiveIds = [] }: Props) {
+export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonInteractiveIds = [], viewScale = 1, endpointDrag = null, onEndpointDrag, onEndpointCommit, groupDrag = null, onNodeDragMove }: Props) {
   const frozen = new Set(nonInteractiveIds);
 
   const renderNode = (o: SceneObject): React.ReactNode => {
@@ -136,7 +197,13 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
     const strokeWidth = Number(o.style.stroke_width ?? 2);
     const fill = hexToRgba(o.style.fill_color, o.style.fill_opacity ?? 0);
     const sel = isSel ? { shadowColor: '#2563eb', shadowBlur: 10, shadowOpacity: 1 } : {};
-    const pos = { x: worldX(o.position.x), y: worldY(o.position.y) };
+    // During a multi-select drag, follow the anchor: offset every *other* selected
+    // object by the live delta. The anchor keeps its stored position (Konva drives
+    // it), so its `x`/`y` props don't change mid-drag and Konva doesn't reset it.
+    const follow = groupDrag && groupDrag.anchorId !== o.id && isSel;
+    const px = o.position.x + (follow ? groupDrag!.dx : 0);
+    const py = o.position.y + (follow ? groupDrag!.dy : 0);
+    const pos = { x: worldX(px), y: worldY(py) };
     // Show the move cursor over any selectable object (matches the equations).
     const hover = isFrozen ? {} : {
       onMouseEnter: (e: Konva.KonvaEventObject<MouseEvent>) => { const st = e.target.getStage(); if (st) st.container().style.cursor = 'move'; },
@@ -144,10 +211,12 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
     };
     const drag = isFrozen ? { draggable: false, listening: false } : {
       draggable: true,
+      dragBoundFunc: snapDragBound,
       ...hover,
       onMouseDown: (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; },
       onClick: (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey); },
       onDragStart: (e: Konva.KonvaEventObject<DragEvent>) => { if (!isSel) onSelect(o.id, false); void e; },
+      onDragMove: (e: Konva.KonvaEventObject<DragEvent>) => onNodeDragMove?.(o, e.target),
       onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => onCommitDrag(o, e.target),
     };
     const common = { key: o.id, ...pos, ...drag, ...sel };
@@ -155,34 +224,68 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
 
     if (o.type === 'shape') {
       const st = p.subtype;
+      // Baked rotation (Manim CCW degrees). Konva rotation is CW on screen (y-down),
+      // so negate; rect/ellipse pivot about their center (origin already centered).
+      const rot = -(Number(p.rotation) || 0);
       if (st === 'circle') {
         return <KCircle {...common} radius={Number(p.radius ?? 1) * PXU} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
       }
       if (st === 'ellipse') {
-        return <Ellipse {...common} radiusX={(Number(p.width ?? 2) / 2) * PXU} radiusY={(Number(p.height ?? 1.2) / 2) * PXU} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
+        return <Ellipse {...common} rotation={rot} radiusX={(Number(p.width ?? 2) / 2) * PXU} radiusY={(Number(p.height ?? 1.2) / 2) * PXU} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
       }
       if (st === 'polygon') {
         const pts = (p.vertices ?? []).flatMap((v: any) => [worldX(v.x), worldY(v.y)]);
         return <Line {...common} points={pts} closed fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
       }
-      if (st === 'line' || st === 'dashed_line') {
-        const pts = [worldX(p.start_point?.x ?? 0), worldY(p.start_point?.y ?? 0), worldX(p.end_point?.x ?? 0), worldY(p.end_point?.y ?? 0)];
-        const d = Number(p.dash_length ?? 0.15) * PXU;
-        return <Line {...common} points={pts} stroke={stroke} strokeWidth={strokeWidth} hitStrokeWidth={HIT} dash={st === 'dashed_line' ? [d, d] : undefined} />;
-      }
-      if (st === 'arrow' || st === 'double_arrow') {
-        const pts = [worldX(p.start_point?.x ?? 0), worldY(p.start_point?.y ?? 0), worldX(p.end_point?.x ?? 0), worldY(p.end_point?.y ?? 0)];
+      if (st === 'line' || st === 'dashed_line' || st === 'arrow' || st === 'double_arrow') {
+        // Line-likes render as a group at `position` so draggable endpoint handles
+        // can share the translation (no lag when the whole shape moves). While an
+        // endpoint is dragged, `endpointDrag` overrides it so the shape follows live.
+        const arrowLike = st === 'arrow' || st === 'double_arrow';
+        const live = (w: 'start' | 'end') =>
+          endpointDrag && endpointDrag.id === o.id && endpointDrag.which === w ? endpointDrag.point : null;
+        const startP = live('start') ?? (p.start_point ?? { x: 0, y: 0 });
+        const endP = live('end') ?? (p.end_point ?? { x: 0, y: 0 });
+        const sx = worldX(startP.x), sy = worldY(startP.y), ex = worldX(endP.x), ey = worldY(endP.y);
         const tip = Number(p.tip_length ?? 0.3) * PXU;
-        return <Arrow {...common} points={pts} stroke={stroke} fill={stroke} strokeWidth={strokeWidth} hitStrokeWidth={HIT}
-          pointerLength={tip} pointerWidth={tip * 0.9} pointerAtBeginning={st === 'double_arrow'} />;
+        const d = Number(p.dash_length ?? 0.15) * PXU;
+        const shapeNode = arrowLike
+          ? <Arrow points={[sx, sy, ex, ey]} stroke={stroke} fill={stroke} strokeWidth={strokeWidth} hitStrokeWidth={HIT}
+              pointerLength={tip} pointerWidth={tip * 0.9} pointerAtBeginning={st === 'double_arrow'} {...sel} />
+          : <Line points={[sx, sy, ex, ey]} stroke={stroke} strokeWidth={strokeWidth} hitStrokeWidth={HIT}
+              dash={st === 'dashed_line' ? [d, d] : undefined} {...sel} />;
+        if (isFrozen) return <Group key={o.id} {...pos} listening={false}>{shapeNode}</Group>;
+        const hr = 8 / viewScale;
+        // A single arrow exposes only its tip (end); everything else exposes both ends.
+        const ends: [('start' | 'end'), number, number][] = st === 'arrow'
+          ? [['end', ex, ey]]
+          : [['start', sx, sy], ['end', ex, ey]];
+        // Endpoint handles only for a lone selection (avoid clutter / drag conflicts
+        // when several objects are selected and moved together).
+        const canEdit = isSel && selectedIds.length === 1 && onEndpointDrag && onEndpointCommit;
+        return (
+          <Group key={o.id} {...pos} {...drag}>
+            {shapeNode}
+            {canEdit && ends.map(([which, hx, hy]) => (
+              <KCircle key={which} x={hx} y={hy} radius={hr} fill="#ea580c" stroke="#ffffff" strokeWidth={1.5 / viewScale}
+                hitStrokeWidth={20 / viewScale} draggable
+                onMouseDown={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }}
+                onDragStart={(e: Konva.KonvaEventObject<DragEvent>) => { e.cancelBubble = true; }}
+                onDragMove={(e: Konva.KonvaEventObject<DragEvent>) => { e.cancelBubble = true; onEndpointDrag!(o.id, which, { x: manimX(e.target.x()), y: manimY(e.target.y()) }); }}
+                onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => { e.cancelBubble = true; onEndpointCommit!(o.id, which, { x: manimX(e.target.x()), y: manimY(e.target.y()) }); }}
+                onMouseEnter={(e: Konva.KonvaEventObject<MouseEvent>) => { const s = e.target.getStage(); if (s) s.container().style.cursor = 'grab'; }}
+                onMouseLeave={(e: Konva.KonvaEventObject<MouseEvent>) => { const s = e.target.getStage(); if (s) s.container().style.cursor = 'default'; }} />
+            ))}
+          </Group>
+        );
       }
       // rectangle (default)
       const w = Number(p.width ?? 2) * PXU, h = Number(p.height ?? 1.2) * PXU;
-      return <Rect {...common} width={w} height={h} offsetX={w / 2} offsetY={h / 2} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
+      return <Rect {...common} rotation={rot} width={w} height={h} offsetX={w / 2} offsetY={h / 2} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
     }
 
     if (o.type === 'coordinate_system') {
-      return <Group {...common}>{coordChildren(o, stroke, strokeWidth)}</Group>;
+      return <Group {...common} rotation={-(Number(p.rotation) || 0)}>{coordChildren(o, stroke, strokeWidth)}</Group>;
     }
 
     if (o.type === 'graph') {
