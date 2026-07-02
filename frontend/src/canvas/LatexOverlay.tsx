@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import katex from 'katex';
 import type { View } from './coords';
 import {
@@ -190,20 +191,32 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
         return;
       }
       const d = dragRef.current;
-      if (d) {
-        setDrag(cur => {
-          if (cur && cur.id === d.id) {
-            const st = useProjectStore.getState();
-            const sel = st.selectedObjectIds;
-            if (sel.length > 1 && sel.includes(d.id)) {
-              st.moveObjectsBy(sel, cur.x - d.startX, cur.y - d.startY);
-            } else {
-              st.moveObject(d.id, cur.x, cur.y);
-            }
-          }
-          return null;
+      if (!d) return;
+      dragRef.current = null;
+      // Final position straight from the pointer-up event (matches onMove; avoids
+      // depending on the `drag` state, which isn't in this effect's deps).
+      const st = useProjectStore.getState();
+      const sel = st.selectedObjectIds;
+      const isMulti = sel.length > 1 && sel.includes(d.id);
+      let nx = d.startX + (e.clientX - d.startSX) / (view.scale * PX_PER_UNIT);
+      let ny = d.startY - (e.clientY - d.startSY) / (view.scale * PX_PER_UNIT);
+      if (!isMulti && useCanvasStore.getState().snapToCenter) {
+        const t = SNAP_PX / (view.scale * PX_PER_UNIT);
+        if (Math.abs(nx) <= t) nx = 0;
+        if (Math.abs(ny) <= t) ny = 0;
+      }
+      if (isMulti) {
+        // Commit the move and clear both live offsets together, so followers never
+        // render at (already-moved position) + (stale drag delta) — a teleport in
+        // the drag direction (see CanvasStage.commitDrag).
+        flushSync(() => {
+          st.moveObjectsBy(sel, nx - d.startX, ny - d.startY);
+          setDrag(null);
+          onGroupDrag?.(null);
         });
-        dragRef.current = null;
+      } else {
+        st.moveObject(d.id, nx, ny);
+        setDrag(null);
         onGroupDrag?.(null);
       }
     }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Stage, Layer, Rect, Arrow, Circle, Group } from 'react-konva';
 import type Konva from 'konva';
 import { useProjectStore } from '../store/projectStore';
@@ -281,11 +282,18 @@ export function CanvasStage() {
   function commitDrag(obj: SceneObject, node: Konva.Node) {
     const nx = manimX(node.x()), ny = manimY(node.y());
     if (selectedIds.length > 1 && selectedIds.includes(obj.id)) {
-      moveObjectsBy(selectedIds, nx - obj.position.x, ny - obj.position.y);
+      // Commit the positions and clear the live offset in one flush. Otherwise the
+      // store update (via useSyncExternalStore) can re-render on its own before the
+      // groupDrag clear lands, and each follower renders at (already-moved position)
+      // + (stale drag delta) — a visible teleport in the drag direction.
+      flushSync(() => {
+        moveObjectsBy(selectedIds, nx - obj.position.x, ny - obj.position.y);
+        setGroupDrag(null);
+      });
     } else {
       moveObject(obj.id, nx, ny);
+      setGroupDrag(null);
     }
-    setGroupDrag(null);
   }
 
   // Commit a dragged line-like endpoint (start/end point, in the shape's local coords).

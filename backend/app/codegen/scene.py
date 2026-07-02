@@ -151,6 +151,17 @@ def _kf_anim(kf, var_map: dict[str, str]) -> str | None:
     return emit_animation(_enum(kf.verb), v, kf.params, var_map)
 
 
+def _kf_anim_r(kf, var_map: dict[str, str], restore_ids: set[str]) -> str | None:
+    """Like `_kf_anim`, but a move/scale/rotate on a hidden-until-creation object
+    (or a group containing one) uses a restore-based target so it isn't faded out
+    by the 0-opacity baked into a plain `.animate` (see `emit_transform_chain`)."""
+    verb = _enum(kf.verb)
+    if verb in _XFORM_ANIM and kf.object_id in restore_ids and var_map.get(kf.object_id):
+        return emit_transform_chain(var_map[kf.object_id], [(verb, kf.params or {})],
+                                    restore_target=True)
+    return _kf_anim(kf, var_map)
+
+
 def _bake(expr: str, run_time: float, rate_func: str) -> str:
     """Bake run_time + rate_func into an animation expression so it can carry its
     own timing inside an AnimationGroup / Succession (the overlapping timeline)."""
@@ -167,12 +178,18 @@ def _bake(expr: str, run_time: float, rate_func: str) -> str:
 _XFORM_ANIM = {"move", "scale", "rotate"}
 
 
-def _merge_units(members, var_map: dict[str, str]) -> list[tuple[str, float, str, float]]:
+def _merge_units(members, var_map: dict[str, str],
+                 restore_ids: set[str] | None = None) -> list[tuple[str, float, str, float]]:
     """Turn a set of keyframes into `(expr, run_time, rate_func, start_time)`
     units, chaining move/scale/rotate on the *same object* that **overlap in
     time** into a single `.animate` chain over the union window (they'd otherwise
     fight over the mobject's state). Non-overlapping transforms and every other
-    verb stay one unit each. Order of first appearance is preserved."""
+    verb stay one unit each. Order of first appearance is preserved.
+
+    `restore_ids` holds objects (and ancestor groups) hidden until their creation
+    animation — their transforms build an explicit restore-based target instead of
+    a plain `.animate` (see `emit_transform_chain`)."""
+    restore_ids = restore_ids or set()
     xform_by_obj: dict[str, list] = {}
     order: list[tuple[str, object]] = []
     for kf in members:
@@ -215,14 +232,11 @@ def _merge_units(members, var_map: dict[str, str]) -> list[tuple[str, float, str
             ckfs = cl["kfs"]
             start, rt = cl["start"], max(0.01, cl["end"] - cl["start"])
             rf = easing_func(_enum(ckfs[0].easing))
-            if len(ckfs) == 1:
-                a = _kf_anim(ckfs[0], var_map)
-                if a is not None:
-                    units.append((a, rt, rf, start))
-            else:
-                chain = emit_transform_chain(var_map[obj_id], [(_enum(k.verb), k.params or {}) for k in ckfs])
-                if chain is not None:
-                    units.append((chain, rt, rf, start))
+            chain = emit_transform_chain(
+                var_map[obj_id], [(_enum(k.verb), k.params or {}) for k in ckfs],
+                restore_target=obj_id in restore_ids)
+            if chain is not None:
+                units.append((chain, rt, rf, start))
     return units
 
 
@@ -316,6 +330,9 @@ def build_body(scene: Scene) -> str:
     ordered = sorted(keyframes, key=lambda k: k.start_time)
     uses_tracking = any(_is_track_kf(kf, var_map) for kf in keyframes)
     reveal_kf_id: dict[str, str] = {}  # obj_id -> the creation keyframe to un-hide at
+    # Objects (and ancestor groups) whose move/scale/rotate must build a restore-
+    # based target because they were hidden with set_opacity(0) — see below.
+    restore_ids: set[str] = set()
     if not uses_tracking:
         kfs_by_obj: dict[str, list] = {}
         for kf in keyframes:
@@ -355,8 +372,29 @@ def build_body(scene: Scene) -> str:
                 continue                                   # never pre-added → Manim won't flash it
             reveal_kf_id[oid] = first.id
             hide_vars.append(var_map[oid])
-        if hide_vars:
+
+        # A move/scale/rotate on a hidden object — or on a group that *contains*
+        # one — must not use a plain `.animate` (its auto-generated target copies
+        # the current 0-opacity and fades the object out). Mark each hidden object
+        # and all of its ancestor groups; their transforms build a restore-based
+        # target instead. A transformed ancestor group also needs a saved (still
+        # visible) state to restore from, captured before its children are hidden.
+        restore_ids.update(reveal_kf_id)
+        for h in list(reveal_kf_id):
+            cur = obj_by_id.get(h)
+            while cur is not None and cur.parent_id and cur.parent_id not in restore_ids:
+                restore_ids.add(cur.parent_id)
+                cur = obj_by_id.get(cur.parent_id)
+        xformed = {kf.object_id for kf in keyframes if _enum(kf.verb) in _XFORM_ANIM}
+        group_savestate = [var_map[gid] for gid in restore_ids
+                           if gid not in reveal_kf_id and gid in var_map and gid in xformed]
+
+        if hide_vars or group_savestate:
             lines.append("# keep these hidden until their creation animation plays")
+            # Save the transformed groups first, while their children are still
+            # visible, so a restore-based target recovers the correct opacity.
+            for v in group_savestate:
+                lines.append(f"{v}.save_state()")
             for v in hide_vars:
                 lines.append(f"{v}.save_state()")
                 lines.append(f"{v}.set_opacity(0)")
@@ -417,7 +455,7 @@ def build_body(scene: Scene) -> str:
 
         for start, members in ungrouped_by_start.items():
             # Same object_id + same start → chain move/scale/rotate together.
-            anims = [e for e, _, _, _ in _merge_units(members, var_map)]
+            anims = [e for e, _, _, _ in _merge_units(members, var_map, restore_ids)]
             if not anims:
                 continue
             events.append({"start": start, "run_time": max(0.01, max(float(k.duration) for k in members)),
@@ -425,9 +463,9 @@ def build_body(scene: Scene) -> str:
         for gid, members in grouped.items():
             lag = lag_by_group.get(gid, 0.0)
             if lag <= 1e-9:
-                anims = [e for e, _, _, _ in _merge_units(members, var_map)]
+                anims = [e for e, _, _, _ in _merge_units(members, var_map, restore_ids)]
             else:
-                anims = [a for kf in members if (a := _kf_anim(kf, var_map)) is not None]
+                anims = [a for kf in members if (a := _kf_anim_r(kf, var_map, restore_ids)) is not None]
             if not anims:
                 continue
             events.append({"start": min(k.start_time for k in members),
@@ -498,7 +536,7 @@ def build_body(scene: Scene) -> str:
                 ungrouped.append(kf)
         # Ungrouped: simultaneous move/scale/rotate on one object collapse to a
         # single chained .animate track; everything else is one track each.
-        for expr, rt, rf, start in _merge_units(ungrouped, var_map):
+        for expr, rt, rf, start in _merge_units(ungrouped, var_map, restore_ids):
             tracks.append((start, _bake(expr, rt, rf)))
         # A hidden-until-creation object: restore its opacity the instant before
         # its introducer draws it in (it was set invisible + save_state'd above).
@@ -514,10 +552,10 @@ def build_body(scene: Scene) -> str:
             if lag <= 1e-9:
                 # Parallel group: members play together, so merge same-object
                 # transforms. (A staggered group is sequential — don't merge.)
-                exprs = [_bake(e, rt, rf) for e, rt, rf, _ in _merge_units(members, var_map)]
+                exprs = [_bake(e, rt, rf) for e, rt, rf, _ in _merge_units(members, var_map, restore_ids)]
             else:
                 exprs = [_bake(a, max(0.01, float(kf.duration)), easing_func(_enum(kf.easing)))
-                         for kf in members if (a := _kf_anim(kf, var_map)) is not None]
+                         for kf in members if (a := _kf_anim_r(kf, var_map, restore_ids)) is not None]
             if not exprs:
                 continue
             inner = exprs[0] if len(exprs) == 1 else f"AnimationGroup({', '.join(exprs)}, lag_ratio={lag})"

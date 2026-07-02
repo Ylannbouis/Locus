@@ -83,7 +83,10 @@ applies `.rotate(rot * DEGREES)`).
   shared `groupDrag = {anchorId, dx, dy}` — the dragged anchor is driven by Konva/overlay while every
   *other* selected object (Konva shape **and** overlay equation) renders offset by `(dx, dy)`. The
   anchor keeps its stored position so react-konva doesn't reset it mid-drag (only *changed* props are
-  re-applied). Release commits once via `moveObjectsBy` and clears `groupDrag`.
+  re-applied). Release commits once via `moveObjectsBy` and clears `groupDrag` — **in one
+  `flushSync`** so the store move and the offset-clear land in the same render. Otherwise the
+  store update (`useSyncExternalStore`) can re-render before the `groupDrag` clear, painting every
+  follower at `moved-position + stale-delta` — a teleport in the drag direction.
 
 ## Timeline previews & camera overlay (`canvas/CanvasStage.tsx`, `canvas/motion.ts`)
 

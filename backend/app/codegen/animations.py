@@ -135,10 +135,17 @@ def emit_animation(verb: str, var: str, params: dict[str, Any] | None = None,
 _CHAIN_ORDER = {"move": 0, "scale": 1, "rotate": 2}
 
 
-def emit_transform_chain(var: str, items: list[tuple[str, dict]]) -> str | None:
+def emit_transform_chain(var: str, items: list[tuple[str, dict]],
+                         restore_target: bool = False) -> str | None:
     """Chain simultaneous move/scale/rotate onto one `.animate`. `items` is a
     list of (verb, params). Returns e.g. `m.animate.shift(v).scale(2).rotate(...)`,
-    or None if nothing emits."""
+    or None if nothing emits.
+
+    When `restore_target` is set, the object (or a group child of it) was hidden
+    with `set_opacity(0)` until its creation animation plays. A plain `.animate`
+    would copy that 0-opacity into its auto-generated target and fade the object
+    out when the transform runs, so build an explicit `Transform` whose target is
+    the object's *saved* (fully-visible) state with the same methods applied."""
     parts: list[str] = []
     for verb, params in sorted(items, key=lambda it: _CHAIN_ORDER.get(it[0], 9)):
         params = params or {}
@@ -153,7 +160,12 @@ def emit_transform_chain(var: str, items: list[tuple[str, dict]]) -> str | None:
             parts.append(f".scale({_num(params.get('factor'), 1.5)})")
         elif verb == "rotate":
             parts.append(f".rotate({_num(params.get('angle_degrees'), 90.0)} * DEGREES)")
-    return f"{var}.animate" + "".join(parts) if parts else None
+    if not parts:
+        return None
+    chain = "".join(parts)
+    if restore_target:
+        return f"Transform({var}, {var}.copy().restore(){chain})"
+    return f"{var}.animate{chain}"
 
 
 def easing_func(easing: str) -> str:

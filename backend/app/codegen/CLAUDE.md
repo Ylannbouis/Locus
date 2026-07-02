@@ -90,6 +90,18 @@ play (`_exposed_early` walks the `parent_id` chain). Fix: `save_state()` +
 introducer draws it in (no flash, keeps the write/draw effect). `reveal_kf_id` records which keyframe
 to un-hide at. Not needed in the sequential model (adds are per-play).
 
+**Restore-target transforms (paired with the hide pass).** A move/scale/rotate uses `.animate`, whose
+auto-generated target is a `.copy()` of the mobject *at play-construction time* — when a hidden object
+still has `set_opacity(0)`. So a plain `m.animate.shift(v)` on a hidden object (or on a **group that
+contains one**, since `m_G.animate` copies its whole family) bakes opacity 0 into the target and fades
+the object out when the transform runs — the object *disappears*. Fix: those transforms emit an explicit
+`Transform(m, m.copy().restore()<chain>)` (`emit_transform_chain(..., restore_target=True)`) so the
+target is the object's *saved* (fully-visible) state with the same methods applied — behaviour-identical
+to `.animate` except the opacity is correct. `restore_ids` (hidden objects + all their ancestor groups,
+built next to `reveal_kf_id`) selects which transforms get this; a transformed ancestor **group** also
+needs its own `save_state()` emitted *before* its children are hidden, so `m_G.copy().restore()` recovers
+each child's real opacity. Threaded through `_merge_units` / `_kf_anim_r`. Empty in the sequential model.
+
 ## Camera (Phase 5)
 
 Camera keyframes reuse the normal `Keyframe` with the sentinel `object_id == CAMERA_ID`
