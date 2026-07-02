@@ -21,7 +21,7 @@ Stack: React 19 + react-konva + zustand + immer + katex + axios. Dev server on *
 | `canvas/` | Konva stage, coordinate model, scene-node rendering, LaTeX overlay, plot/geometry sampling, `motion.ts` (timeline transform math), camera viewport overlay + ghost previews, draggable endpoint handles, center-snapping. |
 | `inspector/` | Per-type property editors (right sidebar). |
 | `outliner/` | Object tree: select, z-order, show/hide, delete, group/ungroup. |
-| `timeline/` | Keyframe timeline UI (incl. a dedicated camera track) + per-keyframe inspector + its own UI-only store. Overlapping same-object keyframes auto-stack into sub-rows (`packLanes`). |
+| `timeline/` | Keyframe timeline UI (incl. dedicated camera + audio tracks) + per-keyframe / per-audio-clip inspectors + its own UI-only store. Overlapping items auto-stack into sub-rows (`packLanes`). `audioPlayback.ts` is the Web Audio preview engine (buffer cache, transport, playhead rAF); `Waveform.tsx` draws clip waveforms from cached per-block peaks. |
 | `components/` | `DepGate` (blocks until deps OK), `ProjectHome`, `EditorShell` (layout), `AddPanel`, `ScenePanel` (multi-scene list), `RenderPanel` (export options), `CodeView` (eject-to-code / JSON modal). |
 
 `App.tsx`: `DepGate` → (`EditorShell` if a project is loaded, else `ProjectHome`).
@@ -109,6 +109,25 @@ codegen is the source of truth for the actual animation).
 - The **camera** viewport rectangle (cyan, `CAMERA_ID`-driven) shows the framing of a selected camera
   keyframe, or the scene's initial framing; drag it to set the pan, zoom/Reset live in a floating
   `.camera-hud`. It's suppressed while a move/scale/rotate keyframe is selected.
+
+## Audio track (voiceover)
+
+- `Scene.audio: AudioClip[]` — a clip windows into an uploaded source file via `offset` + `duration`
+  (plus `start_time` on the timeline, `gain`/`fade_in`/`fade_out`/`muted`). **Splitting is
+  non-destructive**: it makes two clips sharing one asset, so trims can be undone by dragging edges
+  back out (left-edge trim shifts `start_time` *and* `offset` together; clamped so `offset ≥ 0` and
+  `duration ≤ source_duration − offset`).
+- Upload goes straight to `POST /api/projects/{id}/assets/audio` (raw bytes, filename in a query
+  param) and then `addAudioClip` places a full-length clip at the playhead. Assets are *files on the
+  backend*, referenced by filename — deleting a clip doesn't delete the asset.
+- Playback (`audioPlayback.ts`) is editor-only preview: Web Audio schedules one BufferSource+Gain
+  per clip (linear fades mirror ffmpeg's `afade`), an rAF loop drives `timelineStore.playhead`, and
+  the ruler is a scrub bar (pointer-capture drag; resumes playback on release if it was playing).
+  The canvas does not animate during playback — the backend ffmpeg mix is the render truth.
+- The playhead line + toolbar readout are separate components subscribing to `playhead`, so 60fps
+  updates don't re-render the whole timeline. Timeline selection is exclusive three ways: keyframes
+  vs audio clip vs scene object (`clearKf()` clears both timeline kinds; the right sidebar shows
+  `AudioClipInspector` / `KeyframeInspector` / `Inspector` accordingly).
 
 ## Scenes & export (Phase 6)
 

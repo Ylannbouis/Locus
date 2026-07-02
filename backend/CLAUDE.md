@@ -15,6 +15,7 @@ storage is JSON files on disk and the render queue is an in-process `asyncio.Que
 | `render/queue.py` | In-process job registry + pub/sub for progress events. |
 | `render/worker.py` | Pulls jobs, runs Manim as a subprocess, locates the output MP4. |
 | `render/stitch.py` | ffmpeg `concat_scenes` / `crossfade_scenes` (xfade) for multi-scene export, `zip_dir` for PNG sequences, `probe_duration` (ffprobe). All via blocking `subprocess.run` (see rule 1). |
+| `render/audio.py` | ffmpeg voiceover mixing: trims/gains/fades/delays each `AudioClip` and muxes the mix under a scene mp4 (video copied, AAC 44.1kHz stereo — fixed params so concat can stream-copy). |
 
 ## Run / develop
 
@@ -62,6 +63,14 @@ pushed to subscribers; the client watches via `WS /ws/render/{job_id}` and downl
 - `RenderJob.format` ∈ `mp4 | gif | png | still`. `png` returns the frame *directory*, which the
   worker zips for download; `still` uses `-s` (last frame); `transparent` adds `-t` (non-mp4 only).
 - `RenderJob.mode` is `"scene"` (normal) or `"morph"` (a 1s standalone `morph_equation` preview).
+
+**Audio (voiceover)**: `POST /api/projects/{id}/assets/audio` uploads a file (raw bytes body +
+`?filename=` query param — deliberately no multipart, so no `python-multipart` dep) into the
+project's `assets/` dir and returns `{filename, duration, name}` (ffprobe); `GET .../assets/{filename}`
+serves it. After Manim renders an mp4, the worker mixes each scene's `Scene.audio` clips under the
+video (`render/audio.py`) — codegen and the ejected script never see audio. When stitching, scenes
+without clips get a *silent* AAC track so the concat demuxer sees uniform streams, and
+`crossfade_scenes` delays+amixes the per-scene tracks to match the video offsets.
 
 `GET /api/projects/{id}/scenes/{scene_id}/script` ejects the generated Manim `.py` (one-way). If
 `frontend/dist` exists it's mounted at `/` (single-process / packaged mode); API + WS routes are

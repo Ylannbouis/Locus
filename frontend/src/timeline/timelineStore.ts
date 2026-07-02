@@ -7,25 +7,38 @@ export const CAMERA_ID = '__camera__';
 // UI-only state for the timeline editor (not persisted with the project).
 interface TimelineUIState {
   selectedKfIds: string[];
+  selectedAudioId: string | null; // selected audio clip (mutually exclusive with kf selection)
   pxPerSec: number;
+  playhead: number; // seconds — audio-preview position marker
+  playing: boolean;
   selectKf: (id: string, additive?: boolean) => void;
-  clearKf: () => void;
+  selectAudio: (id: string | null) => void;
+  clearKf: () => void; // clears the whole timeline selection (keyframes + audio)
   setPxPerSec: (v: number) => void;
+  setPlayhead: (t: number) => void;
+  setPlaying: (v: boolean) => void;
 }
 
 export const useTimelineStore = create<TimelineUIState>((set) => ({
   selectedKfIds: [],
+  selectedAudioId: null,
   pxPerSec: 90,
+  playhead: 0,
+  playing: false,
   selectKf: (id, additive) => set(s => {
-    if (!additive) return { selectedKfIds: [id] };
+    if (!additive) return { selectedKfIds: [id], selectedAudioId: null };
     return {
+      selectedAudioId: null,
       selectedKfIds: s.selectedKfIds.includes(id)
         ? s.selectedKfIds.filter(x => x !== id)
         : [...s.selectedKfIds, id],
     };
   }),
-  clearKf: () => set({ selectedKfIds: [] }),
+  selectAudio: (id) => set({ selectedAudioId: id, selectedKfIds: [] }),
+  clearKf: () => set({ selectedKfIds: [], selectedAudioId: null }),
   setPxPerSec: (v) => set({ pxPerSec: Math.max(20, Math.min(400, v)) }),
+  setPlayhead: (t) => set({ playhead: Math.max(0, t) }),
+  setPlaying: (v) => set({ playing: v }),
 }));
 
 // Verb metadata: label + a color family for keyframe blocks.

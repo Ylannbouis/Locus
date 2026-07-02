@@ -124,7 +124,10 @@ export function KeyframeInspector() {
   const selectedSceneId = useProjectStore(s => s.selectedSceneId);
   const updateKeyframe = useProjectStore(s => s.updateKeyframe);
   const removeKeyframe = useProjectStore(s => s.removeKeyframe);
-  const { selectedKfIds, clearKf } = useTimelineStore();
+  // Field selectors, not a whole-store destructure — the store's playhead
+  // updates at 60fps during audio playback.
+  const selectedKfIds = useTimelineStore(s => s.selectedKfIds);
+  const clearKf = useTimelineStore(s => s.clearKf);
 
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
   const kf = scene?.timeline.keyframes.find(k => k.id === selectedKfIds[0]);

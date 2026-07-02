@@ -17,8 +17,9 @@ from app.codegen.scene import generate_scene_script, generate_morph_preview_scri
 from app.codegen.template import SCENE_CLASS_NAME
 from app.models.ir import RenderJob, Scene
 from app.render import queue as rq
+from app.render.audio import audible_clips, mux_scene_audio
 from app.render.stitch import concat_scenes, crossfade_scenes, zip_dir
-from app.storage.projects import load_project, renders_dir
+from app.storage.projects import assets_dir, load_project, renders_dir
 
 _QUALITY_FLAG = {"preview": "-ql", "final": "-qh"}
 
@@ -167,6 +168,24 @@ async def _process(job: RenderJob) -> None:
             outputs.append(out)
     finally:
         ticker.cancel()
+
+    # Mix voiceover audio under each scene's mp4 (post-render, so codegen and
+    # Manim never see it). When stitching, scenes *without* clips get a silent
+    # track so every input has identical streams for concat.
+    if job.format == "mp4" and not is_morph:
+        assets = assets_dir(project.id)
+        if any(audible_clips(s.audio, assets) for s in scenes):
+            rq.update_job(job.job_id, progress=88 if stitch else 91, message="Mixing audio…")
+            try:
+                for i, scene in enumerate(scenes):
+                    if not stitch and not audible_clips(scene.audio, assets):
+                        continue
+                    mixed = outputs[i].with_name(outputs[i].stem + "_audio.mp4")
+                    await asyncio.to_thread(mux_scene_audio, outputs[i], scene.audio, assets, mixed)
+                    outputs[i] = mixed
+            except Exception as exc:
+                rq.update_job(job.job_id, status="error", message=f"Audio mixing failed: {exc}")
+                return
 
     # Combine / package the per-scene outputs.
     try:

@@ -104,6 +104,23 @@ export interface Timeline {
   groups: AnimationGroup[];
 }
 
+// One clip on a scene's audio track (voiceover). `asset` is a filename in the
+// project's assets dir; offset/duration select a window of the source file, so
+// a cut is just two clips sharing one asset.
+export interface AudioClip {
+  id: string;
+  name: string;
+  asset: string;
+  start_time: number; // where the clip sits on the scene timeline (s)
+  offset: number; // trim-in point within the source file (s)
+  duration: number; // clip length on the timeline (s)
+  source_duration: number; // full source file length (s), for trim clamping
+  gain: number; // linear volume (1.0 = as recorded)
+  fade_in: number; // s
+  fade_out: number; // s
+  muted: boolean;
+}
+
 export interface CameraTrack {
   initial_pan: Point2D;
   initial_zoom: number;
@@ -121,6 +138,7 @@ export interface Scene {
   objects: SceneObject[];
   relationships: Relationship[];
   timeline: Timeline;
+  audio: AudioClip[];
   camera_track: CameraTrack;
   transition_in?: Transition | null;
   transition_out?: Transition | null;

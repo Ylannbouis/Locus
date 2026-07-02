@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { produce } from 'immer';
-import type { Project, Scene, SceneObject, Keyframe, Relationship, AnimationGroup, CameraTrack } from '../types/ir';
+import type { Project, Scene, SceneObject, Keyframe, Relationship, AnimationGroup, CameraTrack, AudioClip } from '../types/ir';
 import { saveProject } from '../api/client';
 import { newId, uniqueName } from './objectFactory';
 import { computeFinalState } from './finalState';
@@ -62,6 +62,12 @@ interface ProjectState {
   groupKeyframes: (ids: string[]) => void;
   ungroupKeyframes: (ids: string[]) => void;
 
+  // Audio track
+  addAudioClip: (clip: AudioClip) => void;
+  updateAudioClip: (id: string, patch: Partial<AudioClip>) => void;
+  removeAudioClip: (id: string) => void;
+  splitAudioClip: (id: string, atTime: number) => void;
+
   // Camera
   updateCameraTrack: (patch: Partial<CameraTrack>) => void;
 
@@ -119,6 +125,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       draft.scenes.push({
         id, name: `Scene ${draft.scenes.length + 1}`, background_color: null,
         objects: [], relationships: [], timeline: { keyframes: [], groups: [] },
+        audio: [],
         camera_track: { initial_pan: { x: 0, y: 0 }, initial_zoom: 1 },
         transition_in: null, transition_out: null,
       });
@@ -169,6 +176,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         // the timeline — the end state is baked into the objects themselves.
         relationships: JSON.parse(JSON.stringify(src.relationships)),
         timeline: { keyframes: [], groups: [] },
+        audio: [], // a "final state" scene is static — narration doesn't carry over
         camera_track: cameraTrack,
         transition_in: src.transition_in ? { ...src.transition_in } : null,
         transition_out: src.transition_out ? { ...src.transition_out } : null,
@@ -376,6 +384,42 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       scene.timeline.keyframes.some(k => k.group_id === g.id));
   }),
 
+  addAudioClip: (clip) => _mutate(set, get, draft => {
+    const scene = activeScene(draft, get().selectedSceneId);
+    if (!scene) return;
+    if (!scene.audio) scene.audio = []; // legacy scenes saved before the audio track
+    scene.audio.push(clip);
+  }),
+
+  updateAudioClip: (id, patch) => _mutate(set, get, draft => {
+    const scene = activeScene(draft, get().selectedSceneId);
+    const clip = scene?.audio?.find(c => c.id === id);
+    if (clip) Object.assign(clip, patch);
+  }),
+
+  removeAudioClip: (id) => {
+    useTimelineStore.getState().clearKf();
+    _mutate(set, get, draft => {
+      const scene = activeScene(draft, get().selectedSceneId);
+      if (scene?.audio) scene.audio = scene.audio.filter(c => c.id !== id);
+    });
+  },
+
+  splitAudioClip: (id, atTime) => _mutate(set, get, draft => {
+    const scene = activeScene(draft, get().selectedSceneId);
+    const clip = scene?.audio?.find(c => c.id === id);
+    if (!scene || !clip) return;
+    const cut = atTime - clip.start_time;
+    if (cut < 0.05 || cut > clip.duration - 0.05) return; // too close to an edge
+    // Non-destructive: the right half is a new clip windowing the same asset.
+    const right: AudioClip = {
+      ...clip, id: newId('au'), start_time: atTime,
+      offset: clip.offset + cut, duration: clip.duration - cut,
+    };
+    clip.duration = cut;
+    scene.audio.push(right);
+  }),
+
   updateCameraTrack: (patch) => _mutate(set, get, draft => {
     const scene = activeScene(draft, get().selectedSceneId);
     if (!scene) return;
@@ -458,8 +502,9 @@ if (typeof window !== 'undefined') {
     if (ctrl && e.key === 'g') { e.preventDefault(); s.groupSelected(); return; }
     if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault(); // also stops Backspace from navigating back
-      const kfIds = useTimelineStore.getState().selectedKfIds;
-      if (kfIds.length) { kfIds.forEach(id => s.removeKeyframe(id)); }
+      const tl = useTimelineStore.getState();
+      if (tl.selectedKfIds.length) { tl.selectedKfIds.forEach(id => s.removeKeyframe(id)); }
+      else if (tl.selectedAudioId) { s.removeAudioClip(tl.selectedAudioId); }
       else if (s.selectedObjectIds.length) { s.removeSelected(); }
     }
   });

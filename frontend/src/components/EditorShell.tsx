@@ -7,6 +7,7 @@ import { Outliner } from '../outliner/Outliner';
 import { Inspector } from '../inspector/Inspector';
 import { Timeline } from '../timeline/Timeline';
 import { KeyframeInspector } from '../timeline/KeyframeInspector';
+import { AudioClipInspector } from '../timeline/AudioClipInspector';
 import { useTimelineStore } from '../timeline/timelineStore';
 import { RenderPanel } from './RenderPanel';
 
@@ -19,6 +20,7 @@ export function EditorShell() {
   const save = useProjectStore(s => s.save);
   const clearProject = useProjectStore(s => s.clearProject);
   const hasKfSelected = useTimelineStore(s => s.selectedKfIds.length > 0);
+  const hasAudioSelected = useTimelineStore(s => !!s.selectedAudioId);
 
   // Resizable timeline height (persisted so it survives reloads).
   const [timelineH, setTimelineH] = useState(() => {
@@ -85,7 +87,7 @@ export function EditorShell() {
         </main>
 
         <aside className="editor-shell__sidebar editor-shell__sidebar--right">
-          {hasKfSelected ? <KeyframeInspector /> : <Inspector />}
+          {hasAudioSelected ? <AudioClipInspector /> : hasKfSelected ? <KeyframeInspector /> : <Inspector />}
           <div className="sidebar-divider" />
           <RenderPanel />
         </aside>

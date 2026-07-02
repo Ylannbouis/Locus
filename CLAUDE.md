@@ -79,3 +79,10 @@ manipulation** — draggable line/arrow **endpoint handles** and **snap-to-cente
 animation look into a static scene); timeline **sub-rows** for simultaneous same-object animations,
 which the codegen **fuses** into one chained `.animate` (move+scale+rotate that overlap in time); and
 a codegen fix so objects created part-way through don't pop in before their creation animation.
+
+**Voiceover / audio track**: each scene has an `audio: AudioClip[]` track — upload an audio file
+(stored under the project's `assets/` dir), place clips on a dedicated timeline lane with waveforms,
+drag/trim/split (non-destructive: clips window into the source via `offset`+`duration`), per-clip
+volume/fades/mute, and Web Audio playback in the editor with a scrubbable playhead. On mp4 export
+the render worker mixes the clips under the video with an ffmpeg filtergraph (codegen/Manim never
+see audio); multi-scene stitching stays audio-aware (silent tracks for stream parity).

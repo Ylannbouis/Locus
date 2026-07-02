@@ -248,6 +248,27 @@ class Timeline(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Audio
+# ---------------------------------------------------------------------------
+
+class AudioClip(BaseModel):
+    """One clip on a scene's audio track (voiceover). `asset` is a filename in
+    the project's assets dir; `offset`/`duration` select a window of the source
+    file, so a cut is just two clips sharing one asset."""
+    id: str = Field(default_factory=new_id)
+    name: str = ""
+    asset: str = ""
+    start_time: float = 0.0        # where the clip sits on the scene timeline (s)
+    offset: float = 0.0            # trim-in point within the source file (s)
+    duration: float = 1.0          # clip length on the timeline (s)
+    source_duration: float = 0.0   # full source file length (s), for trim clamping
+    gain: float = 1.0              # linear volume (1.0 = as recorded)
+    fade_in: float = 0.0           # s
+    fade_out: float = 0.0          # s
+    muted: bool = False
+
+
+# ---------------------------------------------------------------------------
 # Camera
 # ---------------------------------------------------------------------------
 
@@ -276,6 +297,7 @@ class Scene(BaseModel):
     objects: list[SceneObject] = Field(default_factory=list)
     relationships: list[Relationship] = Field(default_factory=list)
     timeline: Timeline = Field(default_factory=Timeline)
+    audio: list[AudioClip] = Field(default_factory=list)
     camera_track: CameraTrack = Field(default_factory=CameraTrack)
     transition_in: Optional[Transition] = None
     transition_out: Optional[Transition] = None

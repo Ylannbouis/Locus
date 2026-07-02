@@ -21,6 +21,23 @@ export const saveProject = (project: Project): Promise<Project> =>
 export const getSceneScript = (projectId: string, sceneId: string): Promise<string> =>
   http.get(`/api/projects/${projectId}/scenes/${sceneId}/script`).then(r => r.data.script);
 
+// Audio assets — the upload body is the raw file bytes (no multipart); the
+// original filename rides in a query param for its extension + display name.
+export interface AudioAssetInfo {
+  filename: string;
+  duration: number;
+  name: string;
+}
+
+export const uploadAudioAsset = (projectId: string, file: File): Promise<AudioAssetInfo> =>
+  http.post(`/api/projects/${projectId}/assets/audio`, file, {
+    params: { filename: file.name },
+    headers: { 'Content-Type': 'application/octet-stream' },
+  }).then(r => r.data);
+
+export const audioAssetUrl = (projectId: string, filename: string): string =>
+  `/api/projects/${projectId}/assets/${filename}`;
+
 // Deps
 export const getDeps = (): Promise<DepsResult> =>
   http.get('/api/system/deps').then(r => r.data);

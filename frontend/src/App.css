@@ -535,7 +535,7 @@ body {
 /* Single scroll container; the corner, ruler and label column are kept in view
    with position: sticky so everything stays aligned no matter how far you scroll. */
 .tl__scroll { flex: 1; overflow: auto; position: relative; border: 1px solid var(--border); border-radius: 6px; }
-.tl__grid { display: grid; }
+.tl__grid { display: grid; position: relative; }
 .tl__corner {
   position: sticky; left: 0; top: 0; z-index: 4;
   background: var(--surface2); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
@@ -585,7 +585,52 @@ body {
 .tl__menu-sep { height: 1px; background: var(--border); margin: 4px 0; }
 .tl__menu-item { font-size: 12px; padding: 5px 8px; border: none; background: transparent; cursor: pointer; text-align: left; border-radius: 5px; }
 .tl__menu-item:hover { background: var(--surface2); }
+.tl__menu-item:disabled { color: var(--text-dim); cursor: default; }
+.tl__menu-item:disabled:hover { background: transparent; }
 .tl__menu-item--danger { color: var(--danger); }
+
+/* ---------------------------------------------------------------------------
+   Audio track (voiceover clips) + playback transport
+--------------------------------------------------------------------------- */
+.tl__transport { font-size: 13px; padding: 3px 8px; }
+.tl__time {
+  font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-dim);
+  min-width: 52px; text-align: right;
+}
+
+/* The playhead scrolls with the content; it slides under the sticky label
+   column (z 2) and ruler (z 3) but paints above lanes and blocks. */
+.tl__playhead {
+  position: absolute; top: 0; bottom: 0; width: 0; z-index: 1;
+  border-left: 2px solid #ef4444; pointer-events: none;
+}
+.tl__ruler { cursor: pointer; }
+
+.tl__label--audio { color: #a3e635; font-weight: 600; cursor: default; gap: 6px; }
+.tl__label--audio:hover { background: var(--surface2); }
+.tl__audio-add { font-weight: 700; padding: 1px 7px; line-height: 1.2; }
+.tl__lane--audio { background: rgba(101, 163, 13, 0.07); border-bottom: 1px solid #4d7c0f; }
+
+.tl__clip {
+  position: absolute; border-radius: 4px; cursor: grab; user-select: none;
+  overflow: hidden; display: flex; align-items: center;
+  background: #3f6212; border: 1px solid rgba(255,255,255,0.25);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+.tl__clip:active { cursor: grabbing; }
+.tl__clip--sel { outline: 2px solid #a3e635; outline-offset: 1px; z-index: 1; }
+.tl__clip--muted { opacity: 0.45; }
+.tl__clip-wave { position: absolute; inset: 0; pointer-events: none; }
+.tl__clip-name {
+  position: relative; padding: 0 8px; pointer-events: none; white-space: nowrap;
+  font-size: 10px; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+}
+.tl__clip-handle {
+  position: absolute; top: 0; width: 7px; height: 100%; cursor: ew-resize;
+  background: rgba(255,255,255,0.25); z-index: 1;
+}
+.tl__clip-handle--l { left: 0; }
+.tl__clip-handle--r { right: 0; }
 
 /* ---------------------------------------------------------------------------
    Keyframe inspector
