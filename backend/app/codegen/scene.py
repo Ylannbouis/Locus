@@ -11,9 +11,12 @@ all objects are constructed and before the timeline runs.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
-from app.models.ir import Project, Scene
-from app.codegen.animations import CREATION_VERBS, easing_func, emit_animation, emit_transform_chain
+from app.models.ir import AnimationVerb, Project, Scene
+from app.codegen.animations import (
+    CREATION_VERBS, easing_func, emit_animation, emit_transform_chain, transform_chain_suffix,
+)
 from app.codegen.objects import (
     AXES_BOUND_GRAPHS, emit_object, tracker_name, var_name, _num, _point, _sweep,
 )
@@ -45,6 +48,15 @@ def _is_group(obj) -> bool:
 
 def _is_geometry(obj) -> bool:
     return _enum(obj.type) == "geometry"
+
+
+def _is_image(obj) -> bool:
+    return _enum(obj.type) == "image"
+
+
+# Vector-drawing verbs that can't run on a raster ImageMobject (Write/Create/…
+# need VMobject points and raise in Manim) — they degrade to a FadeIn.
+_VECTOR_ONLY_VERBS = {"write", "create", "draw_border_then_fill"}
 
 
 def _emit_order(obj) -> int:
@@ -176,21 +188,115 @@ def _bake(expr: str, run_time: float, rate_func: str) -> str:
 # `.animate` transform verbs — multiple of these on the same object at the same
 # time must be chained into one `.animate` (they'd otherwise fight over state).
 _XFORM_ANIM = {"move", "scale", "rotate"}
+# Fade verbs — a fade that overlaps a transform on the *same* object is likewise
+# fused into that transform's `.animate` chain (as `.set_opacity`), because two
+# animations on one mobject in the same play fight over its state.
+_FADE_ANIM = {"fade_in", "fade_out"}
+
+
+def _kf_window(kf) -> tuple[float, float]:
+    s = float(kf.start_time)
+    return s, s + max(0.01, float(kf.duration))
+
+
+def _time_clusters(kfs) -> list[dict]:
+    """Group keyframes into clusters that overlap in time (transitively). Each
+    cluster is `{start, end, kfs}`. Input order-independent (sorted internally)."""
+    clusters: list[dict] = []
+    for kf in sorted(kfs, key=lambda k: (float(k.start_time), float(k.duration))):
+        s, e = _kf_window(kf)
+        if clusters and s < clusters[-1]["end"] - 1e-6:
+            clusters[-1]["kfs"].append(kf)
+            clusters[-1]["end"] = max(clusters[-1]["end"], e)
+        else:
+            clusters.append({"start": s, "end": e, "kfs": [kf]})
+    return clusters
+
+
+def _plan_fade_fusion(keyframes, var_map: dict[str, str],
+                      lag_by_group: dict[str, float]) -> tuple[set[str], set[str]]:
+    """Decide which fade keyframes fuse into a simultaneous same-object transform.
+
+    Returns `(fused_fade_ids, prehide_obj_ids)`:
+      - `fused_fade_ids` — fade keyframes that overlap a transform on the same
+        object (within the same play bucket) and so become a `.set_opacity` on
+        that transform's chain instead of a standalone FadeIn/FadeOut.
+      - `prehide_obj_ids` — objects introduced by a fused fade_in (it is their
+        earliest creation verb); they must start at opacity 0 so the fused
+        `.animate.set_opacity(1)` fades them in rather than snapping to visible.
+        (An object with a fade_in is never pre-added, so if this is its first
+        creation it isn't visible beforehand — a later fade_in on an already-
+        created object stays a no-op fuse and is not pre-hidden.)
+
+    Fades only fuse with transforms that end up merged into one `.animate`, i.e.
+    inside the same bucket: ungrouped (`group_id is None`) or a parallel group
+    (lag_ratio ~ 0). Staggered groups play sequentially and are left alone."""
+    # Earliest creation-verb start per object (its actual introduction time).
+    first_creation: dict[str, float] = {}
+    for kf in keyframes:
+        if _enum(kf.verb) in CREATION_VERBS:
+            s = float(kf.start_time)
+            first_creation[kf.object_id] = min(first_creation.get(kf.object_id, s), s)
+
+    buckets: dict[object, list] = {}
+    for kf in keyframes:
+        buckets.setdefault(kf.group_id, []).append(kf)
+
+    fused: set[str] = set()
+    prehide: set[str] = set()
+    for gid, members in buckets.items():
+        if gid is not None and lag_by_group.get(gid, 0.0) > 1e-9:
+            continue  # staggered group: members stay separate, no fusion
+        xform_by_obj: dict[str, list] = {}
+        fade_by_obj: dict[str, list] = {}
+        for kf in members:
+            verb = _enum(kf.verb)
+            if verb in _XFORM_ANIM and var_map.get(kf.object_id):
+                xform_by_obj.setdefault(kf.object_id, []).append(kf)
+            elif verb in _FADE_ANIM and var_map.get(kf.object_id):
+                fade_by_obj.setdefault(kf.object_id, []).append(kf)
+        for oid, xfs in xform_by_obj.items():
+            clusters = _time_clusters(xfs)
+            for f in fade_by_obj.get(oid, []):
+                fs, fe = _kf_window(f)
+                if any(fs < c["end"] - 1e-6 and fe > c["start"] + 1e-6 for c in clusters):
+                    fused.add(f.id)
+                    # A fused fade_in that is the object's earliest creation verb
+                    # introduces it here → pre-hide so the fade actually reads.
+                    if _enum(f.verb) == "fade_in" and fs <= first_creation.get(oid, fs) + 1e-6:
+                        prehide.add(oid)
+    return fused, prehide
 
 
 def _merge_units(members, var_map: dict[str, str],
-                 restore_ids: set[str] | None = None) -> list[tuple[str, float, str, float]]:
-    """Turn a set of keyframes into `(expr, run_time, rate_func, start_time)`
-    units, chaining move/scale/rotate on the *same object* that **overlap in
-    time** into a single `.animate` chain over the union window (they'd otherwise
-    fight over the mobject's state). Non-overlapping transforms and every other
-    verb stay one unit each. Order of first appearance is preserved.
+                 restore_ids: set[str] | None = None,
+                 fused_fade_ids: set[str] | None = None) -> list[tuple]:
+    """Turn a set of keyframes into units, chaining move/scale/rotate on the *same
+    object* that **overlap in time** into a single `.animate` chain over the union
+    window (they'd otherwise fight over the mobject's state). Non-overlapping
+    transforms and every other verb stay one unit each. Order of first appearance
+    is preserved.
+
+    Each unit is `(obj_id, expr, run_time, rate_func, start, chain, restore)`:
+      - `obj_id` — its target mobject (camera keyframes → `CAMERA_ID`), so the
+        caller can chain a mobject's several units into one sequential track (Manim
+        can't run two animations on one mobject in the same play — `_object_tracks`).
+      - `chain` — for a `.animate` transform cluster, the bare method suffix
+        (`.shift(v).set_opacity(1.0)`), so `_object_tracks` can rebuild accumulating
+        `Transform` targets; `None` for Animation-class units (FadeIn, Indicate, …).
+      - `restore` — whether the first target must `.restore()` (hidden object).
 
     `restore_ids` holds objects (and ancestor groups) hidden until their creation
     animation — their transforms build an explicit restore-based target instead of
-    a plain `.animate` (see `emit_transform_chain`)."""
+    a plain `.animate` (see `emit_transform_chain`).
+
+    `fused_fade_ids` (from `_plan_fade_fusion`) holds fade keyframes to fold into
+    the overlapping same-object transform chain as `.set_opacity(…)` — those fades
+    are consumed here instead of emitting their own FadeIn/FadeOut unit."""
     restore_ids = restore_ids or set()
+    fused_fade_ids = fused_fade_ids or set()
     xform_by_obj: dict[str, list] = {}
+    fade_by_obj: dict[str, list] = {}
     order: list[tuple[str, object]] = []
     for kf in members:
         verb = _enum(kf.verb)
@@ -198,13 +304,16 @@ def _merge_units(members, var_map: dict[str, str],
             if kf.object_id not in xform_by_obj:
                 order.append(("x", kf.object_id))
             xform_by_obj.setdefault(kf.object_id, []).append(kf)
+        elif verb in _FADE_ANIM and kf.id in fused_fade_ids and var_map.get(kf.object_id):
+            # Consumed by the object's transform cluster below (not its own unit).
+            fade_by_obj.setdefault(kf.object_id, []).append(kf)
         else:
             a = _kf_anim(kf, var_map)
             if a is not None:
-                order.append(("e", (a, max(0.01, float(kf.duration)),
-                                    easing_func(_enum(kf.easing)), float(kf.start_time))))
+                order.append(("e", (kf.object_id, a, max(0.01, float(kf.duration)),
+                                    easing_func(_enum(kf.easing)), float(kf.start_time), None, False)))
 
-    units: list[tuple[str, float, str, float]] = []
+    units: list[tuple] = []
     seen: set[str] = set()
     for kind, val in order:
         if kind == "e":
@@ -218,34 +327,116 @@ def _merge_units(members, var_map: dict[str, str],
         # cluster of >1 collapses to one chained .animate over the union window,
         # so overlapping move+scale+rotate combine even with slightly different
         # start times / durations.
-        kfs = sorted(xform_by_obj[obj_id], key=lambda k: (float(k.start_time), float(k.duration)))
-        clusters: list[dict] = []
-        for kf in kfs:
-            s = float(kf.start_time)
-            e = s + max(0.01, float(kf.duration))
-            if clusters and s < clusters[-1]["end"] - 1e-6:
-                clusters[-1]["kfs"].append(kf)
-                clusters[-1]["end"] = max(clusters[-1]["end"], e)
-            else:
-                clusters.append({"start": s, "end": e, "kfs": [kf]})
+        clusters = _time_clusters(xform_by_obj[obj_id])
+        fades = fade_by_obj.get(obj_id, [])
+        restore = obj_id in restore_ids
         for cl in clusters:
             ckfs = cl["kfs"]
-            start, rt = cl["start"], max(0.01, cl["end"] - cl["start"])
+            start, end = cl["start"], cl["end"]
+            # Fold in any fused fade that overlaps this cluster: its final opacity
+            # becomes a trailing `.set_opacity`, and it widens the union window.
+            cl_fades = [f for f in fades
+                        if _kf_window(f)[0] < end - 1e-6 and _kf_window(f)[1] > start + 1e-6]
+            opacity: float | None = None
+            if cl_fades:
+                last = max(cl_fades, key=lambda f: float(f.start_time))
+                opacity = 1.0 if _enum(last.verb) == "fade_in" else 0.0
+                start = min(start, min(_kf_window(f)[0] for f in cl_fades))
+                end = max(end, max(_kf_window(f)[1] for f in cl_fades))
+            rt = max(0.01, end - start)
             rf = easing_func(_enum(ckfs[0].easing))
-            chain = emit_transform_chain(
-                var_map[obj_id], [(_enum(k.verb), k.params or {}) for k in ckfs],
-                restore_target=obj_id in restore_ids)
-            if chain is not None:
-                units.append((chain, rt, rf, start))
+            items = [(_enum(k.verb), k.params or {}) for k in ckfs]
+            chain = transform_chain_suffix(items, opacity)
+            expr = emit_transform_chain(var_map[obj_id], items,
+                                        restore_target=restore, opacity=opacity)
+            if expr is not None:
+                units.append((obj_id, expr, rt, rf, start, chain, restore and opacity is None))
     return units
 
 
-def build_body(scene: Scene) -> str:
+def _object_tracks(units, var_map: dict[str, str]) -> tuple[list[tuple[float, str]], list[str]]:
+    """Combine `_merge_units` units into `(tracks, setup_lines)`, giving each
+    mobject exactly **one** track so we never run two animations on one mobject as
+    separate parallel tracks in a single `self.play` — Manim clobbers those (two
+    `.animate` share the mobject's `.target`; two Animation-class anims fight each
+    frame). An object that e.g. fades in + moves, then later fades out + moves, must
+    run its clusters in sequence.
+
+    A mobject's several units become one `Succession(seg, Wait(gap), seg, …)`.
+    `.animate` transform clusters are rebuilt as explicit `Transform(m, tN)` with
+    **independent, accumulating** target copies (`t1 = m.copy()<chain1>`,
+    `t2 = t1.copy()<chain2>`, …) — emitted as `setup_lines` before the play — so
+    the targets don't share `m.target` and each cluster composes onto the previous.
+    Objects with a single unit keep their original inline expression."""
+    by_obj: dict[str, list] = {}
+    order: list[str] = []
+    for u in units:
+        oid = u[0]
+        if oid not in by_obj:
+            order.append(oid)
+        by_obj.setdefault(oid, []).append(u)
+
+    tracks: list[tuple[float, str]] = []
+    setup: list[str] = []
+    for oid in order:
+        us = sorted(by_obj[oid], key=lambda u: u[4])
+        if len(us) == 1:
+            _, expr, rt, rf, start, _, _ = us[0]
+            tracks.append((start, _bake(expr, rt, rf)))
+            continue
+        var = var_map.get(oid)
+        segs: list[str] = []
+        prev_end: float | None = None
+        base: str | None = None   # last accumulated target var (None → copy from `var`)
+        step = 0
+        for (_, expr, rt, rf, start, chain, restore) in us:
+            if prev_end is not None and start - prev_end > 1e-6:
+                segs.append(f"Wait({round(start - prev_end, 4)})")
+            if chain is not None and var is not None:
+                step += 1
+                tvar = f"{var}_s{step}"
+                src = f"{base}.copy()" if base is not None else f"{var}.copy(){'.restore()' if restore else ''}"
+                setup.append(f"{tvar} = {src}{chain}")
+                segs.append(f"Transform({var}, {tvar}, run_time={round(rt, 4)}, rate_func={rf})")
+                base = tvar
+            else:
+                # Animation-class unit (FadeIn/FadeOut/Indicate/morph/…): runs in
+                # sequence on the live mobject; it doesn't advance the target base.
+                segs.append(_bake(expr, rt, rf))
+            prev_end = start + rt
+        tracks.append((us[0][4], f"Succession({', '.join(segs)})"))
+    return tracks, setup
+
+
+def build_body(scene: Scene, assets_root: str | None = None) -> str:
     # Emit in dependency order: plain objects, then graphs (need their axes),
     # then groups (need their children defined first).
     objects = sorted(scene.objects, key=_emit_order)
     keyframes = list(scene.timeline.keyframes)
     lag_by_group = {g.id: float(g.lag_ratio) for g in scene.timeline.groups}
+
+    # A Write/Create/DrawBorderThenFill on a raster image would raise in Manim
+    # (they need VMobject points) — normalize to FadeIn. fade_in is also a
+    # creation verb, so the hide-until-creation pass below is unaffected.
+    image_ids = {o.id for o in scene.objects if _is_image(o)}
+    if image_ids:
+        keyframes = [
+            kf.model_copy(update={"verb": AnimationVerb.FADE_IN})
+            if kf.object_id in image_ids and _enum(kf.verb) in _VECTOR_ONLY_VERBS
+            else kf
+            for kf in keyframes
+        ]
+
+    # Groups that (transitively) contain an image — these must emit as `Group`,
+    # not `VGroup` (which rejects non-vector mobjects).
+    image_group_ids: set[str] = set()
+    if image_ids:
+        by_id = {o.id: o for o in scene.objects}
+        for oid in image_ids:
+            cur = by_id.get(oid)
+            while cur is not None and cur.parent_id and cur.parent_id not in image_group_ids:
+                image_group_ids.add(cur.parent_id)
+                cur = by_id.get(cur.parent_id)
 
     created_ids = {kf.object_id for kf in keyframes if _enum(kf.verb) in CREATION_VERBS}
 
@@ -295,6 +486,14 @@ def build_body(scene: Scene) -> str:
                 continue
             if st == "brace" and p.get("target_id") not in var_map:
                 continue
+        if _is_image(obj):
+            # No asset yet (or the file was deleted) → nothing to render; skip
+            # rather than emit an ImageMobject that crashes the whole run.
+            asset = str((obj.props or {}).get("asset") or "")
+            if not asset:
+                continue
+            if assets_root and not (Path(assets_root) / asset).is_file():
+                continue
         if _is_group(obj):
             child_vars = [var_map[o.id] for o in objects
                           if o.parent_id == obj.id and o.id in var_map]
@@ -302,13 +501,16 @@ def build_body(scene: Scene) -> str:
                 continue  # empty group -> nothing to emit
             var = var_name(obj.id)
             var_map[obj.id] = var
+            # VGroup only accepts VMobjects — a group with a raster image child
+            # (direct or via a nested group) must be a generic Group instead.
+            ctor = "Group" if obj.id in image_group_ids else "VGroup"
             lines.append(f"# group: {obj.name or obj.id}")
-            lines.append(f"{var} = VGroup({', '.join(child_vars)})")
+            lines.append(f"{var} = {ctor}({', '.join(child_vars)})")
             if obj.z_index:
                 lines.append(f"{var}.set_z_index({int(obj.z_index)})")
             lines.append("")
             continue
-        var, obj_lines = emit_object(obj)
+        var, obj_lines = emit_object(obj, assets_root)
         var_map[obj.id] = var
         lines.append(f"# {_enum(obj.type)}: {obj.name or obj.id}")
         lines.extend(obj_lines)
@@ -329,6 +531,13 @@ def build_body(scene: Scene) -> str:
     # introducer begins — see the Restore(...) wrapping below).
     ordered = sorted(keyframes, key=lambda k: k.start_time)
     uses_tracking = any(_is_track_kf(kf, var_map) for kf in keyframes)
+
+    # A fade (in/out) overlapping a transform on the same object is fused into
+    # that transform's `.animate` chain — two animations on one mobject would
+    # otherwise fight. `fade_in_prehide` objects first appear via such a fused
+    # fade_in, so they must start at opacity 0 (below) for the fade to read.
+    fused_fade_ids, fade_in_prehide = _plan_fade_fusion(keyframes, var_map, lag_by_group)
+
     reveal_kf_id: dict[str, str] = {}  # obj_id -> the creation keyframe to un-hide at
     # Objects (and ancestor groups) whose move/scale/rotate must build a restore-
     # based target because they were hidden with set_opacity(0) — see below.
@@ -366,6 +575,8 @@ def build_body(scene: Scene) -> str:
             first = oks[0]
             if first.group_id or _enum(first.verb) not in CREATION_VERBS:
                 continue                                   # not intro'd by a lone creation verb
+            if first.id in fused_fade_ids:
+                continue                                   # fused fade_in → revealed by its own transform
             if float(first.start_time) <= 1e-3:
                 continue                                   # created at t=0 → no early window
             if not _exposed_early(oid):
@@ -389,6 +600,13 @@ def build_body(scene: Scene) -> str:
         group_savestate = [var_map[gid] for gid in restore_ids
                            if gid not in reveal_kf_id and gid in var_map and gid in xformed]
 
+        # Objects that first appear via a fused fade_in also start invisible (the
+        # fused `.animate.set_opacity(1)` fades them in while they move/scale/rotate).
+        for oid in fade_in_prehide:
+            v = var_map.get(oid)
+            if v and v not in hide_vars:
+                hide_vars.append(v)
+
         if hide_vars or group_savestate:
             lines.append("# keep these hidden until their creation animation plays")
             # Save the transformed groups first, while their children are still
@@ -397,6 +615,15 @@ def build_body(scene: Scene) -> str:
                 lines.append(f"{v}.save_state()")
             for v in hide_vars:
                 lines.append(f"{v}.save_state()")
+                lines.append(f"{v}.set_opacity(0)")
+            lines.append("")
+    elif fade_in_prehide:
+        # Sequential (camera-tracking) model has no hide pass, but an object that
+        # first appears via a fused fade_in still must start at opacity 0.
+        pre = [var_map[o] for o in fade_in_prehide if o in var_map]
+        if pre:
+            lines.append("# start hidden until a fused fade_in reveals them")
+            for v in pre:
                 lines.append(f"{v}.set_opacity(0)")
             lines.append("")
 
@@ -455,7 +682,7 @@ def build_body(scene: Scene) -> str:
 
         for start, members in ungrouped_by_start.items():
             # Same object_id + same start → chain move/scale/rotate together.
-            anims = [e for e, _, _, _ in _merge_units(members, var_map, restore_ids)]
+            anims = [u[1] for u in _merge_units(members, var_map, restore_ids, fused_fade_ids)]
             if not anims:
                 continue
             events.append({"start": start, "run_time": max(0.01, max(float(k.duration) for k in members)),
@@ -463,7 +690,7 @@ def build_body(scene: Scene) -> str:
         for gid, members in grouped.items():
             lag = lag_by_group.get(gid, 0.0)
             if lag <= 1e-9:
-                anims = [e for e, _, _, _ in _merge_units(members, var_map, restore_ids)]
+                anims = [u[1] for u in _merge_units(members, var_map, restore_ids, fused_fade_ids)]
             else:
                 anims = [a for kf in members if (a := _kf_anim_r(kf, var_map, restore_ids)) is not None]
             if not anims:
@@ -534,10 +761,16 @@ def build_body(scene: Scene) -> str:
                 reveal_kfs.append(kf)
             else:
                 ungrouped.append(kf)
+        # Setup statements for accumulating transform targets (emitted before the
+        # play); see `_object_tracks`.
+        setup_lines: list[str] = []
         # Ungrouped: simultaneous move/scale/rotate on one object collapse to a
-        # single chained .animate track; everything else is one track each.
-        for expr, rt, rf, start in _merge_units(ungrouped, var_map, restore_ids):
-            tracks.append((start, _bake(expr, rt, rf)))
+        # single chained .animate track; a mobject's several (non-overlapping)
+        # clusters chain into one sequential track (Manim can't run two animations
+        # on one mobject as parallel tracks — see `_object_tracks`).
+        utracks, usetup = _object_tracks(_merge_units(ungrouped, var_map, restore_ids, fused_fade_ids), var_map)
+        tracks.extend(utracks)
+        setup_lines.extend(usetup)
         # A hidden-until-creation object: restore its opacity the instant before
         # its introducer draws it in (it was set invisible + save_state'd above).
         for kf in reveal_kfs:
@@ -551,8 +784,11 @@ def build_body(scene: Scene) -> str:
             lag = round(lag_by_group.get(gid, 0.0), 4)
             if lag <= 1e-9:
                 # Parallel group: members play together, so merge same-object
-                # transforms. (A staggered group is sequential — don't merge.)
-                exprs = [_bake(e, rt, rf) for e, rt, rf, _ in _merge_units(members, var_map, restore_ids)]
+                # transforms and chain each mobject's units sequentially. (A
+                # staggered group is sequential — don't merge.)
+                gtracks, gsetup = _object_tracks(_merge_units(members, var_map, restore_ids, fused_fade_ids), var_map)
+                setup_lines.extend(gsetup)
+                exprs = [e for _, e in gtracks]
             else:
                 exprs = [_bake(a, max(0.01, float(kf.duration)), easing_func(_enum(kf.easing)))
                          for kf in members if (a := _kf_anim_r(kf, var_map, restore_ids)) is not None]
@@ -572,6 +808,10 @@ def build_body(scene: Scene) -> str:
                                  easing_func(str(sw.get("easing", "linear"))))))
 
         if tracks:
+            if setup_lines:
+                lines.append("# accumulating transform targets (independent copies "
+                             "so each object's clusters don't share .animate's target)")
+                lines.extend(setup_lines)
             tracks.sort(key=lambda t: t[0])
             t0 = tracks[0][0]
             if t0 > 1e-6:
@@ -592,9 +832,16 @@ def build_body(scene: Scene) -> str:
     return "\n".join(_INDENT + ln if ln else "" for ln in lines)
 
 
+def _assets_root(project: Project) -> str:
+    """Absolute path of the project's assets dir, baked into ImageMobject paths
+    (the generated script runs from a per-job dir, so relative paths won't do)."""
+    from app.storage.projects import assets_dir  # local import: keep codegen usable without storage
+    return str(assets_dir(project.id))
+
+
 def generate_scene_script(project: Project, scene: Scene) -> str:
     bg = scene.background_color or project.settings.background_color or "#000000"
-    body = build_body(scene)
+    body = build_body(scene, assets_root=_assets_root(project))
     base = "MovingCameraScene" if _uses_camera(scene) else "Scene"
     return render_script(body=body, background_color=bg, base_class=base)
 
@@ -617,7 +864,7 @@ def generate_morph_preview_script(project: Project, scene: Scene, keyframe_id: s
     lines: list[str] = []
     var_map: dict[str, str] = {}
     for obj in (src, dst):
-        var, obj_lines = emit_object(obj)
+        var, obj_lines = emit_object(obj, _assets_root(project))
         var_map[obj.id] = var
         lines.extend(obj_lines)
     # Center both so the preview is framed regardless of their scene position.

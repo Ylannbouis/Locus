@@ -115,6 +115,18 @@ export function createDashedLine(): SceneObject {
   });
 }
 
+// --- Image (uploaded raster asset) ------------------------------------------
+// `aspect` = naturalWidth / naturalHeight of the uploaded file, so the default
+// size keeps the image's own proportions (4 units wide).
+export function createImage(asset: string, displayName: string, aspect: number): SceneObject {
+  const width = 4;
+  const height = aspect > 0 && Number.isFinite(aspect) ? Math.round((width / aspect) * 1000) / 1000 : 3;
+  return base({
+    type: 'image', name: displayName || 'Image',
+    props: { asset, width, height, opacity: 1 },
+  });
+}
+
 // --- Coordinate systems ----------------------------------------------------
 export function createAxes(): SceneObject {
   return base({

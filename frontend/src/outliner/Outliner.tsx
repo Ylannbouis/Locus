@@ -9,6 +9,7 @@ const TYPE_ICON: Record<string, string> = {
   graph: '∿',
   geometry: '↗',
   group: '▦',
+  image: '🖼',
 };
 
 export function Outliner() {

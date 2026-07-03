@@ -32,6 +32,7 @@ interface ProjectState {
   duplicateSceneFinal: (id: string) => void;
   renameScene: (id: string, name: string) => void;
   moveScene: (id: string, dir: -1 | 1) => void;
+  reorderScene: (id: string, toIndex: number) => void;
 
   // Selection
   selectObject: (id: string | null) => void;
@@ -202,6 +203,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const idx = draft.scenes.findIndex(s => s.id === id);
     const j = idx + dir;
     if (idx < 0 || j < 0 || j >= draft.scenes.length) return;
+    const [s] = draft.scenes.splice(idx, 1);
+    draft.scenes.splice(j, 0, s);
+  }),
+
+  reorderScene: (id, toIndex) => _mutate(set, get, draft => {
+    const idx = draft.scenes.findIndex(s => s.id === id);
+    if (idx < 0) return;
+    const j = Math.max(0, Math.min(draft.scenes.length - 1, toIndex));
+    if (j === idx) return;
     const [s] = draft.scenes.splice(idx, 1);
     draft.scenes.splice(j, 0, s);
   }),

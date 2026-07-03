@@ -296,6 +296,31 @@ export function CanvasStage() {
     }
   }
 
+  // Commit an image resize/rotate: the Transformer changed the node's scale +
+  // rotation, so bake them into width/height/rotation props and recenter the node
+  // (keeping the fixed anchor put), all in one undo entry. Konva stores scale, not
+  // size, so reset scale to 1 and fold it into the width/height we persist.
+  function commitImageTransform(o: SceneObject, node: Konva.Node) {
+    const wpx = Math.max(1, node.width() * node.scaleX());
+    const hpx = Math.max(1, node.height() * node.scaleY());
+    // Update the live node first (no flash before React re-renders from props):
+    // new pixel size, centered offset, scale back to 1. Origin (x,y) stays the center.
+    node.width(wpx); node.height(hpx);
+    node.offsetX(wpx / 2); node.offsetY(hpx / 2);
+    node.scaleX(1); node.scaleY(1);
+    // Screen rotation is CW; Manim's baked `rotation` prop is CCW degrees → negate.
+    const rotationProp = round2(-node.rotation());
+    updateObject(o.id, {
+      position: { x: round2(manimX(node.x())), y: round2(manimY(node.y())) },
+      props: {
+        ...o.props,
+        width: round2(wpx / PX_PER_UNIT),
+        height: round2(hpx / PX_PER_UNIT),
+        rotation: rotationProp,
+      },
+    });
+  }
+
   // Commit a dragged line-like endpoint (start/end point, in the shape's local coords).
   function commitEndpoint(id: string, which: 'start' | 'end', point: Point2D) {
     const o = objects.find(ob => ob.id === id);
@@ -346,6 +371,7 @@ export function CanvasStage() {
             onEndpointCommit={commitEndpoint}
             groupDrag={groupDrag}
             onNodeDragMove={onNodeDragMove}
+            onCommitTransform={commitImageTransform}
           />
           {showCamera && (
             <Rect

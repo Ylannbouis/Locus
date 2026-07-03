@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import { newId } from '../store/objectFactory';
-import { useTimelineStore, VERB_META, TIMELINE_VERBS, defaultParams, CAMERA_ID } from './timelineStore';
+import { useTimelineStore, VERB_META, timelineVerbsFor, defaultParams, CAMERA_ID } from './timelineStore';
 import { uploadAudioAsset } from '../api/client';
 import { playFrom, stopPlayback } from './audioPlayback';
 import { Waveform } from './Waveform';
@@ -47,6 +47,7 @@ function edgeTargets(items: { id: string; start_time: number; duration: number }
 
 function defaultVerb(o: SceneObject): AnimationVerb {
   if (o.type === 'latex_text' || o.type === 'matrix') return 'write';
+  if (o.type === 'image') return 'fade_in'; // Create/Write need vector points
   return 'create';
 }
 
@@ -524,7 +525,7 @@ export function Timeline() {
               <>
                 <div className="tl__menu-head">Change verb</div>
                 <div className="tl__menu-verbs">
-                  {TIMELINE_VERBS.map(v => (
+                  {timelineVerbsFor(scene?.objects.find(o => o.id === kf.object_id)?.type).map(v => (
                     <button key={v} className={`tl__menu-verb ${kf.verb === v ? 'is-active' : ''}`}
                       onClick={() => { updateKeyframe(kf.id, { verb: v, params: defaultParams(v) }); setMenu(null); }}>{VERB_META[v].label}</button>
                   ))}

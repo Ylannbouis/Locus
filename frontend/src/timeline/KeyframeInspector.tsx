@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import { useRenderStore } from '../store/renderStore';
-import { useTimelineStore, VERB_META, TIMELINE_VERBS, EASING_OPTIONS, defaultParams, CAMERA_ID } from './timelineStore';
+import { useTimelineStore, VERB_META, timelineVerbsFor, EASING_OPTIONS, defaultParams, CAMERA_ID } from './timelineStore';
 import type { AnimationVerb, EasingType, Point2D } from '../types/ir';
 
 // Approximate rate functions for the visual easing preview (not used for render).
@@ -151,7 +151,7 @@ export function KeyframeInspector() {
         <label className="field">
           <span className="field__label">Verb</span>
           <select className="field__input" value={verb} onChange={e => { const v = e.target.value as AnimationVerb; updateKeyframe(kf.id, { verb: v, params: defaultParams(v) }); }}>
-            {TIMELINE_VERBS.map(v => <option key={v} value={v}>{VERB_META[v].label}</option>)}
+            {timelineVerbsFor(obj?.type).map(v => <option key={v} value={v}>{VERB_META[v].label}</option>)}
           </select>
         </label>
       )}

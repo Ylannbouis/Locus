@@ -1,11 +1,13 @@
-import { Rect, Circle as KCircle, Ellipse, Line, Arrow, Group, Path, Text } from 'react-konva';
+import { useEffect, useRef, useState } from 'react';
+import { Rect, Circle as KCircle, Ellipse, Line, Arrow, Group, Path, Text, Image as KImage, Transformer } from 'react-konva';
 import type Konva from 'konva';
-import type { Point2D, SceneObject } from '../types/ir';
+import type { ImageProps, Point2D, SceneObject } from '../types/ir';
 import { PX_PER_UNIT, MANIM_EM_UNITS_PER_PT, SNAP_PX, worldX, worldY, manimX, manimY } from './coords';
 import { samplePlot, sampleParametric, sampleVectorField, vectorFieldColor } from './plotting';
 import { objectBounds, lineSegment, intersect, BRACE_BUFF, BRACE_DEPTH } from './geometry';
 import { useCanvasStore } from '../store/canvasStore';
 import { useProjectStore } from '../store/projectStore';
+import { assetUrl } from '../api/client';
 
 // Snap a node's drag onto the horizontal/vertical center lines when it lands
 // within SNAP_PX of them. dragBoundFunc works in absolute (screen) pixels, and
@@ -45,6 +47,102 @@ function hexToRgba(hex: string | null | undefined, alpha: number): string {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
 }
 
+// Decoded <img> elements by URL, shared across all canvas nodes (scene + ghost
+// copies of the same asset reuse one decode).
+const imageElementCache = new Map<string, HTMLImageElement>();
+
+function useHtmlImage(src: string): HTMLImageElement | null {
+  // The cache is read at render time; the effect only kicks off a load on a
+  // miss and re-renders once the decode lands (no sync setState in the effect).
+  const [, bump] = useState(0);
+  useEffect(() => {
+    if (!src || imageElementCache.has(src)) return;
+    let cancelled = false;
+    const el = new window.Image();
+    el.onload = () => { imageElementCache.set(src, el); if (!cancelled) bump(n => n + 1); };
+    el.src = src;
+    return () => { cancelled = true; };
+  }, [src]);
+  return (src && imageElementCache.get(src)) || null;
+}
+
+// An uploaded raster image. Renders a dashed placeholder box (same size, same
+// handlers) until the asset finishes loading, so it stays selectable/draggable.
+// When selected (and interactive), a Konva Transformer overlays resize handles on
+// the corners/edges plus a rotate handle — corners keep the aspect ratio (Manim's
+// ImageMobject is a single raster, so a proportional resize is the natural gesture),
+// edges stretch one axis. The resulting scale/rotation are baked back into the
+// width/height/rotation props on release (`onCommitTransform`).
+function ImageNode({ o, common, interactive, selected, viewScale, onCommitTransform }: {
+  o: SceneObject;
+  common: Record<string, unknown>;
+  interactive: boolean;
+  selected: boolean;
+  viewScale: number;
+  onCommitTransform?: (o: SceneObject, node: Konva.Node) => void;
+}) {
+  const projectId = useProjectStore(s => s.project?.id);
+  const p = o.props as Partial<ImageProps> & { rotation?: number };
+  const src = projectId && p.asset ? assetUrl(projectId, String(p.asset)) : '';
+  const el = useHtmlImage(src);
+  const nodeRef = useRef<Konva.Node>(null);
+  const trRef = useRef<Konva.Transformer>(null);
+  const showTransformer = interactive && selected;
+
+  // Attach/detach the transformer to whichever node renders (placeholder → image
+  // swaps the node identity, so re-run when `el` lands).
+  useEffect(() => {
+    const tr = trRef.current;
+    if (!tr) return;
+    if (showTransformer && nodeRef.current) {
+      tr.nodes([nodeRef.current]);
+      tr.getLayer()?.batchDraw();
+    } else {
+      tr.nodes([]);
+    }
+  }, [showTransformer, el]);
+
+  const w = Number(p.width ?? 4) * PXU, h = Number(p.height ?? 3) * PXU;
+  // Baked rotation (Manim CCW degrees) → Konva CW screen rotation.
+  const rot = -(Number(p.rotation) || 0);
+  const opacity = Math.max(0, Math.min(1, Number(p.opacity ?? 1)));
+  const size = { rotation: rot, width: w, height: h, offsetX: w / 2, offsetY: h / 2, opacity };
+
+  const node = el
+    ? <KImage ref={nodeRef as React.Ref<Konva.Image>} {...common} {...size} image={el} />
+    : <Rect ref={nodeRef as React.Ref<Konva.Rect>} {...common} {...size} fill="rgba(148,163,184,0.12)" stroke="rgba(148,163,184,0.6)" dash={[6, 4]} strokeWidth={1.5} />;
+
+  if (!showTransformer) return node;
+
+  const s = Math.max(1e-6, viewScale); // keep handles a constant on-screen size
+  return (
+    <>
+      {node}
+      <Transformer
+        ref={trRef}
+        keepRatio
+        rotateEnabled
+        flipEnabled={false}
+        ignoreStroke
+        anchorSize={9 / s}
+        anchorStrokeWidth={1.5 / s}
+        anchorCornerRadius={2 / s}
+        borderStrokeWidth={1.5 / s}
+        rotateAnchorOffset={26 / s}
+        anchorStroke="#ffffff"
+        anchorFill="#ea580c"
+        borderStroke="#ea580c"
+        rotationSnaps={[0, 90, 180, 270]}
+        rotationSnapTolerance={4}
+        // Don't let a resize collapse the image below ~4px on screen.
+        boundBoxFunc={(oldBox, newBox) =>
+          Math.abs(newBox.width) < 4 || Math.abs(newBox.height) < 4 ? oldBox : newBox}
+        onTransformEnd={() => { if (nodeRef.current) onCommitTransform?.(o, nodeRef.current); }}
+      />
+    </>
+  );
+}
+
 interface Props {
   objects: SceneObject[];
   selectedIds: string[];
@@ -63,6 +161,9 @@ interface Props {
   // selected object renders offset by (dx, dy) so the whole set moves together.
   groupDrag?: { anchorId: string; dx: number; dy: number } | null;
   onNodeDragMove?: (o: SceneObject, node: Konva.Node) => void;
+  // Commit a resize/rotate of the selected image (Transformer released): reads the
+  // node's final scale/rotation and bakes them into the width/height/rotation props.
+  onCommitTransform?: (o: SceneObject, node: Konva.Node) => void;
 }
 
 const PXU = PX_PER_UNIT;
@@ -184,7 +285,7 @@ function coordChildren(o: SceneObject, stroke: string, sw: number) {
   return els;
 }
 
-export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonInteractiveIds = [], viewScale = 1, endpointDrag = null, onEndpointDrag, onEndpointCommit, groupDrag = null, onNodeDragMove }: Props) {
+export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonInteractiveIds = [], viewScale = 1, endpointDrag = null, onEndpointDrag, onEndpointCommit, groupDrag = null, onNodeDragMove, onCommitTransform }: Props) {
   const frozen = new Set(nonInteractiveIds);
 
   const renderNode = (o: SceneObject): React.ReactNode => {
@@ -221,6 +322,13 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
     };
     const common = { key: o.id, ...pos, ...drag, ...sel };
     const p = o.props as any;
+
+    if (o.type === 'image') {
+      // Resize/rotate handles only for a lone selection (avoid clutter / conflicts
+      // when several objects are selected and moved together).
+      return <ImageNode key={o.id} o={o} common={common} interactive={!isFrozen}
+        selected={isSel && selectedIds.length === 1} viewScale={viewScale} onCommitTransform={onCommitTransform} />;
+    }
 
     if (o.type === 'shape') {
       const st = p.subtype;

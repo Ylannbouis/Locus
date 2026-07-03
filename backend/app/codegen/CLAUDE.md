@@ -30,6 +30,20 @@ run by the render worker.
   `.rotate(rot * DEGREES)` after placement; scale is baked into the concrete size props by the frontend.
   Axes/number_line pass `number_font_size` through to their `font_size` / `axis_config`.
 
+## Images (`image` object type)
+
+- `emit_object(obj, assets_root)` — the optional `assets_root` (the project's assets dir,
+  computed in `generate_scene_script` via `_assets_root`) is joined with `props.asset` and baked
+  into `ImageMobject({path!r})` as an **absolute path** (the script runs from a per-job dir).
+  Sizing uses `stretch_to_fit_width/height` (both dims stored, non-uniform stretch representable).
+- **Skip guards**: an image with an empty `asset`, or whose file is missing on disk (checked only
+  when `assets_root` is given), is dropped like other unresolvable objects.
+- **`Group` vs `VGroup`**: `VGroup` rejects an `ImageMobject`; a group that (transitively)
+  contains an image emits `Group(...)` instead (`image_group_ids` in `build_body`).
+- **Verb normalization**: Write/Create/DrawBorderThenFill need VMobject points and raise on a
+  raster image — `build_body` rewrites them to FadeIn (still a creation verb, so the
+  hide-until-creation pass is unaffected). The frontend hides these verbs for image lanes too.
+
 ## Emit order (`scene._emit_order`) — matters
 
 Objects are emitted in dependency order so references resolve:
@@ -73,6 +87,26 @@ dependencies are missing/hidden:
    `.animate` over the union window (`emit_transform_chain`) — two separate `.animate`s on one mobject
    fight over its state. Applies to ungrouped tracks and parallel (`lag_ratio == 0`) groups; staggered
    groups and non-overlapping transforms stay separate.
+   A **fade** (fade_in/fade_out) that overlaps a same-object transform is fused into that same chain as a
+   trailing `.set_opacity(1.0/0.0)` — a standalone `FadeIn`/`FadeOut` alongside `m.animate…` is a second
+   animation on the same mobject and they cancel (the `.animate` target holds opacity where the fade wants
+   to change it; a hidden object's restore-target `Transform` also double-fades). `_plan_fade_fusion`
+   picks the fade keyframes to fuse (`fused_fade_ids`, threaded into `_merge_units`) and the objects a
+   fused **fade_in introduces** (`fade_in_prehide` — pre-hidden with `set_opacity(0)` in *both* models so
+   the fused `.set_opacity(1)` actually reads); such a fade_in skips the `reveal_kf`/restore-target path
+   since the explicit `.set_opacity` makes the plain `.animate` correct on its own. Fusion is per play
+   bucket (ungrouped / parallel group), same as the transform merge.
+   **One track per mobject (`_object_tracks`).** Manim can't run two animations on one mobject in a
+   single `self.play`: two `m.animate` share the mobject's `.target` (built eagerly at construction, so
+   the later builder clobbers the earlier — the first animation renders as nothing), and two
+   Animation-class anims fight each frame. So after `_merge_units`, each mobject's several units are
+   chained into **one** `Succession(seg, Wait(gap), seg, …)` track (an object that fades in + moves, then
+   later fades out + moves, must run its two clusters *in sequence*). A `.animate` cluster is rebuilt as an
+   explicit `Transform(m, tN)` with **independent, accumulating** target copies — `t1 = m.copy()<chain1>`,
+   `t2 = t1.copy()<chain2>`, … emitted as setup statements before the play — so the targets don't share
+   `m.target` and each cluster composes onto the previous (relative `.shift`s accumulate). Single-unit
+   objects keep their inline `.animate`. The sequential (camera-tracking) model is naturally safe here —
+   it emits a separate `self.play` per time slot, so same-mobject clusters never share one play.
 5. `_bake(expr, run_time, rate_func)` inserts timing into an animation expression so it can live inside
    an `AnimationGroup`/`Succession`: `.animate.m(…)` → `.animate(run_time=…, rate_func=…).m(…)`; an
    Animation-class call gets the kwargs inserted before the final `)`. Hold the final frame with a

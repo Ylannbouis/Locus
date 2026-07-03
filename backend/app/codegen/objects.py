@@ -16,6 +16,7 @@ Positioning semantics:
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 from app.models.ir import SceneObject
@@ -103,9 +104,16 @@ def _otype(obj: SceneObject) -> str:
 # Constructor expression
 # ---------------------------------------------------------------------------
 
-def _emit_construct(obj: SceneObject) -> str:
+def _emit_construct(obj: SceneObject, assets_root: str | None = None) -> str:
     props = obj.props or {}
     otype = _otype(obj)
+
+    if otype == "image":
+        # `asset` is a filename inside the project's assets dir; the script runs
+        # from a job dir, so bake in the absolute path (repr keeps backslashes).
+        asset = str(props.get("asset") or "")
+        path = str(Path(assets_root) / asset) if assets_root else asset
+        return f"ImageMobject({path!r})"
 
     if otype == "latex_text":
         tex = props.get("tex_string", "")
@@ -250,6 +258,11 @@ def _emit_styling(var: str, obj: SceneObject) -> list[str]:
     sc, sw, so = s.stroke_color, s.stroke_width, s.stroke_opacity
     lines: list[str] = []
 
+    if otype == "image":
+        # Raster pixels — stroke/fill styling doesn't apply. Opacity is a prop
+        # (emitted with the sizing in emit_object).
+        return lines
+
     if otype in ("latex_text", "matrix"):
         color = fc or sc
         if color:
@@ -315,7 +328,7 @@ def _emit_styling(var: str, obj: SceneObject) -> list[str]:
 # Object -> source lines
 # ---------------------------------------------------------------------------
 
-def emit_object(obj: SceneObject) -> tuple[str, list[str]]:
+def emit_object(obj: SceneObject, assets_root: str | None = None) -> tuple[str, list[str]]:
     var = var_name(obj.id)
     otype = _otype(obj)
     props = obj.props or {}
@@ -349,8 +362,17 @@ def emit_object(obj: SceneObject) -> tuple[str, list[str]]:
             lines.append(f"{var}.set_z_index({int(obj.z_index)})")
         return var, lines
 
-    lines: list[str] = [f"{var} = {_emit_construct(obj)}"]
+    lines: list[str] = [f"{var} = {_emit_construct(obj, assets_root)}"]
     lines.extend(_emit_styling(var, obj))
+
+    # Image sizing: both dims are stored (stretch_to_fit keeps them independent,
+    # so a non-uniform stretch from the editor is reproduced exactly).
+    if otype == "image":
+        lines.append(f"{var}.stretch_to_fit_width({_num(props.get('width'), 4.0)})")
+        lines.append(f"{var}.stretch_to_fit_height({_num(props.get('height'), 3.0)})")
+        op = _num(props.get("opacity"), 1.0)
+        if op < 1.0:
+            lines.append(f"{var}.set_opacity({max(0.0, op)})")
 
     # Axis labels on a coordinate system, added so they move with the axes.
     if otype == "coordinate_system":

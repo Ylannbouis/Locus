@@ -35,8 +35,22 @@ export const uploadAudioAsset = (projectId: string, file: File): Promise<AudioAs
     headers: { 'Content-Type': 'application/octet-stream' },
   }).then(r => r.data);
 
-export const audioAssetUrl = (projectId: string, filename: string): string =>
+export interface ImageAssetInfo {
+  filename: string;
+  name: string;
+}
+
+export const uploadImageAsset = (projectId: string, file: File): Promise<ImageAssetInfo> =>
+  http.post(`/api/projects/${projectId}/assets/image`, file, {
+    params: { filename: file.name },
+    headers: { 'Content-Type': 'application/octet-stream' },
+  }).then(r => r.data);
+
+// Serves any uploaded asset (audio or image) by filename.
+export const assetUrl = (projectId: string, filename: string): string =>
   `/api/projects/${projectId}/assets/${filename}`;
+
+export const audioAssetUrl = assetUrl;
 
 // Deps
 export const getDeps = (): Promise<DepsResult> =>

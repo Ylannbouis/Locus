@@ -323,6 +323,10 @@ body {
 }
 .scene-tab:hover { border-color: var(--text-dim); }
 .scene-tab.is-active { border-color: var(--accent); background: var(--bg3); }
+.scene-tab.is-dragging { opacity: 0.4; }
+/* Insertion marker between tabs while dragging (tabs are gap:6px apart). */
+.scene-tab.drop-before { box-shadow: -4px 0 0 -1px var(--accent); }
+.scene-tab.drop-after { box-shadow: 4px 0 0 -1px var(--accent); }
 .scene-tab__num { font-size: 10px; color: var(--text-dim); }
 .scene-tab__name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 .scene-tab__rename { font-size: 13px; padding: 1px 4px; width: 110px; border: 1px solid var(--accent); border-radius: 4px; background: var(--surface); color: var(--text); }

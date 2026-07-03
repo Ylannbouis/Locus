@@ -38,6 +38,12 @@ _AUDIO_MEDIA_TYPES = {
     ".m4a": "audio/mp4", ".aac": "audio/aac", ".flac": "audio/flac",
 }
 
+# Raster formats PIL/ImageMobject can load (SVG would need SVGMobject — not supported).
+_IMAGE_MEDIA_TYPES = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".webp": "image/webp", ".bmp": "image/bmp",
+}
+
 _ASSET_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
@@ -120,39 +126,51 @@ async def put_project(project_id: str, project: Project) -> Project:
 
 
 # ---------------------------------------------------------------------------
-# Audio assets (voiceover uploads). The body is the raw file bytes (no
-# multipart, so no extra dependency); the original filename rides in a query
-# param and only its extension + stem are used.
+# Media assets (voiceover audio / image uploads). The body is the raw file
+# bytes (no multipart, so no extra dependency); the original filename rides in
+# a query param and only its extension + stem are used.
 # ---------------------------------------------------------------------------
 
-@app.post("/api/projects/{project_id}/assets/audio")
-async def upload_audio_asset(project_id: str, request: Request, filename: str = "voiceover.mp3") -> dict[str, Any]:
+async def _save_asset(project_id: str, request: Request, filename: str,
+                      allowed: dict[str, str], kind: str, prefix: str) -> tuple[str, Path]:
     try:
         load_project(project_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Project not found")
     ext = Path(filename).suffix.lower()
-    if ext not in _AUDIO_MEDIA_TYPES:
-        supported = ", ".join(sorted(_AUDIO_MEDIA_TYPES))
-        raise HTTPException(status_code=400, detail=f"Unsupported audio type '{ext}' (supported: {supported})")
+    if ext not in allowed:
+        supported = ", ".join(sorted(allowed))
+        raise HTTPException(status_code=400, detail=f"Unsupported {kind} type '{ext}' (supported: {supported})")
     data = await request.body()
     if not data:
         raise HTTPException(status_code=400, detail="Empty upload")
-    asset_name = f"au_{new_id()}{ext}"
+    asset_name = f"{prefix}_{new_id()}{ext}"
     dest = assets_dir(project_id) / asset_name
     await asyncio.to_thread(dest.write_bytes, data)
+    return asset_name, dest
+
+
+@app.post("/api/projects/{project_id}/assets/audio")
+async def upload_audio_asset(project_id: str, request: Request, filename: str = "voiceover.mp3") -> dict[str, Any]:
+    asset_name, dest = await _save_asset(project_id, request, filename, _AUDIO_MEDIA_TYPES, "audio", "au")
     duration = await asyncio.to_thread(probe_duration, dest)
     return {"filename": asset_name, "duration": duration, "name": Path(filename).stem}
 
 
+@app.post("/api/projects/{project_id}/assets/image")
+async def upload_image_asset(project_id: str, request: Request, filename: str = "image.png") -> dict[str, Any]:
+    asset_name, _ = await _save_asset(project_id, request, filename, _IMAGE_MEDIA_TYPES, "image", "im")
+    return {"filename": asset_name, "name": Path(filename).stem}
+
+
 @app.get("/api/projects/{project_id}/assets/{filename}")
-async def get_audio_asset(project_id: str, filename: str) -> FileResponse:
+async def get_asset(project_id: str, filename: str) -> FileResponse:
     if not _ASSET_NAME_RE.match(filename) or ".." in filename:
         raise HTTPException(status_code=400, detail="Bad asset filename")
     path = assets_dir(project_id) / filename
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Asset not found")
-    media_type = _AUDIO_MEDIA_TYPES.get(path.suffix.lower(), "application/octet-stream")
+    media_type = {**_AUDIO_MEDIA_TYPES, **_IMAGE_MEDIA_TYPES}.get(path.suffix.lower(), "application/octet-stream")
     return FileResponse(str(path), media_type=media_type, filename=filename)
 
 

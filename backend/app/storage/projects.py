@@ -86,7 +86,7 @@ def renders_dir(project_id: str) -> Path:
 
 
 def assets_dir(project_id: str) -> Path:
-    """Uploaded media (audio voiceovers) for a project."""
+    """Uploaded media (audio voiceovers, images) for a project."""
     d = _project_dir(project_id) / "assets"
     d.mkdir(parents=True, exist_ok=True)
     return d

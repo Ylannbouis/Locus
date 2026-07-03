@@ -110,6 +110,18 @@ codegen is the source of truth for the actual animation).
   keyframe, or the scene's initial framing; drag it to set the pan, zoom/Reset live in a floating
   `.camera-hud`. It's suppressed while a move/scale/rotate keyframe is selected.
 
+## Images
+
+- Add Object → Media → 🖼 Image opens a file picker; the file is measured in-browser (aspect
+  ratio), uploaded via `uploadImageAsset` (raw bytes, like audio), and `createImage` places a
+  4-unit-wide object with `props: { asset, width, height, opacity }`.
+- `SceneNodes.ImageNode` renders it as a Konva `Image` (decoded elements cached per URL in
+  `imageElementCache`; a dashed placeholder rect with the same size/handlers shows while loading,
+  so ghosts/selection/drag work before the decode lands).
+- Write/Create/Draw+Fill can't run on a raster image: `timelineVerbsFor('image')` hides them in
+  the verb pickers, `defaultVerb` returns `fade_in`, and the backend degrades any that slip
+  through to FadeIn.
+
 ## Audio track (voiceover)
 
 - `Scene.audio: AudioClip[]` — a clip windows into an uploaded source file via `offset` + `duration`

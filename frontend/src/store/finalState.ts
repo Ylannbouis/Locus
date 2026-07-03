@@ -96,6 +96,10 @@ function bakeTransform(obj: SceneObject, T: Transform2D): SceneObject {
   } else if (obj.type === 'latex_text' || obj.type === 'matrix') {
     p.font_size = num(p.font_size, 48) * s;
     addRot();
+  } else if (obj.type === 'image') {
+    p.width = num(p.width, 4) * s;
+    p.height = num(p.height, 3) * s;
+    addRot();
   } else if (obj.type === 'coordinate_system') {
     if (p.x_length != null) p.x_length = num(p.x_length, 6) * s;
     if (p.y_length != null) p.y_length = num(p.y_length, 4) * s;

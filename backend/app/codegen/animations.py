@@ -135,17 +135,12 @@ def emit_animation(verb: str, var: str, params: dict[str, Any] | None = None,
 _CHAIN_ORDER = {"move": 0, "scale": 1, "rotate": 2}
 
 
-def emit_transform_chain(var: str, items: list[tuple[str, dict]],
-                         restore_target: bool = False) -> str | None:
-    """Chain simultaneous move/scale/rotate onto one `.animate`. `items` is a
-    list of (verb, params). Returns e.g. `m.animate.shift(v).scale(2).rotate(...)`,
-    or None if nothing emits.
-
-    When `restore_target` is set, the object (or a group child of it) was hidden
-    with `set_opacity(0)` until its creation animation plays. A plain `.animate`
-    would copy that 0-opacity into its auto-generated target and fade the object
-    out when the transform runs, so build an explicit `Transform` whose target is
-    the object's *saved* (fully-visible) state with the same methods applied."""
+def transform_chain_suffix(items: list[tuple[str, dict]],
+                           opacity: float | None = None) -> str | None:
+    """The method-chain suffix for a set of simultaneous move/scale/rotate (+ an
+    optional fade `opacity`), e.g. `.shift(v).scale(2).set_opacity(1.0)`, or None
+    if nothing emits. This is the bare suffix — the caller applies it to `{var}`,
+    `{var}.animate`, or an accumulating `.copy()` target as needed."""
     parts: list[str] = []
     for verb, params in sorted(items, key=lambda it: _CHAIN_ORDER.get(it[0], 9)):
         params = params or {}
@@ -160,10 +155,36 @@ def emit_transform_chain(var: str, items: list[tuple[str, dict]],
             parts.append(f".scale({_num(params.get('factor'), 1.5)})")
         elif verb == "rotate":
             parts.append(f".rotate({_num(params.get('angle_degrees'), 90.0)} * DEGREES)")
-    if not parts:
+    if opacity is not None:
+        parts.append(f".set_opacity({float(opacity)})")
+    return "".join(parts) if parts else None
+
+
+def emit_transform_chain(var: str, items: list[tuple[str, dict]],
+                         restore_target: bool = False,
+                         opacity: float | None = None) -> str | None:
+    """Chain simultaneous move/scale/rotate onto one `.animate`. `items` is a
+    list of (verb, params). Returns e.g. `m.animate.shift(v).scale(2).rotate(...)`,
+    or None if nothing emits.
+
+    When `restore_target` is set, the object (or a group child of it) was hidden
+    with `set_opacity(0)` until its creation animation plays. A plain `.animate`
+    would copy that 0-opacity into its auto-generated target and fade the object
+    out when the transform runs, so build an explicit `Transform` whose target is
+    the object's *saved* (fully-visible) state with the same methods applied.
+
+    When `opacity` is given, a fade (fade_in → 1.0 / fade_out → 0.0) runs *at the
+    same time* as this transform on the same mobject. Two separate animations on
+    one mobject fight over its state (the move's `.animate` target holds opacity
+    where FadeIn/FadeOut wants to change it), so fold the fade into this one chain
+    as a trailing `.set_opacity(...)`. The explicit target opacity makes the plain
+    `.animate` correct on its own, so `restore_target` is not needed here (for a
+    fade_in the object is pre-hidden at opacity 0, so `.set_opacity(1.0)` fades it
+    in while it moves)."""
+    chain = transform_chain_suffix(items, opacity)
+    if chain is None:
         return None
-    chain = "".join(parts)
-    if restore_target:
+    if restore_target and opacity is None:
         return f"Transform({var}, {var}.copy().restore(){chain})"
     return f"{var}.animate{chain}"
 

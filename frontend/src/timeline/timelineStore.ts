@@ -78,6 +78,14 @@ export const TIMELINE_VERBS: AnimationVerb[] = [
   'indicate', 'circumscribe', 'flash',
 ];
 
+// Write/Create/DrawBorderThenFill need vector points and can't run on a raster
+// image (the codegen degrades them to FadeIn) — don't offer them for one.
+const VECTOR_ONLY_VERBS: AnimationVerb[] = ['write', 'create', 'draw_border_then_fill'];
+
+export function timelineVerbsFor(objType?: string): AnimationVerb[] {
+  return objType === 'image' ? TIMELINE_VERBS.filter(v => !VECTOR_ONLY_VERBS.includes(v)) : TIMELINE_VERBS;
+}
+
 // Sensible starting params when a verb is chosen, so a new keyframe does
 // something visible (notably Move, which the codegen skips without a target).
 export function defaultParams(verb: AnimationVerb): Record<string, unknown> {

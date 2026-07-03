@@ -182,6 +182,19 @@ export function Inspector() {
         </>
       )}
 
+      {/* ---- Image ---- */}
+      {obj.type === 'image' && (
+        <>
+          <div className="field-row">
+            <NumberField label="Width" value={Number(props.width ?? 4)} onChange={v => setProp({ width: Math.max(0.01, v) })} />
+            <NumberField label="Height" value={Number(props.height ?? 3)} onChange={v => setProp({ height: Math.max(0.01, v) })} />
+          </div>
+          <NumberField label="Rotation°" value={Number(props.rotation ?? 0)} step={5} onChange={v => setProp({ rotation: v })} />
+          <NumberField label="Opacity" value={Number(props.opacity ?? 1)} step={0.05} onChange={v => setProp({ opacity: Math.max(0, Math.min(1, v)) })} />
+          <p className="panel-hint">File: {String(props.asset ?? '') || '— none —'}</p>
+        </>
+      )}
+
       {/* ---- Coordinate systems ---- */}
       {obj.type === 'coordinate_system' && (
         <>

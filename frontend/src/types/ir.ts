@@ -7,7 +7,8 @@ export type ObjectType =
   | 'graph'
   | 'geometry'
   | 'matrix'
-  | 'group';
+  | 'group'
+  | 'image';
 
 export type AnimationVerb =
   | 'write'
@@ -69,6 +70,16 @@ export interface SceneObject {
   props: Record<string, unknown>;
   parent_id?: string | null;
   visible: boolean;
+}
+
+// Props of an `image` SceneObject (stored in the free-form `props` dict).
+// `asset` is a filename in the project's assets dir (like AudioClip.asset);
+// width/height are Manim units (both stored, so non-uniform stretch works).
+export interface ImageProps {
+  asset: string;
+  width: number;
+  height: number;
+  opacity: number;
 }
 
 export interface Relationship {

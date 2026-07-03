@@ -64,10 +64,11 @@ pushed to subscribers; the client watches via `WS /ws/render/{job_id}` and downl
   worker zips for download; `still` uses `-s` (last frame); `transparent` adds `-t` (non-mp4 only).
 - `RenderJob.mode` is `"scene"` (normal) or `"morph"` (a 1s standalone `morph_equation` preview).
 
-**Audio (voiceover)**: `POST /api/projects/{id}/assets/audio` uploads a file (raw bytes body +
-`?filename=` query param — deliberately no multipart, so no `python-multipart` dep) into the
-project's `assets/` dir and returns `{filename, duration, name}` (ffprobe); `GET .../assets/{filename}`
-serves it. After Manim renders an mp4, the worker mixes each scene's `Scene.audio` clips under the
+**Assets**: `POST /api/projects/{id}/assets/audio` and `.../assets/image` upload a file (raw bytes
+body + `?filename=` query param — deliberately no multipart, so no `python-multipart` dep) into the
+project's `assets/` dir; audio returns `{filename, duration, name}` (ffprobe), image `{filename, name}`.
+`GET .../assets/{filename}` serves either kind. Image assets are referenced by `image` objects and
+baked into the generated script as absolute `ImageMobject` paths (see `codegen/CLAUDE.md`). After Manim renders an mp4, the worker mixes each scene's `Scene.audio` clips under the
 video (`render/audio.py`) — codegen and the ejected script never see audio. When stitching, scenes
 without clips get a *silent* AAC track so the concat demuxer sees uniform streams, and
 `crossfade_scenes` delays+amixes the per-scene tracks to match the video offsets.

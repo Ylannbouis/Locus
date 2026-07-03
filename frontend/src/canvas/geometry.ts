@@ -35,6 +35,7 @@ export function objectBounds(o: SceneObject): Bounds {
     return { cx: pos.x, cy: pos.y, hw: (len * fs) / 2, hh: 0.35 * fs };
   }
   if (o.type === 'coordinate_system') return { cx: pos.x, cy: pos.y, hw: Number(p.x_length ?? 6) / 2, hh: Number(p.y_length ?? 4) / 2 };
+  if (o.type === 'image') return { cx: pos.x, cy: pos.y, hw: Number(p.width ?? 4) / 2, hh: Number(p.height ?? 3) / 2 };
   return { cx: pos.x, cy: pos.y, hw: 0.5, hh: 0.5 };
 }
 

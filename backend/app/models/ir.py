@@ -23,6 +23,7 @@ class ObjectType(str, Enum):
     GEOMETRY = "geometry"
     MATRIX = "matrix"
     GROUP = "group"
+    IMAGE = "image"
 
 
 class AnimationVerb(str, Enum):
@@ -185,7 +186,17 @@ class MatrixProps(BaseModel):
     element_color_map: dict[str, str] = Field(default_factory=dict)
 
 
-ObjectProps = Union[LatexTextProps, ShapeProps, CoordinateSystemProps, GraphProps, GeometryProps, MatrixProps, dict]
+class ImageProps(BaseModel):
+    """An external raster image (ImageMobject). `asset` is a filename in the
+    project's assets dir (like AudioClip.asset); width/height are Manim units
+    (both stored, so non-uniform stretch is representable)."""
+    asset: str = ""
+    width: float = 4.0
+    height: float = 3.0
+    opacity: float = 1.0
+
+
+ObjectProps = Union[LatexTextProps, ShapeProps, CoordinateSystemProps, GraphProps, GeometryProps, MatrixProps, ImageProps, dict]
 
 
 # ---------------------------------------------------------------------------

@@ -11,12 +11,26 @@ export function ScenePanel() {
   const duplicateSceneFinal = useProjectStore(s => s.duplicateSceneFinal);
   const renameScene = useProjectStore(s => s.renameScene);
   const moveScene = useProjectStore(s => s.moveScene);
+  const reorderScene = useProjectStore(s => s.reorderScene);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
+  // Drag-to-reorder: id being dragged, and the gap it would drop into ("before index i").
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
 
   if (!project) return null;
   const scenes = project.scenes;
+
+  const endDrag = () => { setDragId(null); setDropIndex(null); };
+  const onDrop = () => {
+    if (dragId && dropIndex !== null) {
+      const from = scenes.findIndex(s => s.id === dragId);
+      // Dropping after items past the source shifts the target index left by one.
+      reorderScene(dragId, from < dropIndex ? dropIndex - 1 : dropIndex);
+    }
+    endDrag();
+  };
 
   const startRename = (id: string, name: string) => { setEditingId(id); setDraftName(name); };
   const commitRename = () => {
@@ -27,15 +41,25 @@ export function ScenePanel() {
   return (
     <div className="scene-bar">
       <span className="scene-bar__label">Scenes</span>
-      <div className="scene-bar__tabs">
+      <div className="scene-bar__tabs" onDragOver={e => e.preventDefault()} onDrop={onDrop}>
         {scenes.map((s, i) => {
           const active = s.id === selectedSceneId;
+          const isDragging = s.id === dragId;
           return (
             <div
               key={s.id}
-              className={`scene-tab ${active ? 'is-active' : ''}`}
+              className={`scene-tab ${active ? 'is-active' : ''} ${isDragging ? 'is-dragging' : ''} ${dropIndex === i ? 'drop-before' : ''} ${dropIndex === i + 1 ? 'drop-after' : ''}`}
+              draggable={editingId !== s.id}
               onClick={() => selectScene(s.id)}
-              title="Double-click to rename"
+              title="Drag to reorder · double-click to rename"
+              onDragStart={e => { setDragId(s.id); e.dataTransfer.effectAllowed = 'move'; }}
+              onDragEnd={endDrag}
+              onDragOver={e => {
+                e.preventDefault();
+                if (!dragId) return;
+                const r = e.currentTarget.getBoundingClientRect();
+                setDropIndex(e.clientX < r.left + r.width / 2 ? i : i + 1);
+              }}
             >
               <span className="scene-tab__num">{i + 1}</span>
               {editingId === s.id ? (

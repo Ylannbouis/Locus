@@ -80,6 +80,11 @@ animation look into a static scene); timeline **sub-rows** for simultaneous same
 which the codegen **fuses** into one chained `.animate` (move+scale+rotate that overlap in time); and
 a codegen fix so objects created part-way through don't pop in before their creation animation.
 
+**Images**: an `image` object type places an uploaded raster file (png/jpg/webp/bmp) on the
+canvas — uploaded to the project's `assets/` dir like audio, rendered via `ImageMobject` with the
+absolute asset path baked into the script. Vector-only verbs (Write/Create/Draw+Fill) degrade to
+FadeIn for images, and a group containing an image emits Manim's `Group` instead of `VGroup`.
+
 **Voiceover / audio track**: each scene has an `audio: AudioClip[]` track — upload an audio file
 (stored under the project's `assets/` dir), place clips on a dedicated timeline lane with waveforms,
 drag/trim/split (non-destructive: clips window into the source via `offset`+`duration`), per-clip
