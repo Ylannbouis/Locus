@@ -45,6 +45,17 @@ function edgeTargets(items: { id: string; start_time: number; duration: number }
   return t;
 }
 
+// Like edgeTargets but excludes a whole set — used when a group of keyframes
+// moves together (they must snap to the *other* keyframes, not each other).
+function edgeTargetsExcluding(items: { id: string; start_time: number; duration: number }[], exclude: Set<string>): number[] {
+  const t = [0, useTimelineStore.getState().playhead];
+  for (const it of items) {
+    if (exclude.has(it.id)) continue;
+    t.push(it.start_time, it.start_time + it.duration);
+  }
+  return t;
+}
+
 function defaultVerb(o: SceneObject): AnimationVerb {
   if (o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix') return 'write';
   if (o.type === 'image') return 'fade_in'; // Create/Write need vector points
@@ -73,14 +84,18 @@ function packLanes<T extends { id: string; start_time: number; duration: number 
 }
 
 interface DragState {
-  kfId: string;
+  kfId: string; // the grabbed keyframe (the anchor whose edge drives snapping)
   mode: 'move' | 'resize';
   startClientX: number;
-  origStart: number;
+  origStart: number; // anchor's original start
   origDur: number;
-  curStart: number;
+  curStart: number; // anchor's live start (after snap/clamp); group delta = curStart - origStart
   curDur: number;
-  targets: number[]; // same-lane edges (+ 0 and playhead), captured at drag start
+  targets: number[]; // edges to snap to (+ 0 and playhead), captured at drag start
+  // Keyframes moving together as a group (move mode). Includes the anchor; a
+  // single, non-grouped drag has just one entry. `origStart` is captured so the
+  // whole set shifts by one shared delta.
+  members: { id: string; origStart: number }[];
 }
 
 // Audio-clip drag: move, or trim from either edge. Trimming the left edge
@@ -118,6 +133,7 @@ export function Timeline() {
   const selectObject = useProjectStore(s => s.selectObject);
   const addKeyframe = useProjectStore(s => s.addKeyframe);
   const updateKeyframe = useProjectStore(s => s.updateKeyframe);
+  const moveKeyframesBy = useProjectStore(s => s.moveKeyframesBy);
   const removeKeyframe = useProjectStore(s => s.removeKeyframe);
   const groupKeyframes = useProjectStore(s => s.groupKeyframes);
   const ungroupKeyframes = useProjectStore(s => s.ungroupKeyframes);
@@ -209,7 +225,11 @@ export function Timeline() {
       if (drag.mode === 'move') {
         let start = Math.max(0, drag.origStart + dx);
         if (snapOn) start = Math.max(0, snapMove(start, drag.origDur, drag.targets, pxPerSec));
-        setDrag({ ...drag, curStart: start });
+        // Shift the whole group by the anchor's delta, but clamp so the earliest
+        // member never crosses t=0 (which would compress the group's spacing).
+        const minStart = Math.min(...drag.members.map(m => m.origStart));
+        const delta = Math.max(start - drag.origStart, -minStart);
+        setDrag({ ...drag, curStart: drag.origStart + delta });
       } else {
         let dur = drag.origDur + dx;
         if (snapOn) {
@@ -250,7 +270,7 @@ export function Timeline() {
   const onPointerUp = () => {
     if (drag) {
       if (drag.mode === 'move' && drag.curStart !== drag.origStart) {
-        updateKeyframe(drag.kfId, { start_time: Math.round(drag.curStart * 100) / 100 });
+        moveKeyframesBy(drag.members.map(m => m.id), drag.curStart - drag.origStart);
       } else if (drag.mode === 'resize' && drag.curDur !== drag.origDur) {
         updateKeyframe(drag.kfId, { duration: Math.round(drag.curDur * 100) / 100 });
       }
@@ -274,13 +294,29 @@ export function Timeline() {
     setMenu(null);
     (e.target as Element).setPointerCapture?.(e.pointerId);
     // Selection happens here (once). Doing it again in onClick would double-toggle
-    // a shift-click and cancel it out.
-    selectKf(kf.id, e.shiftKey);
+    // a shift-click and cancel it out. Shift toggles; a plain grab on a keyframe
+    // that's already part of a multi-selection keeps the whole set (so it can be
+    // dragged as a group), mirroring the canvas multi-select behaviour.
+    const prevSel = useTimelineStore.getState().selectedKfIds;
+    if (e.shiftKey) selectKf(kf.id, true);
+    else if (!(prevSel.includes(kf.id) && prevSel.length > 1)) selectKf(kf.id, false);
+    // Group-move only when several keyframes are selected together and we grabbed
+    // one of them (resize is always the single grabbed keyframe).
+    const sel = useTimelineStore.getState().selectedKfIds;
+    const groupIds = mode === 'move' && sel.includes(kf.id) && sel.length > 1 ? sel : [kf.id];
+    const members = groupIds
+      .map(id => keyframes.find(k => k.id === id))
+      .filter((k): k is Keyframe => !!k)
+      .map(k => ({ id: k.id, origStart: k.start_time }));
+    const groupSet = new Set(groupIds);
     setDrag({
       kfId: kf.id, mode, startClientX: e.clientX, origStart: kf.start_time, origDur: kf.duration,
-      curStart: kf.start_time, curDur: kf.duration,
-      // Snap against the other keyframes in this lane (same object / camera).
-      targets: edgeTargets(keyframes.filter(k => k.object_id === kf.object_id), kf.id),
+      curStart: kf.start_time, curDur: kf.duration, members,
+      // Snap against keyframes not being dragged: for a group that spans lanes,
+      // any other keyframe; for a single one, just its own lane (same object).
+      targets: groupIds.length > 1
+        ? edgeTargetsExcluding(keyframes, groupSet)
+        : edgeTargets(keyframes.filter(k => k.object_id === kf.object_id), kf.id),
     });
   };
 
@@ -358,9 +394,11 @@ export function Timeline() {
   // is its sub-row within the lane (0 = main row), used to stack simultaneous
   // animations vertically.
   const renderKfBlock = (kf: Keyframe, row = 0) => {
-    const isDragging = drag?.kfId === kf.id;
-    const start = isDragging ? drag!.curStart : kf.start_time;
-    const dur = isDragging && drag!.mode === 'resize' ? drag!.curDur : kf.duration;
+    const isAnchor = drag?.kfId === kf.id;
+    // A moving group member (incl. the anchor) follows the shared delta live.
+    const moving = drag?.mode === 'move' && drag.members.some(m => m.id === kf.id);
+    const start = moving ? kf.start_time + (drag!.curStart - drag!.origStart) : kf.start_time;
+    const dur = isAnchor && drag!.mode === 'resize' ? drag!.curDur : kf.duration;
     const meta = VERB_META[kf.verb];
     const sel = selectedKfIds.includes(kf.id);
     const w = Math.max(18, dur * pxPerSec);

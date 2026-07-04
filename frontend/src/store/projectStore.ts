@@ -62,6 +62,7 @@ interface ProjectState {
   // Timeline mutations
   addKeyframe: (kf: Keyframe) => void;
   updateKeyframe: (id: string, patch: Partial<Keyframe>) => void;
+  moveKeyframesBy: (ids: string[], dt: number) => void;
   removeKeyframe: (id: string) => void;
   groupKeyframes: (ids: string[]) => void;
   ungroupKeyframes: (ids: string[]) => void;
@@ -366,6 +367,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const scene = activeScene(draft, get().selectedSceneId);
     const kf = scene?.timeline.keyframes.find(k => k.id === id);
     if (kf) Object.assign(kf, patch);
+  }),
+
+  // Shift a set of keyframes along the timeline by the same delta, in one undo
+  // entry — used when dragging a multi-selection of keyframes as a group.
+  moveKeyframesBy: (ids, dt) => _mutate(set, get, draft => {
+    const scene = activeScene(draft, get().selectedSceneId);
+    if (!scene) return;
+    const idSet = new Set(ids);
+    scene.timeline.keyframes.forEach(k => {
+      if (idSet.has(k.id)) k.start_time = Math.max(0, Math.round((k.start_time + dt) * 100) / 100);
+    });
   }),
 
   removeKeyframe: (id) => {

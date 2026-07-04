@@ -15,7 +15,7 @@ storage is JSON files on disk and the render queue is an in-process `asyncio.Que
 | `render/queue.py` | In-process job registry + pub/sub for progress events. |
 | `render/worker.py` | Pulls jobs, runs Manim as a subprocess, locates the output MP4. |
 | `render/stitch.py` | ffmpeg `concat_scenes` / `crossfade_scenes` (xfade) for multi-scene export, `zip_dir` for PNG sequences, `probe_duration` (ffprobe). All via blocking `subprocess.run` (see rule 1). |
-| `render/audio.py` | ffmpeg voiceover mixing: trims/gains/fades/delays each `AudioClip` and muxes the mix under a scene mp4 (video copied, AAC 44.1kHz stereo — fixed params so concat can stream-copy). |
+| `render/audio.py` | ffmpeg voiceover mixing: trims/gains/fades/delays each `AudioClip` and muxes the mix under a scene mp4 (video copied, AAC 44.1kHz stereo — fixed params so concat can stream-copy). When a clip runs past the video, the last frame is held (`tpad`, forcing a video re-encode) so the scene ends on the later of last-animation / last-audio instead of truncating the voiceover. |
 
 ## Run / develop
 

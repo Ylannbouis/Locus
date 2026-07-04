@@ -33,7 +33,13 @@ def audible_clips(clips: list[AudioClip], assets: Path) -> list[AudioClip]:
 
 def mux_scene_audio(video: Path, clips: list[AudioClip], assets: Path, output: Path) -> None:
     """Mix `clips` under `video` into `output`. With no audible clips, attaches
-    a silent track instead (keeps streams uniform across stitched scenes)."""
+    a silent track instead (keeps streams uniform across stitched scenes).
+
+    When a clip's audio runs past the end of the video (the render only lasts as
+    long as the last animation), the video's final frame is held so the scene
+    ends on whichever of the last animation / last audio clip finishes later,
+    instead of cutting the voiceover off. That hold needs a video re-encode, so
+    it only kicks in on an actual overrun."""
     vdur = probe_duration(video)
     clips = audible_clips(clips, assets)
 
@@ -48,6 +54,12 @@ def mux_scene_audio(video: Path, clips: list[AudioClip], assets: Path, output: P
         if proc.returncode != 0:
             raise RuntimeError(f"ffmpeg silent-track mux failed: {proc.stdout.decode(errors='replace')[-800:]}")
         return
+
+    # If any clip's tail runs past the video, hold the last frame long enough to
+    # cover it (target = the later of video / audio end). tpad clones the final
+    # frame, which forces a video re-encode — only done when there's an overrun.
+    audio_end = max(max(0.0, c.start_time) + c.duration for c in clips)
+    pad = audio_end - vdur if vdur > 0 and audio_end > vdur + 1e-3 else 0.0
 
     args = ["ffmpeg", "-y", "-i", str(video)]
     for c in clips:
@@ -77,10 +89,19 @@ def mux_scene_audio(video: Path, clips: list[AudioClip], assets: Path, output: P
     else:
         amap = "[a0]"
 
-    args += ["-filter_complex", ";".join(filters), "-map", "0:v", "-map", amap,
-             "-c:v", "copy", *_AAC]
+    # Video: normally stream-copied; when padding, run it through tpad (holds the
+    # last frame) and re-encode to match Manim's output (h264/yuv420p) so a later
+    # concat -c copy still accepts it.
+    if pad > 1e-3:
+        filters.append(f"[0:v]tpad=stop_mode=clone:stop_duration={pad:.3f}[vpad]")
+        vmap, vcodec = "[vpad]", ["-c:v", "libx264", "-pix_fmt", "yuv420p"]
+    else:
+        vmap, vcodec = "0:v", ["-c:v", "copy"]
+
+    args += ["-filter_complex", ";".join(filters), "-map", vmap, "-map", amap, *vcodec, *_AAC]
     if vdur > 0:
-        args += ["-t", f"{vdur:.3f}"]  # audio never extends past the video
+        # End on whichever finishes later — video (padded if needed) or audio.
+        args += ["-t", f"{max(vdur, audio_end):.3f}"]
     args.append(str(output))
 
     proc = _run(args)
