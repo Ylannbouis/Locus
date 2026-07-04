@@ -57,11 +57,16 @@ export function DepGate({ children }: Props) {
           {backendDown ? (
             <p className="dep-gate__error">
               Cannot reach the backend at <code>http://localhost:8000</code>.
-              Make sure you ran <code>.\scripts\start.ps1</code>.
+              Make sure you ran the start script (<code>.\scripts\start.ps1</code> on Windows,{' '}
+              <code>bash scripts/start.sh</code> on macOS/Linux).
             </p>
           ) : (
             <>
-              <p>One or more required dependencies are missing. Run <code>.\scripts\setup.ps1</code> to install them.</p>
+              <p>
+                One or more required dependencies are missing. Run the setup script to install them
+                (<code>.\scripts\setup.ps1</code> on Windows, <code>bash scripts/setup.sh</code> on
+                macOS/Linux).
+              </p>
               <table className="dep-gate__table">
                 <thead>
                   <tr><th>Dependency</th><th>Status</th><th>Details</th></tr>

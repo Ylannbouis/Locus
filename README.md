@@ -21,19 +21,24 @@ The JSON scene model is the source of truth. A code generator transpiles it to a
 - MiKTeX (Windows) or TeX Live (Mac/Linux)
 - ffmpeg
 
-### Setup (Windows)
+### Setup & launch (Windows)
 
 ```powershell
-.\scripts\setup.ps1
+.\scripts\setup.ps1    # installs ffmpeg + MiKTeX via winget, venv, Manim, npm packages
+.\scripts\start.ps1    # launches both dev servers, each in its own window
 ```
 
-This installs missing dependencies (ffmpeg, MiKTeX via winget), creates the Python venv, installs Manim, and installs npm packages.
+### Setup & launch (macOS / Linux)
 
-### Launch
-
-```powershell
-.\scripts\start.ps1
+```bash
+bash scripts/setup.sh    # installs ffmpeg + MacTeX via Homebrew, venv, Manim, npm packages
+bash scripts/start.sh    # launches both dev servers; Ctrl+C stops both
 ```
+
+> On macOS the setup needs [Homebrew](https://brew.sh). MacTeX is large (~4 GB); the lighter
+> BasicTeX works too but then needs `tlmgr install` for a few packages Manim uses. On Linux,
+> install ffmpeg + a TeX distribution (TeX Live) with your package manager, then run
+> `scripts/setup.sh` (it creates the venv and installs the Python/npm packages).
 
 Then open **http://localhost:5173** in your browser.
 
@@ -59,8 +64,9 @@ mas/
 │       ├── render/              # Async render queue + worker (Phase 1)
 │       └── storage/projects.py  # File I/O
 └── scripts/
-    ├── setup.ps1     # Windows 10 bootstrap
-    └── start.ps1     # Launch both dev servers
+    ├── setup.ps1 / setup.sh     # Bootstrap (Windows / macOS-Linux)
+    ├── start.ps1 / start.sh     # Launch both dev servers
+    └── package.ps1 / package.sh # Build frontend for single-process serving
 ```
 
 ## Milestones

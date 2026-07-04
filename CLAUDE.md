@@ -27,18 +27,30 @@ worker runs it as a subprocess and streams progress over WebSocket → the clien
 | `frontend/` | Vite + React + TS editor (Konva canvas, Zustand stores) | `frontend/CLAUDE.md` |
 | `backend/` | FastAPI app: REST/WS API, codegen, render queue, storage | `backend/CLAUDE.md` |
 | `backend/app/codegen/` | IR → Manim Python transpiler (the subtle core) | `backend/app/codegen/CLAUDE.md` |
-| `scripts/` | Windows PowerShell bootstrap + launch scripts | below |
+| `scripts/` | Bootstrap + launch scripts: PowerShell (`*.ps1`, Windows) and shell (`*.sh`, macOS/Linux) | below |
 
 The IR schema is defined twice and **must be kept in sync by hand**: Pydantic models in
 `backend/app/models/ir.py` and TypeScript types in `frontend/src/types/ir.ts`. There is no
 codegen between them. When you change one, change the other.
 
-## Running (Windows)
+## Running
 
+**Windows:**
 - `./scripts/setup.ps1` — one-time bootstrap: installs ffmpeg/MiKTeX via winget, creates the
   Python venv at `backend/.venv/`, installs Manim + npm packages.
 - `./scripts/start.ps1` — launches backend (uvicorn `--reload`) and frontend (vite) each in
   its own window, then opens http://localhost:5173.
+
+**macOS (and Linux):**
+- `bash scripts/setup.sh` — same bootstrap via Homebrew (ffmpeg + MacTeX). Creates the venv at
+  `backend/.venv/` — note the interpreter is `backend/.venv/bin/python` here, **not**
+  `Scripts\python.exe`.
+- `bash scripts/start.sh` — runs both dev servers as background jobs of one shell; a
+  `trap … kill 0` on Ctrl+C/exit tears down the whole process group (the Unix stand-in for the
+  Windows Job Object — see the platform note below), then opens http://localhost:5173.
+
+The backend Python is platform-agnostic already (it uses `sys.executable -m manim`, `Path.home()`,
+and off-thread `subprocess.run`), so only the `scripts/` layer and the venv path differ by OS.
 
 Vite proxies `/api/*` and `/ws/*` to `http://localhost:8000` (see `frontend/vite.config.ts`),
 so the frontend talks to same-origin paths and CORS is configured for `localhost:5173`.
@@ -48,18 +60,22 @@ renders land under `.../<id>/renders/<job_id>/`.
 
 ## Platform constraints (important)
 
-This project targets **Windows 10** and the dev servers run on the Windows asyncio
-**SelectorEventLoop** (especially under `--reload`). Two rules fall out of that:
+The app runs on **Windows 10** and **macOS** (and, with manual dep install, Linux). The backend
+code is written to be portable; the two rules below come from Windows but are safe everywhere, so
+**keep following them** rather than special-casing per-OS:
 
 - **Never use `asyncio.create_subprocess_exec`** in the backend — it raises `NotImplementedError`
-  (with an *empty* message) on the SelectorEventLoop. Run blocking `subprocess.run` via
-  `asyncio.to_thread` instead. See `backend/CLAUDE.md`.
+  (with an *empty* message) on the Windows asyncio **SelectorEventLoop** that uvicorn uses under
+  `--reload`. Run blocking `subprocess.run` via `asyncio.to_thread` instead (this also works fine
+  on macOS/Linux). See `backend/CLAUDE.md`.
 - **Invoke Manim as `[sys.executable, "-m", "manim", ...]`**, never a bare `"manim"` — the venv
-  is not activated, so `manim.exe` is not on PATH.
+  is not activated, so its `manim` entrypoint is not on PATH. `sys.executable` is the venv's
+  Python on both OSes (`…/Scripts/python.exe` vs `…/bin/python`), so this resolves correctly.
 
-`scripts/run-in-job.ps1` wraps each dev-server window in a Windows **Job Object**
-(`KILL_ON_JOB_CLOSE`) so closing the window kills the whole child tree — this is what makes
-uvicorn `--reload` safe (no orphaned reloader/worker processes).
+**Process-tree cleanup for `--reload`:** on Windows `scripts/run-in-job.ps1` wraps each dev-server
+window in a **Job Object** (`KILL_ON_JOB_CLOSE`); on macOS/Linux `scripts/start.sh` runs both
+servers in one shell and traps Ctrl+C/exit to `kill 0` (the process group). Either way, stopping
+the launcher kills the whole child tree so no orphaned reloader/worker/node processes leak.
 
 ## Status
 
