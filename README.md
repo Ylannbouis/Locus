@@ -1,6 +1,8 @@
-# Math Animation Studio
+# Math Animation Studio (A Manim Wrapper)
 
-A GUI-driven 2D math animation editor that wraps Manim Community Edition.
+**IMPORTANT DISCLAIMER**: This project was created almost entirely using AI. However, the tool itself does not use AI; any content you create is completely human-made. 
+
+This app is a GUI-driven 2D math animation editor that wraps Manim Community Edition.
 
 ## Architecture
 
