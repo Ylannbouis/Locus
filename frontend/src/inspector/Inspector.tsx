@@ -126,8 +126,39 @@ export function Inspector() {
               onChange={e => setProp({ tex_string: e.target.value })} />
           </label>
           <NumberField label="Font size" value={Number(props.font_size ?? 48)} step={1} onChange={v => setProp({ font_size: Math.round(v) })} />
+          <label className="field">
+            <span className="field__label">Alignment (multi-line)</span>
+            <select className="field__input" value={String(props.align ?? 'center')} onChange={e => setProp({ align: e.target.value })}>
+              <option value="left">Left</option>
+              <option value="center">Center</option>
+              <option value="right">Right</option>
+            </select>
+          </label>
           <ColorField label="Color" value={(obj.style.fill_color as string) || '#ffffff'} onChange={v => setStyle({ fill_color: v, fill_opacity: 1 })} />
           <ColorMapEditor map={(props.color_map as Record<string, string>) || {}} onChange={m => setProp({ color_map: m })} />
+        </>
+      )}
+
+      {/* ---- Text (plain prose) ---- */}
+      {obj.type === 'text' && (
+        <>
+          <label className="field">
+            <span className="field__label">Text</span>
+            <textarea className="field__textarea" rows={3} value={String(props.text ?? '')}
+              onChange={e => setProp({ text: e.target.value })} />
+          </label>
+          <NumberField label="Font size" value={Number(props.font_size ?? 48)} step={1} onChange={v => setProp({ font_size: Math.max(1, Math.round(v)) })} />
+          <div className="field-row">
+            <label className="field field--check">
+              <input type="checkbox" checked={!!props.bold} onChange={e => setProp({ bold: e.target.checked })} />
+              <span>Bold</span>
+            </label>
+            <label className="field field--check">
+              <input type="checkbox" checked={!!props.italic} onChange={e => setProp({ italic: e.target.checked })} />
+              <span>Italic</span>
+            </label>
+          </div>
+          <ColorField label="Color" value={(obj.style.fill_color as string) || '#ffffff'} onChange={v => setStyle({ fill_color: v, fill_opacity: 1 })} />
         </>
       )}
 
@@ -135,6 +166,7 @@ export function Inspector() {
       {obj.type === 'matrix' && (
         <>
           <MatrixEditor entries={(props.entries as string[][]) || [['1', '0'], ['0', '1']]} onChange={e => setProp({ entries: e })} />
+          <NumberField label="Font size" value={Number(props.font_size ?? 48)} step={1} onChange={v => setProp({ font_size: Math.max(1, Math.round(v)) })} />
           <ColorField label="Color" value={(obj.style.fill_color as string) || '#ffffff'} onChange={v => setStyle({ fill_color: v, fill_opacity: 1 })} />
         </>
       )}

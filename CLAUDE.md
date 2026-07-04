@@ -77,8 +77,11 @@ Post-v1 editor/codegen refinements: on-canvas **axis tick numbers** (with editab
 manipulation** — draggable line/arrow **endpoint handles** and **snap-to-center** (toggleable);
 **auto-numbered** duplicate default names; **"Duplicate final state"** (snapshot a scene's end-of-
 animation look into a static scene); timeline **sub-rows** for simultaneous same-object animations,
-which the codegen **fuses** into one chained `.animate` (move+scale+rotate that overlap in time); and
-a codegen fix so objects created part-way through don't pop in before their creation animation.
+which the codegen **fuses** into one chained `.animate` (move+scale+rotate that overlap in time); a
+codegen fix so objects created part-way through don't pop in before their creation animation; and
+**creation+transform fusion** — a Write/Create/DrawBorderThenFill overlapping a move/scale/rotate on
+the same object emits one `MasIntro` composite (the object draws in *while* it moves), instead of two
+animations fighting over one mobject.
 
 **Images**: an `image` object type places an uploaded raster file (png/jpg/webp/bmp) on the
 canvas — uploaded to the project's `assets/` dir like audio, rendered via `ImageMobject` with the

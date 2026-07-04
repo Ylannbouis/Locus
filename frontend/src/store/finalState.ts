@@ -93,7 +93,7 @@ function bakeTransform(obj: SceneObject, T: Transform2D): SceneObject {
       p.start_point = start;
       p.end_point = end;
     }
-  } else if (obj.type === 'latex_text' || obj.type === 'matrix') {
+  } else if (obj.type === 'latex_text' || obj.type === 'text' || obj.type === 'matrix') {
     p.font_size = num(p.font_size, 48) * s;
     addRot();
   } else if (obj.type === 'image') {

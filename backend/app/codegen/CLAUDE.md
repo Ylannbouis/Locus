@@ -8,9 +8,9 @@ run by the render worker.
 
 | File | Role |
 |------|------|
-| `template.py` | The Jinja2 scaffold + `SCENE_CLASS_NAME = "MasScene"`. `render_script(body, background_color, base_class="Scene")` — `base_class` becomes `MovingCameraScene` when the scene uses the camera. Construct body is pre-indented (8 spaces) and injected; imports numpy fns (`sin`, `cos`, …) so plot expressions can use them bare. |
+| `template.py` | The Jinja2 scaffold + `SCENE_CLASS_NAME = "MasScene"`. `render_script(body, background_color, base_class="Scene")` — `base_class` becomes `MovingCameraScene` when the scene uses the camera. Construct body is pre-indented (8 spaces) and injected; imports numpy fns (`sin`, `cos`, …) so plot expressions can use them bare. Also holds the `MasIntro` helper (a creation animation that applies a partial move/scale/rotate after each frame), emitted into the script only when the body references it. |
 | `objects.py` | `emit_object(obj) -> (var, lines)`: Mobject construction + styling + placement, per object type/subtype. |
-| `animations.py` | `emit_animation(verb, var, params, var_map) -> expr`: one **object** verb → the inner expression of a `self.play(...)`. `emit_transform_chain(var, items)` fuses simultaneous move/scale/rotate into one chained `.animate`. (Camera verbs are handled in `scene.py`, not here.) |
+| `animations.py` | `emit_animation(verb, var, params, var_map) -> expr`: one **object** verb → the inner expression of a `self.play(...)`. `emit_transform_chain(var, items)` fuses simultaneous move/scale/rotate into one chained `.animate`; `emit_intro_transform(...)` fuses a creation verb with such a cluster into a `MasIntro(...)` call. (Camera verbs are handled in `scene.py`, not here.) |
 | `scene.py` | Orchestrator: `build_body` / `generate_scene_script` / `generate_morph_preview_script`. Ties objects + relationships + timeline + camera together. |
 
 ## Key conventions
@@ -96,6 +96,19 @@ dependencies are missing/hidden:
    the fused `.set_opacity(1)` actually reads); such a fade_in skips the `reveal_kf`/restore-target path
    since the explicit `.set_opacity` makes the plain `.animate` correct on its own. Fusion is per play
    bucket (ungrouped / parallel group), same as the transform merge.
+   A **drawing creation verb** (write/create/draw_border_then_fill) that overlaps a same-object transform
+   cluster likewise fuses — into one **`MasIntro`** (template helper): the creation animation subclassed to
+   apply the partial move/scale/rotate *after* each frame's interpolation. That composes cleanly because
+   creation animations rebuild the mobject from their captured start state every frame; running the
+   introducer and a `Transform` as two animations on one mobject fights (or, chained into a `Succession`,
+   pops the object in fully visible, moves it, then wipes and redraws it — the original bug). `MasIntro`
+   runs over the union window with `intro_span`/`xform_span` fractions locating each part; the intro's
+   easing is its `rate_func` (drives the drawing), the cluster's easing is `xform_rate`. Planned by
+   `_plan_intro_fusion` (same bucket rules; one intro per cluster; a cluster already fusing a *fade* keeps
+   the fade and the intro stays standalone — an Animation-class intro can't join an `.animate` chain).
+   In `_object_tracks` a `MasIntro` unit is never rebuilt as a `Transform`, but its chain still advances
+   the accumulating target base; if the object was hidden (see 2b) a `Restore(m, run_time=0.001)` is
+   emitted immediately before it instead of the standalone reveal wrapping.
    **One track per mobject (`_object_tracks`).** Manim can't run two animations on one mobject in a
    single `self.play`: two `m.animate` share the mobject's `.target` (built eagerly at construction, so
    the later builder clobbers the earlier — the first animation renders as nothing), and two
@@ -122,7 +135,10 @@ play (`_exposed_early` walks the `parent_id` chain). Fix: `save_state()` +
 `set_opacity(0)` those objects up front (after relationships), then wrap the creation track as
 `Succession(Restore(m, run_time=0.001), <introducer>)` so opacity is restored the instant the
 introducer draws it in (no flash, keeps the write/draw effect). `reveal_kf_id` records which keyframe
-to un-hide at. Not needed in the sequential model (adds are per-play).
+to un-hide at. On a start-time tie the creation verb sorts first (a write + move starting at the same
+instant still introduce via the write); a reveal keyframe fused into a `MasIntro` stays in the normal
+merge flow (the fused unit carries its own leading `Restore`). Not needed in the sequential model
+(adds are per-play).
 
 **Restore-target transforms (paired with the hide pass).** A move/scale/rotate uses `.animate`, whose
 auto-generated target is a `.copy()` of the mobject *at play-construction time* — when a hidden object
@@ -165,7 +181,9 @@ change** — it's all in the free-form `params` dict.
 - New **animation verb**: add to `AnimationVerb` (both `ir.py` and `ir.ts`), handle it in
   `emit_animation` (object verbs) or `_camera_anim`/`_kf_anim` (camera verbs), and add to
   `CREATION_VERBS` if it introduces the object to the scene. A new `.animate`-based transform verb
-  (like move/scale/rotate) should also be added to `_XFORM_ANIM` + `emit_transform_chain` so it fuses
-  when simultaneous; an introducer verb interacts with the hide-until-creation pass above.
+  (like move/scale/rotate) should also be added to `_XFORM_ANIM` + `emit_transform_chain` (and folded
+  in `emit_intro_transform`/`MasIntro` if it can overlap a creation) so it fuses when simultaneous;
+  a new *drawing* introducer verb belongs in `INTRO_VERBS` + `_SIMPLE` so it fuses with overlapping
+  transforms, and interacts with the hide-until-creation pass above.
 - A verb that can't emit (e.g. a transform with a missing target, or a camera move with no
   resolvable pan/focus) returns `None`; the scene builder drops it. Preserve that contract.

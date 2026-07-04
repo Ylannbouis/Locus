@@ -17,6 +17,7 @@ def new_id() -> str:
 
 class ObjectType(str, Enum):
     LATEX_TEXT = "latex_text"
+    TEXT = "text"
     SHAPE = "shape"
     COORDINATE_SYSTEM = "coordinate_system"
     GRAPH = "graph"
@@ -107,6 +108,20 @@ class LatexTextProps(BaseModel):
     font_size: int = 42
     color_map: dict[str, str] = Field(default_factory=dict)
     use_mathtex: bool = True
+    # Multi-line justification: left | center | right. Wraps multi-line content
+    # in a LaTeX array of the matching column type. Ignored for single-line
+    # equations and for content using '&' (explicit align* column alignment).
+    align: str = "center"
+
+
+class TextProps(BaseModel):
+    """Plain (non-math) text. Rendered as Manim `Tex` in text mode; the raw
+    string is LaTeX-escaped by the codegen so users type prose literally. `bold`
+    / `italic` wrap the content in `\\textbf`/`\\textit`."""
+    text: str = "Text"
+    font_size: int = 48
+    bold: bool = False
+    italic: bool = False
 
 
 class ShapeProps(BaseModel):
@@ -184,6 +199,11 @@ class MatrixProps(BaseModel):
     left_bracket: str = "["
     right_bracket: str = "]"
     element_color_map: dict[str, str] = Field(default_factory=dict)
+    # Overall size, as a font size in points (like LatexTextProps). Manim's Matrix
+    # has no font_size arg, so the codegen scales the whole mobject by
+    # font_size / 48 (48 = Manim's default), which scales glyphs + spacing +
+    # brackets uniformly. The canvas preview mirrors that scale.
+    font_size: int = 48
 
 
 class ImageProps(BaseModel):
@@ -196,7 +216,7 @@ class ImageProps(BaseModel):
     opacity: float = 1.0
 
 
-ObjectProps = Union[LatexTextProps, ShapeProps, CoordinateSystemProps, GraphProps, GeometryProps, MatrixProps, ImageProps, dict]
+ObjectProps = Union[LatexTextProps, TextProps, ShapeProps, CoordinateSystemProps, GraphProps, GeometryProps, MatrixProps, ImageProps, dict]
 
 
 # ---------------------------------------------------------------------------

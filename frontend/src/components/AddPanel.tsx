@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import {
-  createLatex, createMatrix, createRectangle, createCircle, createEllipse,
+  createLatex, createText, createMatrix, createRectangle, createCircle, createEllipse,
   createPolygon, createLine, createArrow, createDoubleArrow, createDashedLine,
   createAxes, createNumberLine, createNumberPlane, createFunctionPlot,
   createParametric, createImplicit, createVectorField,
@@ -98,8 +98,9 @@ export function AddPanel() {
       <h3 className="panel-title">Add Object</h3>
 
       <div className="add-panel__group">
-        <span className="add-panel__cat">Text</span>
-        <button className="btn add-panel__btn" onClick={() => add(createLatex)}>∑ Equation</button>
+        <span className="add-panel__cat">Text &amp; Math</span>
+        <button className="btn add-panel__btn" onClick={() => add(createLatex)}>∑ Expression</button>
+        <button className="btn add-panel__btn" onClick={() => add(createText)}>T Text</button>
         <button className="btn add-panel__btn" onClick={() => add(createMatrix)}>⊞ Matrix</button>
       </div>
 

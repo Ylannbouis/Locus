@@ -32,12 +32,20 @@ function base(partial: Partial<SceneObject>): SceneObject {
   };
 }
 
-// --- Text / matrix ---------------------------------------------------------
+// --- Expression / text / matrix --------------------------------------------
 export function createLatex(): SceneObject {
   return base({
-    type: 'latex_text', name: 'Equation',
+    type: 'latex_text', name: 'Expression',
     style: { fill_color: '#ffffff', fill_opacity: 1 },
-    props: { tex_string: 'x^2 + y^2 = r^2', font_size: 48, use_mathtex: true, color_map: {} },
+    props: { tex_string: 'x^2 + y^2 = r^2', font_size: 48, use_mathtex: true, color_map: {}, align: 'center' },
+  });
+}
+
+export function createText(): SceneObject {
+  return base({
+    type: 'text', name: 'Text',
+    style: { fill_color: '#ffffff', fill_opacity: 1 },
+    props: { text: 'Text', font_size: 48, bold: false, italic: false },
   });
 }
 
@@ -45,7 +53,7 @@ export function createMatrix(): SceneObject {
   return base({
     type: 'matrix', name: 'Matrix',
     style: { fill_color: '#ffffff', fill_opacity: 1 },
-    props: { entries: [['1', '0'], ['0', '1']], left_bracket: '[', right_bracket: ']' },
+    props: { entries: [['1', '0'], ['0', '1']], left_bracket: '[', right_bracket: ']', font_size: 48 },
   });
 }
 

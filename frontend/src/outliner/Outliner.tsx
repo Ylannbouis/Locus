@@ -3,6 +3,7 @@ import type { SceneObject } from '../types/ir';
 
 const TYPE_ICON: Record<string, string> = {
   latex_text: '∑',
+  text: 'T',
   matrix: '⊞',
   shape: '▭',
   coordinate_system: '✛',

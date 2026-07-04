@@ -2,6 +2,7 @@
 
 export type ObjectType =
   | 'latex_text'
+  | 'text'
   | 'shape'
   | 'coordinate_system'
   | 'graph'
@@ -70,6 +71,16 @@ export interface SceneObject {
   props: Record<string, unknown>;
   parent_id?: string | null;
   visible: boolean;
+}
+
+// Props of a `text` SceneObject — plain (non-math) prose. Rendered as Manim
+// `Tex` in text mode (backend LaTeX-escapes the raw string) and previewed via
+// KaTeX `\text{...}`. `bold`/`italic` wrap the content.
+export interface TextProps {
+  text: string;
+  font_size: number;
+  bold: boolean;
+  italic: boolean;
 }
 
 // Props of an `image` SceneObject (stored in the free-form `props` dict).

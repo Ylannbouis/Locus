@@ -2,6 +2,7 @@
 
 Supported (Phase 2):
   latex_text (MathTex/Tex, per-term coloring)
+  text (plain prose via Tex text mode; the raw string is LaTeX-escaped)
   shape: rectangle, circle, ellipse, line, arrow, double_arrow, dashed_line, polygon
   coordinate_system: axes, number_line, number_plane
   graph: function_plot (references an axes object via props.axes_ref)
@@ -46,6 +47,23 @@ def tracker_name(obj_id: str) -> str:
 
 def _expr(raw: Any, default: str) -> str:
     return raw if isinstance(raw, str) and raw.strip() else default
+
+
+# LaTeX special characters that must be escaped so a `text` object renders the
+# user's literal prose (e.g. "50% off" instead of "50" + a comment). Applied in a
+# single pass (each source char → its replacement, output never re-scanned) so a
+# replacement that itself contains braces (\textbackslash{}) isn't re-escaped.
+# Kept in sync with `texEscape` in frontend/src/canvas/LatexOverlay.tsx.
+_TEX_ESCAPE_MAP = {
+    "\\": r"\textbackslash{}",
+    "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#",
+    "_": r"\_", "{": r"\{", "}": r"\}",
+    "~": r"\textasciitilde{}", "^": r"\textasciicircum{}",
+}
+
+
+def _tex_escape(s: str) -> str:
+    return "".join(_TEX_ESCAPE_MAP.get(ch, ch) for ch in s)
 
 
 def _sweep(obj: SceneObject) -> dict | None:
@@ -118,7 +136,20 @@ def _emit_construct(obj: SceneObject, assets_root: str | None = None) -> str:
     if otype == "latex_text":
         tex = props.get("tex_string", "")
         font_size = int(_num(props.get("font_size"), 42))
-        ctor = "MathTex" if props.get("use_mathtex", True) else "Tex"
+        use_mathtex = props.get("use_mathtex", True)
+        ctor = "MathTex" if use_mathtex else "Tex"
+        # Multi-line justification. MathTex defaults to LaTeX's align* environment,
+        # which *right-aligns* lines with no '&' marker. Wrap multi-line content in
+        # an array of the chosen column type (l/c/r) so lines are left/center/right
+        # justified; move_to then centers the whole block on the anchor. Skipped for
+        # single-line content (a no-op) and when the user uses '&' for explicit
+        # align* column alignment (their alignment wins). Tex text-mode centers on
+        # its own, so this only applies to MathTex.
+        body = tex
+        if use_mathtex and "\\\\" in tex and "&" not in tex:
+            col = {"left": "l", "center": "c", "right": "r"}.get(
+                str(props.get("align", "center")).lower(), "c")
+            body = r"\begin{array}{%s}%s\end{array}" % (col, tex)
         # Per-term coloring (set_color_by_tex) only targets a term if it's its own
         # submobject, so isolate the colored substrings at construction. Otherwise
         # `set_color_by_tex('a', …)` matches the single whole-string submobject and
@@ -127,8 +158,20 @@ def _emit_construct(obj: SceneObject, assets_root: str | None = None) -> str:
         terms = [t for t in color_map if isinstance(t, str) and t.strip()]
         if terms:
             iso = ", ".join(repr(t) for t in terms)
-            return f"{ctor}({tex!r}, font_size={font_size}, substrings_to_isolate=[{iso}])"
-        return f"{ctor}({tex!r}, font_size={font_size})"
+            return f"{ctor}({body!r}, font_size={font_size}, substrings_to_isolate=[{iso}])"
+        return f"{ctor}({body!r}, font_size={font_size})"
+
+    if otype == "text":
+        # Plain prose via Tex (LaTeX text mode). Escape LaTeX specials so the user
+        # types literally; bold/italic wrap the escaped content.
+        raw = str(props.get("text", ""))
+        body = _tex_escape(raw)
+        if props.get("italic"):
+            body = r"\textit{" + body + "}"
+        if props.get("bold"):
+            body = r"\textbf{" + body + "}"
+        font_size = int(_num(props.get("font_size"), 48))
+        return f"Tex({body!r}, font_size={font_size})"
 
     if otype == "shape":
         subtype = props.get("subtype", "rectangle")
@@ -242,7 +285,13 @@ def _emit_construct(obj: SceneObject, assets_root: str | None = None) -> str:
         rows = ", ".join("[" + ", ".join(repr(str(c)) for c in row) + "]" for row in entries)
         lb = props.get("left_bracket", "[")
         rb = props.get("right_bracket", "]")
-        return f"Matrix([{rows}], left_bracket={lb!r}, right_bracket={rb!r})"
+        base = f"Matrix([{rows}], left_bracket={lb!r}, right_bracket={rb!r})"
+        # Matrix has no font_size arg; scale the whole mobject by font_size/48 so
+        # glyphs, spacing and brackets grow together (mirrors the canvas preview).
+        k = _num(props.get("font_size"), 48) / 48.0
+        if abs(k - 1.0) > 1e-6:
+            base = f"{base}.scale({round(k, 6)})"
+        return base
 
     return "Dot()"
 
@@ -263,7 +312,7 @@ def _emit_styling(var: str, obj: SceneObject) -> list[str]:
         # (emitted with the sizing in emit_object).
         return lines
 
-    if otype in ("latex_text", "matrix"):
+    if otype in ("latex_text", "text", "matrix"):
         color = fc or sc
         if color:
             lines.append(f"{var}.set_color({color!r})")

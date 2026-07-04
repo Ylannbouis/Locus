@@ -129,7 +129,7 @@ export function CanvasStage() {
   //   - selecting transform keyframes (shift-click for several), or
   //   - holding Space with one object selected → all its transform keyframes.
   // Moves also get a direction arrow; a single selected move is draggable.
-  const isLatexLike = (o: SceneObject) => o.type === 'latex_text' || o.type === 'matrix';
+  const isLatexLike = (o: SceneObject) => o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix';
   const isXform = (v: string) => v === 'move' || v === 'scale' || v === 'rotate';
 
   const previewKfs = scene

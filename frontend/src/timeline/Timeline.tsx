@@ -46,7 +46,7 @@ function edgeTargets(items: { id: string; start_time: number; duration: number }
 }
 
 function defaultVerb(o: SceneObject): AnimationVerb {
-  if (o.type === 'latex_text' || o.type === 'matrix') return 'write';
+  if (o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix') return 'write';
   if (o.type === 'image') return 'fade_in'; // Create/Write need vector points
   return 'create';
 }

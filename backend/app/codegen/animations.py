@@ -30,6 +30,10 @@ _SIMPLE = {
     "draw_border_then_fill": "DrawBorderThenFill",
 }
 
+# Creation verbs that draw the mobject in (fade_in is excluded: a fade fuses into
+# an `.animate` chain as `.set_opacity`, these need the MasIntro wrapper instead).
+INTRO_VERBS = set(_SIMPLE)
+
 
 def _num(v: Any, default: float) -> float:
     try:
@@ -187,6 +191,62 @@ def emit_transform_chain(var: str, items: list[tuple[str, dict]],
     if restore_target and opacity is None:
         return f"Transform({var}, {var}.copy().restore(){chain})"
     return f"{var}.animate{chain}"
+
+
+def emit_intro_transform(intro_verb: str, var: str, items: list[tuple[str, dict]],
+                         intro_span: tuple[float, float],
+                         xform_span: tuple[float, float],
+                         xform_rate: str) -> str | None:
+    """A creation verb (write/create/draw_border_then_fill) fused with the
+    simultaneous move/scale/rotate `items` on the same object, as a `MasIntro(...)`
+    call (a template helper: the creation animation applying the partial transform
+    after each frame). A creation animation and a Transform on one mobject in the
+    same play otherwise fight over its state — or, run in sequence, pop the object
+    in before it is drawn.
+
+    The transform items are folded to net numeric arguments with the same final
+    state as `transform_chain_suffix` (a `.move_to` supersedes earlier shifts;
+    deltas add; scale factors multiply; rotations add). Spans are (start, end)
+    fractions of the fused animation's run_time. Returns None if the verb isn't a
+    drawing creation or no transform argument survives (the caller falls back to
+    separate emission)."""
+    cls = _SIMPLE.get(intro_verb)
+    if cls is None:
+        return None
+    move_to: tuple[float, float] | None = None
+    dx = dy = 0.0
+    scale = 1.0
+    rot = 0.0
+    for verb, params in sorted(items, key=lambda it: _CHAIN_ORDER.get(it[0], 9)):
+        params = params or {}
+        if verb == "move":
+            tp = params.get("target_position")
+            dl = params.get("delta")
+            if isinstance(tp, dict):
+                move_to = (_num(tp.get("x"), 0.0), _num(tp.get("y"), 0.0))
+                dx = dy = 0.0
+            elif isinstance(dl, dict):
+                dx += _num(dl.get("x"), 0.0)
+                dy += _num(dl.get("y"), 0.0)
+        elif verb == "scale":
+            scale *= _num(params.get("factor"), 1.5)
+        elif verb == "rotate":
+            rot += _num(params.get("angle_degrees"), 90.0)
+    parts: list[str] = []
+    if move_to is not None:
+        parts.append(f"move_to=np.array([{move_to[0]}, {move_to[1]}, 0.0])")
+    if abs(dx) > 1e-12 or abs(dy) > 1e-12:
+        parts.append(f"shift=np.array([{round(dx, 6)}, {round(dy, 6)}, 0.0])")
+    if abs(scale - 1.0) > 1e-12:
+        parts.append(f"scale={round(scale, 6)}")
+    if abs(rot) > 1e-12:
+        parts.append(f"rotate={round(rot, 6)} * DEGREES")
+    if not parts:
+        return None
+    parts.append(f"intro_span=({intro_span[0]}, {intro_span[1]})")
+    parts.append(f"xform_span=({xform_span[0]}, {xform_span[1]})")
+    parts.append(f"xform_rate={xform_rate}")
+    return f"MasIntro({cls}, {var}, {', '.join(parts)})"
 
 
 def easing_func(easing: str) -> str:

@@ -29,9 +29,10 @@ export function objectBounds(o: SceneObject): Bounds {
     const sx = p.start_point?.x ?? 0, ex = p.end_point?.x ?? 0, sy = p.start_point?.y ?? 0, ey = p.end_point?.y ?? 0;
     return { cx: pos.x + (sx + ex) / 2, cy: pos.y + (sy + ey) / 2, hw: Math.abs(ex - sx) / 2 || 0.4, hh: Math.abs(ey - sy) / 2 || 0.4 };
   }
-  if (o.type === 'latex_text' || o.type === 'matrix') {
+  if (o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix') {
     const fs = Number(p.font_size ?? 48) / 48;
-    const len = o.type === 'matrix' ? 1.6 : Math.max(1, String(p.tex_string ?? '').length * 0.28);
+    const content = o.type === 'text' ? String(p.text ?? '') : String(p.tex_string ?? '');
+    const len = o.type === 'matrix' ? 1.6 : Math.max(1, content.length * 0.28);
     return { cx: pos.x, cy: pos.y, hw: (len * fs) / 2, hh: 0.35 * fs };
   }
   if (o.type === 'coordinate_system') return { cx: pos.x, cy: pos.y, hw: Number(p.x_length ?? 6) / 2, hh: Number(p.y_length ?? 4) / 2 };

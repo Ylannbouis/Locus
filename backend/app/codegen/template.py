@@ -5,6 +5,51 @@ from jinja2 import Template
 
 SCENE_CLASS_NAME = "MasScene"
 
+# Helper emitted into the script only when the body uses it: a creation verb
+# (Write/Create/…) fused with a simultaneous move/scale/rotate on the same
+# mobject (see animations.emit_intro_transform). Creation animations rebuild the
+# mobject from its captured start state on every frame, so applying the partial
+# transform *after* each interpolation step composes cleanly — running the
+# introducer and a Transform as two animations on one mobject would fight.
+_MAS_INTRO_HELPER = '''
+
+def MasIntro(base_cls, mobject, shift=None, move_to=None, scale=None, rotate=None,
+             intro_span=(0.0, 1.0), xform_span=(0.0, 1.0), xform_rate=smooth, **kwargs):
+    """A creation animation (Write/Create/DrawBorderThenFill) that also applies a
+    move/scale/rotate while it draws. The spans are (start, end) fractions of this
+    animation's run_time, so the creation and the transform can each cover only
+    part of their union window; kwargs (run_time, rate_func) go to the base
+    animation, whose rate_func shapes the drawing while xform_rate shapes the
+    transform."""
+    def sub_alpha(alpha, span):
+        lo, hi = span
+        return min(1.0, max(0.0, (alpha - lo) / max(hi - lo, 1e-6)))
+
+    class _MasIntro(base_cls):
+        def begin(self):
+            self._mas_about = self.mobject.get_center().copy()
+            delta = np.zeros(3)
+            if move_to is not None:
+                delta = delta + (np.asarray(move_to, dtype=float) - self._mas_about)
+            if shift is not None:
+                delta = delta + np.asarray(shift, dtype=float)
+            self._mas_delta = delta
+            super().begin()
+
+        def interpolate_mobject(self, alpha):
+            super().interpolate_mobject(sub_alpha(alpha, intro_span))
+            t = xform_rate(sub_alpha(alpha, xform_span))
+            m = self.mobject
+            if scale is not None:
+                m.scale(1.0 + (float(scale) - 1.0) * t, about_point=self._mas_about)
+            if rotate:
+                m.rotate(rotate * t, about_point=self._mas_about)
+            m.shift(self._mas_delta * t)
+
+    return _MasIntro(mobject, **kwargs)
+
+'''
+
 # The construct body is pre-rendered (already indented 8 spaces) and injected.
 # base_class is "Scene" normally, or "MovingCameraScene" when the scene animates
 # the camera (only that class exposes self.camera.frame).
@@ -14,7 +59,7 @@ from manim import *
 import numpy as np
 from numpy import sin, cos, tan, exp, log, sqrt, pi, e
 
-
+{{ helpers }}
 class {{ class_name }}({{ base_class }}):
     def construct(self):
         self.camera.background_color = {{ background_color_repr }}
@@ -31,4 +76,5 @@ def render_script(body: str, background_color: str = "#000000",
         background_color_repr=repr(background_color),
         base_class=base_class,
         body=body,
+        helpers=_MAS_INTRO_HELPER if "MasIntro(" in body else "\n",
     )

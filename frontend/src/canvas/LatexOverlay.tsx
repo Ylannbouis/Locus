@@ -70,6 +70,45 @@ function texFor(o: SceneObject): string {
   return String((o.props as any).tex_string ?? '');
 }
 
+// Manim's MathTex defaults to the align* environment, which right-aligns lines
+// that lack an '&'. Mirror the codegen (objects.py): wrap a *multi-line* equation
+// in a LaTeX `array` of the chosen column type (l/c/r) so lines are left/center/
+// right justified exactly like the render — or `aligned` when it uses '&' for
+// explicit column alignment. Single-line equations are left untouched.
+function equationTex(o: SceneObject): string {
+  const tex = texFor(o);
+  if (!tex.includes('\\\\')) return tex; // no LaTeX line break -> single line
+  if (tex.includes('&')) return `\\begin{aligned}${tex}\\end{aligned}`;
+  const align = String((o.props as any).align ?? 'center');
+  const col = align === 'left' ? 'l' : align === 'right' ? 'r' : 'c';
+  return `\\begin{array}{${col}}${tex}\\end{array}`;
+}
+
+// LaTeX-escape a plain string so a `text` object renders literally (single pass,
+// so a replacement's own braces aren't re-escaped). Mirrors `_tex_escape` /
+// `_TEX_ESCAPE_MAP` in backend/app/codegen/objects.py.
+const TEX_ESCAPE_MAP: Record<string, string> = {
+  '\\': '\\textbackslash{}',
+  '&': '\\&', '%': '\\%', '$': '\\$', '#': '\\#',
+  '_': '\\_', '{': '\\{', '}': '\\}',
+  '~': '\\textasciitilde{}', '^': '\\textasciicircum{}',
+};
+function texEscape(s: string): string {
+  let out = '';
+  for (const ch of s) out += TEX_ESCAPE_MAP[ch] ?? ch;
+  return out;
+}
+
+// KaTeX source for a `text` object: escaped prose in \text{}, wrapped in
+// \textbf/\textit to match the codegen (Tex(...) with the same wrappers).
+function textKatex(o: SceneObject): string {
+  const p = o.props as any;
+  let body = texEscape(String(p.text ?? ''));
+  if (p.italic) body = `\\textit{${body}}`;
+  if (p.bold) body = `\\textbf{${body}}`;
+  return `\\text{${body}}`;
+}
+
 // The inner KaTeX/matrix content for a latex_text or matrix object (without the
 // positioning/interaction wrapper). Shared by the live objects and the faded
 // move-preview "ghosts".
@@ -82,17 +121,23 @@ function latexInner(o: SceneObject, fontSize: number, color: string): React.Reac
     const rows = entries.length;
     const cols = entries.reduce((m, r) => Math.max(m, r.length), 1);
 
+    // Overall scale from the matrix font size. The pitch/bracket constants below
+    // are Manim's Matrix defaults at font_size 48 (its default); a Matrix scaled
+    // by k grows glyphs + spacing + brackets together, so scale every fixed
+    // world-px term by k to mirror the codegen's `.scale(font_size/48)`.
+    const k = (Number((o.props as any).font_size ?? 48) || 48) / 48;
+
     // World-pixel pitch from Manim's fixed grid (independent of glyph width).
-    const colPitch = MATRIX_H_PITCH * PX_PER_UNIT;
-    const rowPitch = MATRIX_V_PITCH * PX_PER_UNIT;
+    const colPitch = MATRIX_H_PITCH * PX_PER_UNIT * k;
+    const rowPitch = MATRIX_V_PITCH * PX_PER_UNIT * k;
     const spanX = (cols - 1) * colPitch;
     const spanY = (rows - 1) * rowPitch;
 
     // Bracket geometry (world px): span the entries' height + a small buff.
-    const bracketH = spanY + 0.62 * fontSize + 2 * MATRIX_BRACKET_BUFF * PX_PER_UNIT;
+    const bracketH = spanY + 0.62 * fontSize + 2 * MATRIX_BRACKET_BUFF * PX_PER_UNIT * k;
     const bracketW = Math.max(7, bracketH * 0.16);
     const bracketT = Math.max(2, fontSize * 0.06);
-    const bracketX = spanX / 2 + 0.18 * PX_PER_UNIT + MATRIX_BRACKET_BUFF * PX_PER_UNIT;
+    const bracketX = spanX / 2 + (0.18 + MATRIX_BRACKET_BUFF) * PX_PER_UNIT * k;
 
     const containerW = (bracketX + bracketW) * 2;
     const containerH = bracketH;
@@ -128,9 +173,16 @@ function latexInner(o: SceneObject, fontSize: number, color: string): React.Reac
     );
   }
 
+  if (o.type === 'text') {
+    return (
+      <div style={{ padding: '4px', whiteSpace: 'nowrap' }}
+        dangerouslySetInnerHTML={{ __html: renderTex(textKatex(o)) }} />
+    );
+  }
+
   return (
     <div style={{ padding: '4px', whiteSpace: 'nowrap' }}
-      dangerouslySetInnerHTML={{ __html: renderTex(texFor(o)) }} />
+      dangerouslySetInnerHTML={{ __html: renderTex(equationTex(o)) }} />
   );
 }
 
@@ -228,7 +280,7 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
     };
   }, [view.scale, moveObject, moveHandle, onGroupDrag]);
 
-  const latexObjects = objects.filter(o => (o.type === 'latex_text' || o.type === 'matrix') && o.visible);
+  const latexObjects = objects.filter(o => (o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix') && o.visible);
 
   // Geometry labels (vector / brace) are LaTeX, so they're rendered here by
   // KaTeX rather than in Konva. Position matches the codegen anchor points.
@@ -309,7 +361,7 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
         })}
 
         {/* Faded preview of a selected move/scale/rotate animation's result. */}
-        {ghosts.filter(g => g.obj.type === 'latex_text' || g.obj.type === 'matrix').map(g => {
+        {ghosts.filter(g => g.obj.type === 'latex_text' || g.obj.type === 'text' || g.obj.type === 'matrix').map(g => {
           const o = g.obj;
           const fontSize = latexFontPx(o);
           const color = (o.style.fill_color as string) || '#ffffff';

@@ -31,20 +31,27 @@ def _now() -> str:
 def list_projects() -> list[ProjectSummary]:
     PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
     summaries = []
-    for d in sorted(PROJECTS_ROOT.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+    for d in PROJECTS_ROOT.iterdir():
         f = d / "project.json"
         if not f.exists():
             continue
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
+            # Most-recently-edited first. `updated_at` is stamped on every save;
+            # fall back to the JSON file's mtime for projects missing it. (The
+            # directory's mtime is useless here — on Windows it only changes when
+            # a direct child is created/removed, not when project.json is saved.)
+            updated = data.get("updated_at") or datetime.fromtimestamp(
+                f.stat().st_mtime, timezone.utc).isoformat()
             summaries.append(ProjectSummary(
                 id=data.get("id", d.name),
                 name=data.get("metadata", {}).get("name", "Untitled"),
-                updated_at=data.get("updated_at", ""),
+                updated_at=updated,
                 scene_count=len(data.get("scenes", [])),
             ))
         except Exception:
             continue
+    summaries.sort(key=lambda s: s.updated_at, reverse=True)
     return summaries
 
 

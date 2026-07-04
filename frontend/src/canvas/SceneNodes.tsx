@@ -290,7 +290,7 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
 
   const renderNode = (o: SceneObject): React.ReactNode => {
     if (!o.visible) return null;
-    if (o.type === 'latex_text' || o.type === 'matrix') return null; // handled by overlay
+    if (o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix') return null; // handled by overlay
 
     const isSel = selectedIds.includes(o.id);
     const isFrozen = frozen.has(o.id);
