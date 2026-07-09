@@ -143,6 +143,57 @@ function ImageNode({ o, common, interactive, selected, viewScale, onCommitTransf
   );
 }
 
+// Rotate-only gizmo: the image Transformer minus the resize anchors. Wraps a
+// lone-selected rotatable node; releasing the rotate anchor hands the live node
+// to `onEnd` (CanvasStage.commitObjectRotation), which bakes the rotation into
+// the object's props.
+function Rotatable({ show, viewScale, onEnd, children }: {
+  show: boolean;
+  viewScale: number;
+  onEnd: (node: Konva.Node) => void;
+  children: (ref: React.MutableRefObject<Konva.Node | null>) => React.ReactNode;
+}) {
+  const nodeRef = useRef<Konva.Node | null>(null);
+  const trRef = useRef<Konva.Transformer>(null);
+
+  useEffect(() => {
+    const tr = trRef.current;
+    if (!tr) return;
+    if (show && nodeRef.current) {
+      tr.nodes([nodeRef.current]);
+      tr.getLayer()?.batchDraw();
+    } else {
+      tr.nodes([]);
+    }
+  }, [show]);
+
+  if (!show) return <>{children(nodeRef)}</>;
+  const s = Math.max(1e-6, viewScale); // keep the handle a constant on-screen size
+  return (
+    <>
+      {children(nodeRef)}
+      <Transformer
+        ref={trRef}
+        resizeEnabled={false}
+        rotateEnabled
+        flipEnabled={false}
+        ignoreStroke
+        anchorSize={9 / s}
+        anchorStrokeWidth={1.5 / s}
+        anchorCornerRadius={2 / s}
+        borderStrokeWidth={1.5 / s}
+        rotateAnchorOffset={26 / s}
+        anchorStroke="#ffffff"
+        anchorFill="#ea580c"
+        borderStroke="#ea580c"
+        rotationSnaps={[0, 90, 180, 270]}
+        rotationSnapTolerance={4}
+        onTransformEnd={() => { if (nodeRef.current) onEnd(nodeRef.current); }}
+      />
+    </>
+  );
+}
+
 interface Props {
   objects: SceneObject[];
   selectedIds: string[];
@@ -164,6 +215,9 @@ interface Props {
   // Commit a resize/rotate of the selected image (Transformer released): reads the
   // node's final scale/rotation and bakes them into the width/height/rotation props.
   onCommitTransform?: (o: SceneObject, node: Konva.Node) => void;
+  // Commit a rotate-gizmo release on a non-image object: bakes the node's rotation
+  // into the `rotation` prop (center-based types) or the points (polygon/vector).
+  onCommitRotate?: (o: SceneObject, node: Konva.Node) => void;
 }
 
 const PXU = PX_PER_UNIT;
@@ -285,7 +339,7 @@ function coordChildren(o: SceneObject, stroke: string, sw: number) {
   return els;
 }
 
-export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonInteractiveIds = [], viewScale = 1, endpointDrag = null, onEndpointDrag, onEndpointCommit, groupDrag = null, onNodeDragMove, onCommitTransform }: Props) {
+export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonInteractiveIds = [], viewScale = 1, endpointDrag = null, onEndpointDrag, onEndpointCommit, groupDrag = null, onNodeDragMove, onCommitTransform, onCommitRotate }: Props) {
   const frozen = new Set(nonInteractiveIds);
 
   const renderNode = (o: SceneObject): React.ReactNode => {
@@ -322,6 +376,10 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
     };
     const common = { key: o.id, ...pos, ...drag, ...sel };
     const p = o.props as any;
+    // Rotate gizmo only for a lone selection (same rule as the image Transformer
+    // and endpoint handles — avoids clutter/conflicts during multi-select moves).
+    const canRotate = isSel && selectedIds.length === 1 && !isFrozen && !!onCommitRotate;
+    const rotEnd = (n: Konva.Node) => onCommitRotate!(o, n);
 
     if (o.type === 'image') {
       // Resize/rotate handles only for a lone selection (avoid clutter / conflicts
@@ -339,11 +397,19 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
         return <KCircle {...common} radius={Number(p.radius ?? 1) * PXU} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
       }
       if (st === 'ellipse') {
-        return <Ellipse {...common} rotation={rot} radiusX={(Number(p.width ?? 2) / 2) * PXU} radiusY={(Number(p.height ?? 1.2) / 2) * PXU} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
+        return (
+          <Rotatable key={o.id} show={canRotate} viewScale={viewScale} onEnd={rotEnd}>
+            {ref => <Ellipse ref={ref as React.Ref<Konva.Ellipse>} {...common} rotation={rot} radiusX={(Number(p.width ?? 2) / 2) * PXU} radiusY={(Number(p.height ?? 1.2) / 2) * PXU} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />}
+          </Rotatable>
+        );
       }
       if (st === 'polygon') {
         const pts = (p.vertices ?? []).flatMap((v: any) => [worldX(v.x), worldY(v.y)]);
-        return <Line {...common} points={pts} closed fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
+        return (
+          <Rotatable key={o.id} show={canRotate} viewScale={viewScale} onEnd={rotEnd}>
+            {ref => <Line ref={ref as React.Ref<Konva.Line>} {...common} points={pts} closed fill={fill} stroke={stroke} strokeWidth={strokeWidth} />}
+          </Rotatable>
+        );
       }
       if (st === 'line' || st === 'dashed_line' || st === 'arrow' || st === 'double_arrow') {
         // Line-likes render as a group at `position` so draggable endpoint handles
@@ -389,11 +455,19 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
       }
       // rectangle (default)
       const w = Number(p.width ?? 2) * PXU, h = Number(p.height ?? 1.2) * PXU;
-      return <Rect {...common} rotation={rot} width={w} height={h} offsetX={w / 2} offsetY={h / 2} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
+      return (
+        <Rotatable key={o.id} show={canRotate} viewScale={viewScale} onEnd={rotEnd}>
+          {ref => <Rect ref={ref as React.Ref<Konva.Rect>} {...common} rotation={rot} width={w} height={h} offsetX={w / 2} offsetY={h / 2} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />}
+        </Rotatable>
+      );
     }
 
     if (o.type === 'coordinate_system') {
-      return <Group {...common} rotation={-(Number(p.rotation) || 0)}>{coordChildren(o, stroke, strokeWidth)}</Group>;
+      return (
+        <Rotatable key={o.id} show={canRotate} viewScale={viewScale} onEnd={rotEnd}>
+          {ref => <Group ref={ref as React.Ref<Konva.Group>} {...common} rotation={-(Number(p.rotation) || 0)}>{coordChildren(o, stroke, strokeWidth)}</Group>}
+        </Rotatable>
+      );
     }
 
     if (o.type === 'graph') {
@@ -439,8 +513,12 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
       if (p.subtype === 'vector') {
         const dir = (p.direction as { x: number; y: number }) ?? { x: 1, y: 0 };
         const tip = 0.25 * PXU;
-        return <Arrow {...common} points={[0, 0, worldX(dir.x), worldY(dir.y)]} stroke={stroke} fill={stroke}
-          strokeWidth={strokeWidth} hitStrokeWidth={HIT} pointerLength={tip} pointerWidth={tip * 0.9} />;
+        return (
+          <Rotatable key={o.id} show={canRotate} viewScale={viewScale} onEnd={rotEnd}>
+            {ref => <Arrow ref={ref as React.Ref<Konva.Arrow>} {...common} points={[0, 0, worldX(dir.x), worldY(dir.y)]} stroke={stroke} fill={stroke}
+              strokeWidth={strokeWidth} hitStrokeWidth={HIT} pointerLength={tip} pointerWidth={tip * 0.9} />}
+          </Rotatable>
+        );
       }
 
       if (p.subtype === 'angle') {

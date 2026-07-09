@@ -379,6 +379,40 @@ export function CanvasStage() {
     });
   }
 
+  // Commit a rotate-gizmo release on a non-image object. Konva rotation is CW
+  // screen degrees; the IR's baked `rotation` prop is Manim CCW degrees → negate.
+  // Center-based types carry the prop (canvas + codegen rotate about the center);
+  // point-based types (polygon, vector) bake the rotation into their own points
+  // instead — mirroring finalState/codegen, which never put `rotation` on them.
+  // The Transformer pivots about the node's bounding-box center by adjusting its
+  // x/y, so the position is committed alongside.
+  function commitObjectRotation(o: SceneObject, node: Konva.Node) {
+    const theta = node.rotation();
+    const pos = { x: round2(manimX(node.x())), y: round2(manimY(node.y())) };
+    const p = o.props as Record<string, unknown>;
+    const rad = (theta * Math.PI) / 180;
+    const cos = Math.cos(rad), sin = Math.sin(rad);
+    // Rotate a Manim-space point by the node's screen rotation (about the node
+    // origin) — the world-px round-trip handles the y flip.
+    const rotPt = (v: { x?: number; y?: number } | undefined) => {
+      const wx = worldX(Number(v?.x ?? 0)), wy = worldY(Number(v?.y ?? 0));
+      return { x: round2(manimX(wx * cos - wy * sin)), y: round2(manimY(wx * sin + wy * cos)) };
+    };
+    if (o.type === 'shape' && p.subtype === 'polygon') {
+      // Baked into the vertices below; reset the live node so react-konva (which
+      // never sets rotation on this node) doesn't apply it twice.
+      node.rotation(0);
+      const verts = (Array.isArray(p.vertices) ? (p.vertices as { x?: number; y?: number }[]) : []).map(rotPt);
+      updateObject(o.id, { position: pos, props: { ...p, vertices: verts } });
+    } else if (o.type === 'geometry' && p.subtype === 'vector') {
+      node.rotation(0);
+      const dir = (p.direction ?? { x: 1, y: 0 }) as { x?: number; y?: number };
+      updateObject(o.id, { position: pos, props: { ...p, direction: rotPt(dir) } });
+    } else {
+      updateObject(o.id, { position: pos, props: { ...p, rotation: round2(-theta) } });
+    }
+  }
+
   // Commit a dragged line-like endpoint (start/end point, in the shape's local coords).
   function commitEndpoint(id: string, which: 'start' | 'end', point: Point2D) {
     const o = objects.find(ob => ob.id === id);
@@ -430,6 +464,7 @@ export function CanvasStage() {
             groupDrag={groupDrag}
             onNodeDragMove={onNodeDragMove}
             onCommitTransform={commitImageTransform}
+            onCommitRotate={commitObjectRotation}
           />
           {showCamera && (
             <Rect

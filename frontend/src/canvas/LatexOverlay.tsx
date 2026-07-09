@@ -40,6 +40,10 @@ interface Props {
   onGroupDrag?: (v: { anchorId: string; dx: number; dy: number } | null) => void;
 }
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+// Normalize degrees into (-180, 180].
+const normDeg = (d: number) => { const m = ((d % 360) + 360) % 360; return m > 180 ? m - 360 : m; };
+
 function renderTex(tex: string, displayMode = true): string {
   try {
     return katex.renderToString(tex || '\\;', { throwOnError: false, displayMode });
@@ -206,6 +210,10 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
   const dragRef = useRef<{ id: string; startSX: number; startSY: number; startX: number; startY: number } | null>(null);
   const moveHandleRef = useRef<{ startSX: number; startSY: number; startX: number; startY: number } | null>(null);
   const anchorHandleRef = useRef<{ startSX: number; startSY: number; startX: number; startY: number } | null>(null);
+  // Live rotation (Manim CCW degrees) while the rotate handle of a lone-selected
+  // equation/text/matrix is dragged; committed to the `rotation` prop on release.
+  const [rotDrag, setRotDrag] = useState<{ id: string; deg: number } | null>(null);
+  const rotHandleRef = useRef<{ id: string; cx: number; cy: number } | null>(null);
 
   useEffect(() => {
     // Cursor position (scene units, y flipped) relative to a drag's start.
@@ -214,7 +222,23 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
       y: mh.startY - (e.clientY - mh.startSY) / (view.scale * PX_PER_UNIT),
     });
 
+    // Rotation from the pointer's angle about the element center: the handle
+    // points "up" from the center, screen angles are CW (y-down) while the
+    // `rotation` prop is Manim CCW degrees → negate. Snaps to the quarter turns
+    // within 4°, mirroring the Konva Transformer's rotationSnaps.
+    const rotFromPointer = (r: { cx: number; cy: number }, e: PointerEvent): number => {
+      const screenDeg = (Math.atan2(e.clientY - r.cy, e.clientX - r.cx) * 180) / Math.PI + 90;
+      const deg = normDeg(-screenDeg);
+      const snap = Math.round(deg / 90) * 90;
+      return Math.abs(deg - snap) <= 4 ? normDeg(snap) : deg;
+    };
+
     function onMove(e: PointerEvent) {
+      const rh = rotHandleRef.current;
+      if (rh) {
+        setRotDrag({ id: rh.id, deg: rotFromPointer(rh, e) });
+        return;
+      }
       const ah = anchorHandleRef.current;
       if (ah && anchorHandle) {
         anchorHandle.onDragMove(handlePos(ah, e));
@@ -244,6 +268,18 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
       if (isMulti) onGroupDrag?.({ anchorId: d.id, dx: nx - d.startX, dy: ny - d.startY });
     }
     function onUp(e: PointerEvent) {
+      const rh = rotHandleRef.current;
+      if (rh) {
+        // Commit straight from the pointer-up event (matches onMove) as one
+        // history entry, then clear the live override.
+        const st = useProjectStore.getState();
+        const sc = st.project?.scenes.find(s => s.id === st.selectedSceneId);
+        const o = sc?.objects.find(x => x.id === rh.id);
+        if (o) st.updateObject(o.id, { props: { ...o.props, rotation: round2(rotFromPointer(rh, e)) } });
+        rotHandleRef.current = null;
+        setRotDrag(null);
+        return;
+      }
       const ah = anchorHandleRef.current;
       if (ah && anchorHandle) {
         anchorHandle.onCommit(handlePos(ah, e));
@@ -346,7 +382,8 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
           const py = drag && drag.id === o.id ? drag.y : o.position.y + (gd ? gd.dy : 0);
 
           // Baked rotation (Manim CCW degrees); CSS rotate is CW on screen, negate.
-          const rot = Number((o.props as any).rotation) || 0;
+          // While the rotate handle is dragged, the live angle overrides the prop.
+          const rot = rotDrag?.id === o.id ? rotDrag.deg : (Number((o.props as any).rotation) || 0);
           const wrapperBase: React.CSSProperties = {
             position: 'absolute',
             left: worldX(px),
@@ -369,9 +406,45 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
             dragRef.current = { id: o.id, startSX: e.clientX, startSY: e.clientY, startX: o.position.x, startY: o.position.y };
           };
 
+          // Rotate handle only for a lone selection (same rule as the Konva rotate
+          // gizmo). It's a child of the rotating wrapper, so it orbits with the
+          // element — like Konva's rotate anchor. Rotation pivots on the element
+          // center (translate(-50%,-50%) puts it at the CSS transform-origin),
+          // which is also where Manim's .rotate() pivots.
+          const showRotate = isSel && selectedIds.length === 1 && !isFrozen;
+
           return (
             <div key={o.id} onPointerDown={onDown} style={wrapperBase}>
               {latexInner(o, fontSize, color)}
+              {showRotate && (
+                <div
+                  title="Rotate"
+                  style={{
+                    position: 'absolute',
+                    left: '50%',
+                    top: -26,
+                    transform: 'translate(-50%, -50%)',
+                    width: 13,
+                    height: 13,
+                    borderRadius: '50%',
+                    background: '#ea580c',
+                    border: '1.5px solid #ffffff',
+                    boxSizing: 'border-box',
+                    cursor: 'grab',
+                    pointerEvents: 'auto',
+                    touchAction: 'none',
+                    zIndex: 20,
+                  }}
+                  onPointerDown={e => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    // The wrapper rotates about its center, so its bounding-box
+                    // center is rotation-invariant — a stable pivot for the drag.
+                    const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+                    rotHandleRef.current = { id: o.id, cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2 };
+                  }}
+                />
+              )}
             </div>
           );
         })}

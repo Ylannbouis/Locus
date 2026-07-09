@@ -117,6 +117,14 @@ export function Inspector() {
       </div>
       <NumberField label="Layer (z)" value={obj.z_index} step={1} onChange={v => updateObject(obj.id, { z_index: Math.round(v) })} />
 
+      {/* Baked rotation (degrees, CCW) for the types that carry the generic
+          `rotation` prop. Point-based shapes (polygon, lines, vectors) rotate
+          their own points instead; images have their own field below. */}
+      {(obj.type === 'latex_text' || obj.type === 'text' || obj.type === 'matrix' || obj.type === 'coordinate_system'
+        || (obj.type === 'shape' && (subtype === 'rectangle' || subtype === 'ellipse'))) && (
+        <NumberField label="Rotation°" value={Number(props.rotation ?? 0)} step={5} onChange={v => setProp({ rotation: v })} />
+      )}
+
       {/* ---- LaTeX ---- */}
       {obj.type === 'latex_text' && (
         <>

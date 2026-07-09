@@ -69,10 +69,11 @@ constants by `font_size / 48`, mirroring the codegen's `.scale(font_size/48)`.
 Coordinate systems draw their tick **numbers** on the canvas when `include_numbers` is set, sized
 by a `number_font_size` prop; whole-number ticks render without a trailing `.0` (`fmtNum`). Shapes
 and text also honor a generic baked-transform prop **`rotation`** (degrees, CCW) — applied via
-Konva/CSS rotation, *negated* since screen rotation is CW while Manim degrees are CCW — so a
-"Duplicate final state" scene (which bakes accumulated rotation into `rotation` and scale into the
-size props) looks identical to the render. Keep these props in sync with the codegen (`objects.py`
-applies `.rotate(rot * DEGREES)`).
+Konva/CSS rotation, *negated* since screen rotation is CW while Manim degrees are CCW — set by the
+on-canvas **rotate handles** (below), the Inspector's Rotation° field, and "Duplicate final state"
+(which bakes accumulated rotation into `rotation` and scale into the size props), so the canvas
+looks identical to the render. Keep these props in sync with the codegen (`objects.py` applies
+`.rotate(rot * DEGREES)`).
 
 ## Direct manipulation & snapping (`canvas/SceneNodes.tsx`, `canvas/CanvasStage.tsx`)
 
@@ -82,6 +83,17 @@ applies `.rotate(rot * DEGREES)`).
   While an endpoint is dragged, an `endpointDrag` live-override makes the shape follow; release
   commits `start_point`/`end_point` via `updateObject` (one undo entry). Handles keep a constant
   on-screen size (`radius / viewScale`) and are hidden on ghost/preview copies.
+- **Rotate handles** (lone selection only, like the image Transformer): Konva-rendered rotatable
+  objects (rectangle/ellipse/polygon, coordinate systems, `geometry.vector`) get a rotate-only
+  `Transformer` (`Rotatable` in `SceneNodes.tsx` — border + rotate anchor, no resize); LaTeX/text/
+  matrix get an equivalent HTML handle above the element in `LatexOverlay` (child of the rotating
+  wrapper, so it orbits like Konva's anchor; live angle via `rotDrag`). Both snap to quarter turns
+  within 4°. Release commits once (`CanvasStage.commitObjectRotation`): center-based types store
+  the `rotation` prop (+ the node position, since the Transformer pivots on the bbox center);
+  **point-based types bake into their points instead** (polygon vertices, vector `direction`) and
+  never carry the prop — mirroring `finalState.ts`/codegen. Lines/arrows have no rotate handle
+  (their endpoint handles already set orientation); circles (no-op), graphs (follow axes) and
+  angle/brace (anchored) are excluded.
 - **Snap to center:** dragging an object snaps onto the horizontal/vertical center lines within
   `SNAP_PX` (screen px) of the Manim origin. Konva drags use a shared `dragBoundFunc` (the origin
   sits at the stage's own `x`/`y` in absolute coords); the LaTeX overlay converts `SNAP_PX` to units.

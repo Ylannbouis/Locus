@@ -96,7 +96,9 @@ read-only code/JSON view). The backend can also serve the built frontend (`front
 single-process running. See `README.md` for the milestone table; `PLAN.md` for the full spec.
 
 Post-v1 editor/codegen refinements: on-canvas **axis tick numbers** (with editable size); **direct
-manipulation** — draggable line/arrow **endpoint handles** and **snap-to-center** (toggleable);
+manipulation** — draggable line/arrow **endpoint handles**, **snap-to-center** (toggleable), and
+**rotate handles** on any rotatable object (a rotate-only Transformer gizmo / HTML handle setting
+the baked `rotation` prop, or baking into points for polygons/vectors);
 **auto-numbered** duplicate default names; **"Duplicate final state"** (snapshot a scene's end-of-
 animation look into a static scene); timeline **sub-rows** for simultaneous same-object animations,
 which the codegen **fuses** into one chained `.animate` (move+scale+rotate that overlap in time); a
