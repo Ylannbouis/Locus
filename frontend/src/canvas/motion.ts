@@ -1,9 +1,12 @@
 import type { Keyframe, Point2D, Scene, SceneObject } from '../types/ir';
 
 // Accumulated 2D transform of an object: center position, uniform scale, and
-// rotation (Manim CCW degrees). move/scale/rotate keyframes each touch one
-// channel independently (Manim scales/rotates about the object's center, so
-// neither changes the center; move only changes the center).
+// rotation (Manim CCW degrees). move/scale keyframes each touch one channel
+// independently (Manim scales about the object's center, so it doesn't change
+// the center; move only changes the center). A rotate pivots about the object's
+// center by default — but with an `about_point` param it orbits that fixed
+// scene point, so the center moves along the arc too (mirrors the codegen's
+// `.rotate(angle, about_point=…)`).
 export interface Transform2D {
   pos: Point2D;
   scale: number;
@@ -22,7 +25,8 @@ export const PREVIEW_VERBS = new Set(['move', 'scale', 'rotate']);
 
 function applyKf(t: Transform2D, kf: Keyframe): void {
   const p = (kf.params ?? {}) as {
-    target_position?: Point2D; delta?: Point2D; factor?: number; angle_degrees?: number;
+    target_position?: Point2D; delta?: Point2D; factor?: number;
+    angle_degrees?: number; about_point?: Point2D;
   };
   if (kf.verb === 'move') {
     if (p.target_position) {
@@ -33,7 +37,16 @@ function applyKf(t: Transform2D, kf: Keyframe): void {
   } else if (kf.verb === 'scale') {
     t.scale *= Number(p.factor ?? 1.5);
   } else if (kf.verb === 'rotate') {
-    t.rotationDeg += Number(p.angle_degrees ?? 90);
+    const deg = Number(p.angle_degrees ?? 90);
+    t.rotationDeg += deg;
+    if (p.about_point) {
+      // Anchored pivot: the center orbits the anchor by the same angle.
+      const ax = Number(p.about_point.x ?? 0), ay = Number(p.about_point.y ?? 0);
+      const rad = (deg * Math.PI) / 180;
+      const cos = Math.cos(rad), sin = Math.sin(rad);
+      const dx = t.pos.x - ax, dy = t.pos.y - ay;
+      t.pos = { x: ax + dx * cos - dy * sin, y: ay + dx * sin + dy * cos };
+    }
   }
 }
 

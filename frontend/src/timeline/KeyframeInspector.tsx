@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import { useRenderStore } from '../store/renderStore';
 import { useTimelineStore, VERB_META, timelineVerbsFor, EASING_OPTIONS, defaultParams, CAMERA_ID } from './timelineStore';
+import { transformAfter } from '../canvas/motion';
 import type { AnimationVerb, EasingType, Point2D } from '../types/ir';
 
 // Approximate rate functions for the visual easing preview (not used for render).
@@ -223,7 +224,30 @@ export function KeyframeInspector() {
       )}
 
       {verb === 'scale' && <Num label="Factor" value={Number(params.factor ?? 1.5)} step={0.1} onChange={v => setParam({ factor: v })} />}
-      {verb === 'rotate' && <Num label="Angle (°)" value={Number(params.angle_degrees ?? 90)} step={5} onChange={v => setParam({ angle_degrees: v })} />}
+      {verb === 'rotate' && (
+        <>
+          <Num label="Angle (°)" value={Number(params.angle_degrees ?? 90)} step={5} onChange={v => setParam({ angle_degrees: v })} />
+          <label className="field">
+            <span className="field__label">Pivot</span>
+            <select className="field__input" value={params.about_point ? 'point' : 'center'} onChange={e => {
+              if (e.target.value === 'center') { setParam({ about_point: undefined }); return; }
+              // Start the custom pivot at the object's center as of this keyframe
+              // (earlier moves included), i.e. where the ⊕ handle already sits.
+              const c = transformAfter(scene, kf).before.pos;
+              setParam({ about_point: { x: Math.round(c.x * 100) / 100, y: Math.round(c.y * 100) / 100 } });
+            }}>
+              <option value="center">Object center</option>
+              <option value="point">Custom point</option>
+            </select>
+          </label>
+          {params.about_point && (
+            <>
+              <Vec label="Pivot (x, y)" value={params.about_point as Point2D} onChange={v => setParam({ about_point: v })} />
+              <span className="panel-hint">Drag the ⊕ handle on the canvas to place the pivot; drop it back on the object's center to reset.</span>
+            </>
+          )}
+        </>
+      )}
 
       {verb === 'indicate' && (
         <>

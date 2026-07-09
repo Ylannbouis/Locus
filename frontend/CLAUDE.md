@@ -14,7 +14,7 @@ Stack: React 19 + react-konva + zustand + immer + katex + axios. Dev server on *
 | `types/ir.ts` | **TS mirror of `backend/app/models/ir.py`.** Keep in sync by hand — no codegen between them. |
 | `store/projectStore.ts` | Main Zustand store: the `Project`, selection, undo/redo, autosave, clipboard, grouping, all IR mutations. Plus global keyboard shortcuts. |
 | `store/renderStore.ts` | Render/morph-preview job state + WebSocket progress subscription. |
-| `store/objectFactory.ts` | `newId()` + `uniqueName()` (auto-numbers a repeated default name → "Equation 2") + factories that build default `SceneObject`s per type. |
+| `store/objectFactory.ts` | `newId()` + `uniqueName()` (auto-numbers a repeated default name → "Expression 2") + factories that build default `SceneObject`s per type. |
 | `store/finalState.ts` | `computeFinalState(scene)` — bakes a scene's end-of-animation look (final position/size/rotation, drops faded-out objects, swaps transform sources→targets, final camera framing) into a static, timeline-less scene for "Duplicate final state". |
 | `store/canvasStore.ts` | UI-only canvas prefs (snap-to-center), persisted to `localStorage`. |
 | `api/client.ts` | Thin axios wrappers over the REST API + the WS URL helper. Calls same-origin `/api`, `/ws` (proxied). |
@@ -53,10 +53,18 @@ Equation sizing and matrix spacing use empirically-calibrated constants (`MANIM_
 `MATRIX_*`) so the canvas preview matches Manim's actual layout width — adjust these only against
 a measured Manim render, not by eye.
 
-Shapes render in Konva (`canvas/SceneNodes.tsx`); equations and matrices render as KaTeX in an
-HTML overlay (`canvas/LatexOverlay.tsx`) so they're crisp and selectable. Plot/geometry sampling
-(parametric curves, vector fields) is JS-side in `canvas/plotting.ts` for the live preview only —
-the *real* curve is produced by Manim at render time.
+Shapes render in Konva (`canvas/SceneNodes.tsx`); equations, plain `text`, and matrices render as
+KaTeX in an HTML overlay (`canvas/LatexOverlay.tsx`) so they're crisp and selectable. Plot/geometry
+sampling (parametric curves, vector fields) is JS-side in `canvas/plotting.ts` for the live preview
+only — the *real* curve is produced by Manim at render time.
+
+Three KaTeX-preview rules mirror the codegen (`objects.py`) so the canvas matches the render —
+**change them in both places**: a *multi-line equation* is wrapped in `\begin{array}{l|c|r}` per its
+`align` prop (or `aligned` when the user writes `&`), because MathTex's `align*` default right-aligns
+unmarked lines (`equationTex`); a *`text`* object is LaTeX-escaped (`texEscape` = the backend's
+`_tex_escape`, single-pass so a replacement's own braces aren't re-escaped) and rendered as
+`\text{…}` with `\textbf`/`\textit` wrappers (`textKatex`); a *matrix* scales its fixed pitch/bracket
+constants by `font_size / 48`, mirroring the codegen's `.scale(font_size/48)`.
 
 Coordinate systems draw their tick **numbers** on the canvas when `include_numbers` is set, sized
 by a `number_font_size` prop; whole-number ticks render without a trailing `.0` (`fmtNum`). Shapes
@@ -106,9 +114,29 @@ codegen is the source of truth for the actual animation).
   also draw a direction arrow; a *lone* selected move is draggable (Konva circle for shapes; an HTML
   handle for LaTeX/matrix) → `updateKeyframe` commits the new `target_position`/`delta`. (Multi-select
   + Backspace deletes all selected keyframes via the projectStore keydown handler.)
+- A **rotate** keyframe can pivot about a fixed scene point instead of the object's center: the
+  `about_point` param (also editable in the `KeyframeInspector`). A *lone* selected rotate shows a
+  draggable **⊕ pivot handle** — always the HTML `anchorHandle` in `LatexOverlay` (above the Konva
+  stage, so it stays grabbable over equations and shapes alike). `motion.ts` orbits the center about
+  the anchor (same math as the codegen's `about_point`), so ghosts/final-state stay accurate, and the
+  ghost recomputes live while the handle drags (`anchorDrag`). Anchored previews draw violet radius
+  lines + the swept arc (`arcPoints`); dropping the handle within `SNAP_PX` of the object's center
+  snaps and **clears** `about_point` (back to center rotation).
 - The **camera** viewport rectangle (cyan, `CAMERA_ID`-driven) shows the framing of a selected camera
   keyframe, or the scene's initial framing; drag it to set the pan, zoom/Reset live in a floating
   `.camera-hud`. It's suppressed while a move/scale/rotate keyframe is selected.
+
+## Timeline keyframe editing (`timeline/Timeline.tsx`)
+
+- **Group drag:** grabbing a keyframe that's already part of a multi-selection keeps the whole set
+  (shift-click toggles membership, mirroring canvas multi-select), and dragging shifts every selected
+  keyframe by the anchor's delta (`DragState.members`), clamped so the *earliest* member never crosses
+  t=0 — the group's spacing is preserved, never compressed. Release commits once via `moveKeyframesBy`
+  (one undo entry). Resize always applies to just the grabbed keyframe.
+- **Snap targets** differ by drag kind: a single keyframe snaps against its own lane's edges
+  (`edgeTargets`, same object / camera); a group drag snaps the anchor against every keyframe *not*
+  being dragged (`edgeTargetsExcluding`), so members don't snap to each other. Same 🧲 toggle /
+  Alt-bypass as audio clips (see below).
 
 ## Images
 

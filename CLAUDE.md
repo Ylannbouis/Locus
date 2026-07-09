@@ -27,7 +27,7 @@ worker runs it as a subprocess and streams progress over WebSocket → the clien
 | `frontend/` | Vite + React + TS editor (Konva canvas, Zustand stores) | `frontend/CLAUDE.md` |
 | `backend/` | FastAPI app: REST/WS API, codegen, render queue, storage | `backend/CLAUDE.md` |
 | `backend/app/codegen/` | IR → Manim Python transpiler (the subtle core) | `backend/app/codegen/CLAUDE.md` |
-| `scripts/` | Bootstrap + launch scripts: PowerShell (`*.ps1`, Windows) and shell (`*.sh`, macOS/Linux) | below |
+| `scripts/` | Bootstrap + launch + package scripts: PowerShell (`*.ps1`, Windows) and shell (`*.sh`, macOS/Linux), hand-mirrored pairs | `scripts/CLAUDE.md` |
 
 The IR schema is defined twice and **must be kept in sync by hand**: Pydantic models in
 `backend/app/models/ir.py` and TypeScript types in `frontend/src/types/ir.ts`. There is no
@@ -49,8 +49,14 @@ codegen between them. When you change one, change the other.
   `trap … kill 0` on Ctrl+C/exit tears down the whole process group (the Unix stand-in for the
   Windows Job Object — see the platform note below), then opens http://localhost:5173.
 
+**Both OSes:** `./scripts/package.ps1` / `bash scripts/package.sh` — single-process packaging
+step 1: `vite build` → `frontend/dist`, which the backend mounts so one uvicorn on :8000 serves
+the whole app (no Vite). The ps1 also has a `-PyInstaller` backend-bundle skeleton.
+
 The backend Python is platform-agnostic already (it uses `sys.executable -m manim`, `Path.home()`,
 and off-thread `subprocess.run`), so only the `scripts/` layer and the venv path differ by OS.
+Per-script details (incl. the rule that every `.ps1` and its `.sh` twin must be kept in sync by
+hand): `scripts/CLAUDE.md`.
 
 Vite proxies `/api/*` and `/ws/*` to `http://localhost:8000` (see `frontend/vite.config.ts`),
 so the frontend talks to same-origin paths and CORS is configured for `localhost:5173`.
@@ -97,7 +103,13 @@ which the codegen **fuses** into one chained `.animate` (move+scale+rotate that 
 codegen fix so objects created part-way through don't pop in before their creation animation; and
 **creation+transform fusion** — a Write/Create/DrawBorderThenFill overlapping a move/scale/rotate on
 the same object emits one `MasIntro` composite (the object draws in *while* it moves), instead of two
-animations fighting over one mobject.
+animations fighting over one mobject. Newer still: a plain **`text` object type** ("Text & Math" in the
+Add panel — LaTeX-escaped prose via `Tex`, bold/italic, KaTeX-mirrored preview); **multi-line equation
+alignment** (l/c/r via an `array` wrap, since MathTex's `align*` default right-aligns unmarked lines);
+**matrix font size** (emitted as `.scale(font_size/48)`); timeline **group-drag** of multi-selected
+keyframes (one shared delta, one undo entry); and a **rotation pivot** — rotate keyframes take an
+optional `about_point` (scene coords → Manim's `about_point`), placed by dragging a ⊕ handle on the
+canvas, with the ghost preview orbiting accurately about it.
 
 **Images**: an `image` object type places an uploaded raster file (png/jpg/webp/bmp) on the
 canvas — uploaded to the project's `assets/` dir like audio, rendered via `ImageMobject` with the

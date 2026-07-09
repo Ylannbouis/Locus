@@ -28,6 +28,10 @@ interface Props {
   nonInteractiveIds?: string[];
   // Draggable destination handle for move keyframes on LaTeX/matrix objects.
   moveHandle?: MoveHandle | null;
+  // Draggable rotation-pivot (⊕) handle for a selected rotate keyframe. Lives
+  // here (HTML, above the Konva stage) for every object type, so it stays
+  // grabbable even when the pivot sits on top of an equation.
+  anchorHandle?: MoveHandle | null;
   // Live multi-select drag shared with the Konva layer: while `anchorId` is being
   // dragged, other selected equations follow by (dx, dy). `onGroupDrag` is the
   // shared state setter (stable) so a dragged equation publishes/clears the delta
@@ -190,7 +194,7 @@ function latexFontPx(o: SceneObject): number {
   return Number((o.props as any).font_size ?? 48) * MANIM_EM_UNITS_PER_PT * PX_PER_UNIT;
 }
 
-export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [], moveHandle = null, groupDrag = null, onGroupDrag }: Props) {
+export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [], moveHandle = null, anchorHandle = null, groupDrag = null, onGroupDrag }: Props) {
   const selectedIds = useProjectStore(s => s.selectedObjectIds);
   const selectObject = useProjectStore(s => s.selectObject);
   const toggleSelect = useProjectStore(s => s.toggleSelect);
@@ -201,6 +205,7 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
   const [drag, setDrag] = useState<{ id: string; x: number; y: number } | null>(null);
   const dragRef = useRef<{ id: string; startSX: number; startSY: number; startX: number; startY: number } | null>(null);
   const moveHandleRef = useRef<{ startSX: number; startSY: number; startX: number; startY: number } | null>(null);
+  const anchorHandleRef = useRef<{ startSX: number; startSY: number; startX: number; startY: number } | null>(null);
 
   useEffect(() => {
     // Cursor position (scene units, y flipped) relative to a drag's start.
@@ -210,6 +215,11 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
     });
 
     function onMove(e: PointerEvent) {
+      const ah = anchorHandleRef.current;
+      if (ah && anchorHandle) {
+        anchorHandle.onDragMove(handlePos(ah, e));
+        return;
+      }
       const mh = moveHandleRef.current;
       if (mh && moveHandle) {
         moveHandle.onDragMove(handlePos(mh, e));
@@ -234,6 +244,12 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
       if (isMulti) onGroupDrag?.({ anchorId: d.id, dx: nx - d.startX, dy: ny - d.startY });
     }
     function onUp(e: PointerEvent) {
+      const ah = anchorHandleRef.current;
+      if (ah && anchorHandle) {
+        anchorHandle.onCommit(handlePos(ah, e));
+        anchorHandleRef.current = null;
+        return;
+      }
       const mh = moveHandleRef.current;
       if (mh && moveHandle) {
         // Commit the final cursor position straight from the pointer-up event so
@@ -278,7 +294,7 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [view.scale, moveObject, moveHandle, onGroupDrag]);
+  }, [view.scale, moveObject, moveHandle, anchorHandle, onGroupDrag]);
 
   const latexObjects = objects.filter(o => (o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix') && o.visible);
 
@@ -434,6 +450,42 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
               };
             }}
           />
+        )}
+
+        {/* Rotation-pivot handle: a ⊕ crosshair the user drags to re-anchor a
+            rotate keyframe. Same drag mechanics as the move handle above. */}
+        {anchorHandle && (
+          <div
+            style={{
+              position: 'absolute',
+              left: worldX(anchorHandle.pos.x),
+              top: worldY(anchorHandle.pos.y),
+              transform: 'translate(-50%, -50%)',
+              width: 20,
+              height: 20,
+              borderRadius: '50%',
+              border: '2px solid #a855f7',
+              background: 'rgba(168,85,247,0.25)',
+              boxSizing: 'border-box',
+              cursor: 'grab',
+              pointerEvents: 'auto',
+              touchAction: 'none',
+              zIndex: 21,
+            }}
+            onPointerDown={e => {
+              e.stopPropagation();
+              e.preventDefault();
+              anchorHandleRef.current = {
+                startSX: e.clientX,
+                startSY: e.clientY,
+                startX: anchorHandle.pos.x,
+                startY: anchorHandle.pos.y,
+              };
+            }}
+          >
+            <div style={{ position: 'absolute', left: '50%', top: -6, width: 2, height: 28, marginLeft: -1, background: '#a855f7', pointerEvents: 'none' }} />
+            <div style={{ position: 'absolute', top: '50%', left: -6, height: 2, width: 28, marginTop: -1, background: '#a855f7', pointerEvents: 'none' }} />
+          </div>
         )}
       </div>
     </div>

@@ -16,7 +16,7 @@ from pathlib import Path
 from app.models.ir import AnimationVerb, Project, Scene
 from app.codegen.animations import (
     CREATION_VERBS, INTRO_VERBS, easing_func, emit_animation, emit_intro_transform,
-    emit_transform_chain, transform_chain_suffix,
+    emit_transform_chain,
 )
 from app.codegen.objects import (
     AXES_BOUND_GRAPHS, emit_object, tracker_name, var_name, _num, _point, _sweep,
@@ -164,17 +164,6 @@ def _kf_anim(kf, var_map: dict[str, str]) -> str | None:
     return emit_animation(_enum(kf.verb), v, kf.params, var_map)
 
 
-def _kf_anim_r(kf, var_map: dict[str, str], restore_ids: set[str]) -> str | None:
-    """Like `_kf_anim`, but a move/scale/rotate on a hidden-until-creation object
-    (or a group containing one) uses a restore-based target so it isn't faded out
-    by the 0-opacity baked into a plain `.animate` (see `emit_transform_chain`)."""
-    verb = _enum(kf.verb)
-    if verb in _XFORM_ANIM and kf.object_id in restore_ids and var_map.get(kf.object_id):
-        return emit_transform_chain(var_map[kf.object_id], [(verb, kf.params or {})],
-                                    restore_target=True)
-    return _kf_anim(kf, var_map)
-
-
 def _bake(expr: str, run_time: float, rate_func: str) -> str:
     """Bake run_time + rate_func into an animation expression so it can carry its
     own timing inside an AnimationGroup / Succession (the overlapping timeline)."""
@@ -215,36 +204,21 @@ def _time_clusters(kfs) -> list[dict]:
 
 
 def _plan_fade_fusion(keyframes, var_map: dict[str, str],
-                      lag_by_group: dict[str, float]) -> tuple[set[str], set[str]]:
-    """Decide which fade keyframes fuse into a simultaneous same-object transform.
+                      lag_by_group: dict[str, float]) -> set[str]:
+    """Decide which fade keyframes fuse into a simultaneous same-object
+    transform: fades that overlap a move/scale/rotate on the same object
+    (within the same play bucket) become the `opacity` of that transform's
+    `MasApply` instead of a standalone MasFade — two separate animations on
+    one mobject in the same play fight over its state.
 
-    Returns `(fused_fade_ids, prehide_obj_ids)`:
-      - `fused_fade_ids` — fade keyframes that overlap a transform on the same
-        object (within the same play bucket) and so become a `.set_opacity` on
-        that transform's chain instead of a standalone FadeIn/FadeOut.
-      - `prehide_obj_ids` — objects introduced by a fused fade_in (it is their
-        earliest creation verb); they must start at opacity 0 so the fused
-        `.animate.set_opacity(1)` fades them in rather than snapping to visible.
-        (An object with a fade_in is never pre-added, so if this is its first
-        creation it isn't visible beforehand — a later fade_in on an already-
-        created object stays a no-op fuse and is not pre-hidden.)
-
-    Fades only fuse with transforms that end up merged into one `.animate`, i.e.
+    Fades only fuse with transforms that end up merged into one MasApply, i.e.
     inside the same bucket: ungrouped (`group_id is None`) or a parallel group
     (lag_ratio ~ 0). Staggered groups play sequentially and are left alone."""
-    # Earliest creation-verb start per object (its actual introduction time).
-    first_creation: dict[str, float] = {}
-    for kf in keyframes:
-        if _enum(kf.verb) in CREATION_VERBS:
-            s = float(kf.start_time)
-            first_creation[kf.object_id] = min(first_creation.get(kf.object_id, s), s)
-
     buckets: dict[object, list] = {}
     for kf in keyframes:
         buckets.setdefault(kf.group_id, []).append(kf)
 
     fused: set[str] = set()
-    prehide: set[str] = set()
     for gid, members in buckets.items():
         if gid is not None and lag_by_group.get(gid, 0.0) > 1e-9:
             continue  # staggered group: members stay separate, no fusion
@@ -262,11 +236,7 @@ def _plan_fade_fusion(keyframes, var_map: dict[str, str],
                 fs, fe = _kf_window(f)
                 if any(fs < c["end"] - 1e-6 and fe > c["start"] + 1e-6 for c in clusters):
                     fused.add(f.id)
-                    # A fused fade_in that is the object's earliest creation verb
-                    # introduces it here → pre-hide so the fade actually reads.
-                    if _enum(f.verb) == "fade_in" and fs <= first_creation.get(oid, fs) + 1e-6:
-                        prehide.add(oid)
-    return fused, prehide
+    return fused
 
 
 def _plan_intro_fusion(keyframes, var_map: dict[str, str],
@@ -328,41 +298,35 @@ def _plan_intro_fusion(keyframes, var_map: dict[str, str],
 
 
 def _merge_units(members, var_map: dict[str, str],
-                 restore_ids: set[str] | None = None,
+                 hidden_ids: set[str] | None = None,
                  fused_fade_ids: set[str] | None = None,
                  fused_intro_ids: set[str] | None = None) -> list[tuple]:
     """Turn a set of keyframes into units, chaining move/scale/rotate on the *same
-    object* that **overlap in time** into a single `.animate` chain over the union
-    window (they'd otherwise fight over the mobject's state). Non-overlapping
-    transforms and every other verb stay one unit each. Order of first appearance
-    is preserved.
+    object* that **overlap in time** into a single `MasApply` over the union
+    window (two animations on one mobject in one play fight over its state).
+    Non-overlapping transforms and every other verb stay one unit each. Order of
+    first appearance is preserved.
 
-    Each unit is `(obj_id, expr, run_time, rate_func, start, chain, restore, intro)`:
+    Each unit is `(obj_id, expr, run_time, rate_func, start, reveal, intro)`:
       - `obj_id` — its target mobject (camera keyframes → `CAMERA_ID`), so the
         caller can chain a mobject's several units into one sequential track (Manim
         can't run two animations on one mobject in the same play — `_object_tracks`).
-      - `chain` — for a `.animate` transform cluster, the bare method suffix
-        (`.shift(v).set_opacity(1.0)`), so `_object_tracks` can rebuild accumulating
-        `Transform` targets; `None` for Animation-class units (FadeIn, Indicate, …).
-      - `restore` — whether the first target must `.restore()` (hidden object).
-      - `intro` — a fused creation+transform (`MasIntro(...)` expression): emitted
-        as-is (never rebuilt as a `Transform`), but it still carries the cluster's
-        `chain` so later clusters' accumulating targets compose onto it; when
-        `restore` is set it needs a `Restore` immediately before it (the object
-        was hidden with `set_opacity(0)` and the creation must draw it visible).
+      - `intro` — a fused creation+transform (`MasIntro(...)` expression).
+      - `reveal` — the object is hidden until its creation animation and this
+        fused intro *is* that creation: `_object_tracks` restores the authored
+        opacity (`MasFade(…, 1.0)`) immediately before it so the creation draws
+        the object visible.
 
-    `restore_ids` holds objects (and ancestor groups) hidden until their creation
-    animation — their transforms build an explicit restore-based target instead of
-    a plain `.animate` (see `emit_transform_chain`).
-
-    `fused_fade_ids` (from `_plan_fade_fusion`) holds fade keyframes to fold into
-    the overlapping same-object transform chain as `.set_opacity(…)`; and
-    `fused_intro_ids` (from `_plan_intro_fusion`) creation keyframes to fuse with
-    their overlapping transform cluster as one `MasIntro` — both are consumed here
-    instead of emitting their own standalone unit. A fused keyframe whose cluster
-    is not in this call's member set (the sequential model splits plays by start
-    time) falls back to a standalone unit so it is never dropped."""
-    restore_ids = restore_ids or set()
+    `hidden_ids` holds objects hidden (set_opacity(0)) until a drawing creation
+    verb reveals them. `fused_fade_ids` (from `_plan_fade_fusion`) holds fade
+    keyframes to fold into the overlapping same-object transform as the
+    MasApply's `opacity`; `fused_intro_ids` (from `_plan_intro_fusion`) creation
+    keyframes to fuse with their overlapping transform cluster as one `MasIntro`
+    — both are consumed here instead of emitting their own standalone unit. A
+    fused keyframe whose cluster is not in this call's member set (the
+    sequential model splits plays by start time) falls back to a standalone
+    unit so it is never dropped."""
+    hidden_ids = hidden_ids or set()
     fused_fade_ids = fused_fade_ids or set()
     fused_intro_ids = fused_intro_ids or set()
     xform_by_obj: dict[str, list] = {}
@@ -386,7 +350,7 @@ def _merge_units(members, var_map: dict[str, str],
             if a is not None:
                 order.append(("e", (kf.object_id, a, max(0.01, float(kf.duration)),
                                     easing_func(_enum(kf.easing)), float(kf.start_time),
-                                    None, False, False)))
+                                    False, False)))
 
     units: list[tuple] = []
     seen: set[str] = set()
@@ -400,13 +364,12 @@ def _merge_units(members, var_map: dict[str, str],
             continue
         seen.add(obj_id)
         # Cluster this object's transforms by time overlap (transitively); each
-        # cluster of >1 collapses to one chained .animate over the union window,
+        # cluster of >1 collapses to one chained MasApply over the union window,
         # so overlapping move+scale+rotate combine even with slightly different
         # start times / durations.
         clusters = _time_clusters(xform_by_obj[obj_id])
         fades = fade_by_obj.get(obj_id, [])
         intros = intro_by_obj.get(obj_id, [])
-        restore = obj_id in restore_ids
         for cl in clusters:
             ckfs = cl["kfs"]
             start, end = cl["start"], cl["end"]
@@ -432,10 +395,10 @@ def _merge_units(members, var_map: dict[str, str],
                 if expr is not None:
                     consumed.add(ikf.id)
                     units.append((obj_id, expr, rt, easing_func(_enum(ikf.easing)),
-                                  u0, transform_chain_suffix(items), restore, True))
+                                  u0, obj_id in hidden_ids, True))
                     continue
             # Fold in any fused fade that overlaps this cluster: its final opacity
-            # becomes a trailing `.set_opacity`, and it widens the union window.
+            # becomes the MasApply's `opacity`, and it widens the union window.
             opacity: float | None = None
             if cl_fades:
                 consumed.update(f.id for f in cl_fades)
@@ -444,12 +407,9 @@ def _merge_units(members, var_map: dict[str, str],
                 start = min(start, min(_kf_window(f)[0] for f in cl_fades))
                 end = max(end, max(_kf_window(f)[1] for f in cl_fades))
             rt = max(0.01, end - start)
-            chain = transform_chain_suffix(items, opacity)
-            expr = emit_transform_chain(var_map[obj_id], items,
-                                        restore_target=restore, opacity=opacity)
+            expr = emit_transform_chain(var_map[obj_id], items, opacity=opacity)
             if expr is not None:
-                units.append((obj_id, expr, rt, rf, start, chain,
-                              restore and opacity is None, False))
+                units.append((obj_id, expr, rt, rf, start, False, False))
     # Safety net: a fade/intro marked fused whose transform cluster isn't in this
     # call's member set (sequential-model plays split by start time) still emits
     # standalone rather than being dropped.
@@ -462,24 +422,24 @@ def _merge_units(members, var_map: dict[str, str],
                 if a is not None:
                     units.append((kf.object_id, a, max(0.01, float(kf.duration)),
                                   easing_func(_enum(kf.easing)), float(kf.start_time),
-                                  None, False, False))
+                                  False, False))
     return units
 
 
-def _object_tracks(units, var_map: dict[str, str]) -> tuple[list[tuple[float, str]], list[str]]:
-    """Combine `_merge_units` units into `(tracks, setup_lines)`, giving each
-    mobject exactly **one** track so we never run two animations on one mobject as
+def _object_tracks(units, var_map: dict[str, str]) -> list[tuple[float, str]]:
+    """Combine `_merge_units` units into per-mobject tracks, giving each mobject
+    exactly **one** track so we never run two animations on one mobject as
     separate parallel tracks in a single `self.play` — Manim clobbers those (two
-    `.animate` share the mobject's `.target`; two Animation-class anims fight each
-    frame). An object that e.g. fades in + moves, then later fades out + moves, must
-    run its clusters in sequence.
+    Transforms fight each frame over the mobject's state). An object that e.g.
+    fades in + moves, then later fades out + moves, must run its clusters in
+    sequence: a mobject's several units become one
+    `Succession(seg, Wait(gap), seg, …)`.
 
-    A mobject's several units become one `Succession(seg, Wait(gap), seg, …)`.
-    `.animate` transform clusters are rebuilt as explicit `Transform(m, tN)` with
-    **independent, accumulating** target copies (`t1 = m.copy()<chain1>`,
-    `t2 = t1.copy()<chain2>`, …) — emitted as `setup_lines` before the play — so
-    the targets don't share `m.target` and each cluster composes onto the previous.
-    Objects with a single unit keep their original inline expression."""
+    Segments need no pre-built target copies: every MasApply/MasFade builds its
+    target at its own begin() time (Succession begins segments lazily), so each
+    segment composes with whatever state the previous ones left on the live
+    mobject — including fades, whose opacity would otherwise be clobbered by a
+    pre-play target snapshot."""
     by_obj: dict[str, list] = {}
     order: list[str] = []
     for u in units:
@@ -489,54 +449,24 @@ def _object_tracks(units, var_map: dict[str, str]) -> tuple[list[tuple[float, st
         by_obj.setdefault(oid, []).append(u)
 
     tracks: list[tuple[float, str]] = []
-    setup: list[str] = []
     for oid in order:
         us = sorted(by_obj[oid], key=lambda u: u[4])
         var = var_map.get(oid)
-        if len(us) == 1:
-            _, expr, rt, rf, start, _, restore, intro = us[0]
-            baked = _bake(expr, rt, rf)
-            if intro and restore and var is not None:
-                # Hidden-until-creation object whose introducer is a fused
-                # MasIntro: restore its saved (visible) state the instant before
-                # the creation draws it in (mirrors the reveal_kf path).
-                baked = f"Succession(Restore({var}, run_time=0.001), {baked})"
-            tracks.append((start, baked))
-            continue
         segs: list[str] = []
         prev_end: float | None = None
-        base: str | None = None   # last accumulated target var (None → copy from `var`)
-        step = 0
-        for (_, expr, rt, rf, start, chain, restore, intro) in us:
+        for (_, expr, rt, rf, start, reveal, intro) in us:
             if prev_end is not None and start - prev_end > 1e-6:
                 segs.append(f"Wait({round(start - prev_end, 4)})")
-            if intro:
-                # Fused creation+transform (MasIntro): plays as-is on the live
-                # mobject, but its transform still advances the target base so
-                # later clusters compose onto where it left the object.
-                if restore and var is not None:
-                    segs.append(f"Restore({var}, run_time=0.001)")
-                segs.append(_bake(expr, rt, rf))
-                if chain is not None and var is not None:
-                    step += 1
-                    tvar = f"{var}_s{step}"
-                    src = f"{base}.copy()" if base is not None else f"{var}.copy(){'.restore()' if restore else ''}"
-                    setup.append(f"{tvar} = {src}{chain}")
-                    base = tvar
-            elif chain is not None and var is not None:
-                step += 1
-                tvar = f"{var}_s{step}"
-                src = f"{base}.copy()" if base is not None else f"{var}.copy(){'.restore()' if restore else ''}"
-                setup.append(f"{tvar} = {src}{chain}")
-                segs.append(f"Transform({var}, {tvar}, run_time={round(rt, 4)}, rate_func={rf})")
-                base = tvar
-            else:
-                # Animation-class unit (FadeIn/FadeOut/Indicate/morph/…): runs in
-                # sequence on the live mobject; it doesn't advance the target base.
-                segs.append(_bake(expr, rt, rf))
+            if intro and reveal and var is not None:
+                # Hidden-until-creation object whose introducer is a fused
+                # MasIntro: restore the authored opacity the instant before the
+                # creation draws it in (opacity only — geometry stays put).
+                segs.append(f"MasFade({var}, 1.0, run_time=0.001)")
+            segs.append(_bake(expr, rt, rf))
             prev_end = start + rt
-        tracks.append((us[0][4], f"Succession({', '.join(segs)})"))
-    return tracks, setup
+        tracks.append((us[0][4],
+                       segs[0] if len(segs) == 1 else f"Succession({', '.join(segs)})"))
+    return tracks
 
 
 def build_body(scene: Scene, assets_root: str | None = None) -> str:
@@ -569,7 +499,44 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
                 image_group_ids.add(cur.parent_id)
                 cur = by_id.get(cur.parent_id)
 
-    created_ids = {kf.object_id for kf in keyframes if _enum(kf.verb) in CREATION_VERBS}
+    # Objects *introduced* by a creation verb: the creation (write/create/
+    # draw_border_then_fill/fade_in) is the object's first keyframe (tie →
+    # creation verbs first). These are animated in, so they are not pre-added.
+    # An object whose earliest keyframe is something else — e.g. a fade_out
+    # that a later fade_in undoes — was authored as initially visible and must
+    # be pre-added like any other object. Likewise a fade_in does not introduce
+    # an object when an *ancestor group* fades out before it (fading the family
+    # out implies it started visible — e.g. outer group fades out, inner group
+    # fades back in).
+    kfs_by_obj: dict[str, list] = {}
+    for kf in keyframes:
+        kfs_by_obj.setdefault(kf.object_id, []).append(kf)
+    obj_by_id = {o.id: o for o in objects}
+
+    def _first_kf(oks):
+        return min(oks, key=lambda k: (float(k.start_time),
+                                       0 if _enum(k.verb) in CREATION_VERBS else 1))
+
+    def _ancestor_fadeout_before(oid: str, t: float) -> bool:
+        cur = obj_by_id.get(oid)
+        seen: set[str] = set()
+        while cur is not None and cur.parent_id and cur.parent_id not in seen:
+            seen.add(cur.parent_id)
+            for k in kfs_by_obj.get(cur.parent_id, []):
+                if _enum(k.verb) == "fade_out" and float(k.start_time) < t - 1e-9:
+                    return True
+            cur = obj_by_id.get(cur.parent_id)
+        return False
+
+    created_ids: set[str] = set()
+    for oid, oks in kfs_by_obj.items():
+        first = _first_kf(oks)
+        verb = _enum(first.verb)
+        if verb not in CREATION_VERBS:
+            continue
+        if verb == "fade_in" and _ancestor_fadeout_before(oid, float(first.start_time)):
+            continue
+        created_ids.add(oid)
 
     # Objects used only as a Transform/morph target are not added on their own;
     # the transform animation pulls them in, so exclude them from pre-add.
@@ -654,56 +621,66 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
         lines.extend(rel_lines)
         lines.append("")
 
-    # 2b. An object introduced by a *delayed* creation verb (Write/Create/…) that
-    # also has a later non-introducer animation (fade-out, move, …) gets silently
-    # pre-added by Manim at t=0 — so it pops into view before its creation plays.
-    # Hide such objects until their creation animation draws them in (the timeline
-    # model runs everything in one self.play, so we restore opacity the instant the
-    # introducer begins — see the Restore(...) wrapping below).
+    # 2b. Hide-until-creation. Two kinds of objects must start at opacity 0:
+    #   - Objects introduced by a **fade_in** (their earliest creation verb), in
+    #     *both* emission models: fades emit `MasFade`, which drives opacity
+    #     toward the authored value — on an already-visible mobject a fade_in
+    #     would be a no-op, and the play's wrapper Group exposes the mobject
+    #     from t=0 anyway (MasFade is not a Manim introducer).
+    #   - Objects introduced by a *delayed* drawing verb (Write/Create/…) that
+    #     are otherwise exposed at t=0 — Manim adds the play's wrapper Group
+    #     (all non-introducer animations' mobjects) when the play starts, so an
+    #     object that also has a fade/move/… (or whose ancestor group has one)
+    #     pops into view before its creation plays. Timeline model only; the
+    #     sequential model adds objects per-play.
+    # Hidden objects `save_state()` first: MasFade reads the authored opacity
+    # from `saved_state`, and the reveal (`MasFade(m, 1.0, run_time=0.001)`
+    # right before the introducer) restores opacity without touching geometry.
     ordered = sorted(keyframes, key=lambda k: k.start_time)
     uses_tracking = any(_is_track_kf(kf, var_map) for kf in keyframes)
 
     # A fade (in/out) overlapping a transform on the same object is fused into
-    # that transform's `.animate` chain — two animations on one mobject would
-    # otherwise fight. `fade_in_prehide` objects first appear via such a fused
-    # fade_in, so they must start at opacity 0 (below) for the fade to read.
-    fused_fade_ids, fade_in_prehide = _plan_fade_fusion(keyframes, var_map, lag_by_group)
+    # that transform's MasApply as its `opacity` — two animations on one mobject
+    # would otherwise fight.
+    fused_fade_ids = _plan_fade_fusion(keyframes, var_map, lag_by_group)
     # Likewise a write/create/draw_border_then_fill overlapping a transform on the
     # same object fuses into one MasIntro (creation + partial transform per frame).
     fused_intro_ids = _plan_intro_fusion(keyframes, var_map, lag_by_group, fused_fade_ids)
 
+    # Objects introduced by a fade_in (per `created_ids` above): pre-hidden so
+    # the MasFade has something to reveal. Transform/morph targets are skipped:
+    # the transform interpolates *toward* them, and hiding would bake opacity 0
+    # into that target.
+    fade_intro_ids = [oid for oid, oks in kfs_by_obj.items()
+                      if oid in created_ids and oid in var_map
+                      and oid not in transform_targets
+                      and _enum(_first_kf(oks).verb) == "fade_in"]
+
     reveal_kf_id: dict[str, str] = {}  # obj_id -> the creation keyframe to un-hide at
-    # Objects (and ancestor groups) whose move/scale/rotate must build a restore-
-    # based target because they were hidden with set_opacity(0) — see below.
-    restore_ids: set[str] = set()
     if not uses_tracking:
-        kfs_by_obj: dict[str, list] = {}
-        for kf in keyframes:
-            kfs_by_obj.setdefault(kf.object_id, []).append(kf)
-        obj_by_id = {o.id: o for o in objects}
+        def _has_exposing_kf(oid: str) -> bool:
+            # Every verb except the drawing introducers (Write/Create/…) emits a
+            # non-introducer Manim animation (MasFade/MasApply/Indicate/…) whose
+            # mobject joins the play's wrapper Group at t=0.
+            return any(_enum(k.verb) not in INTRO_VERBS for k in kfs_by_obj.get(oid, []))
 
-        def _has_non_introducer(oid: str) -> bool:
-            return any(_enum(k.verb) not in CREATION_VERBS for k in kfs_by_obj.get(oid, []))
-
-        # Manim pre-adds an object at the play's start if it — *or any ancestor
-        # group* — is animated by a non-introducer (fade-out/move/…): a group's
-        # own animation pulls the whole VGroup (including a not-yet-created child)
-        # into the play. Such an object flashes before its creation unless hidden.
+        # An object is exposed early if it — *or any ancestor group* — has an
+        # exposing animation: a group's own animation pulls the whole VGroup
+        # (including a not-yet-created child) into the play.
         def _exposed_early(oid: str) -> bool:
-            if _has_non_introducer(oid):
+            if _has_exposing_kf(oid):
                 return True
             cur = obj_by_id.get(oid)
             seen: set[str] = set()
             while cur is not None and cur.parent_id and cur.parent_id not in seen:
                 seen.add(cur.parent_id)
-                if _has_non_introducer(cur.parent_id):
+                if _has_exposing_kf(cur.parent_id):
                     return True
                 cur = obj_by_id.get(cur.parent_id)
             return False
 
-        hide_vars: list[str] = []
         for oid, oks in kfs_by_obj.items():
-            if oid not in var_map:
+            if oid not in var_map or oid in fade_intro_ids:
                 continue
             # On a start-time tie, the creation verb counts as first: a write and
             # a move starting at the same instant introduce the object via the
@@ -711,59 +688,34 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
             oks = sorted(oks, key=lambda k: (float(k.start_time),
                                              0 if _enum(k.verb) in CREATION_VERBS else 1))
             first = oks[0]
-            if first.group_id or _enum(first.verb) not in CREATION_VERBS:
-                continue                                   # not intro'd by a lone creation verb
-            if first.id in fused_fade_ids:
-                continue                                   # fused fade_in → revealed by its own transform
+            if first.group_id or _enum(first.verb) not in INTRO_VERBS:
+                continue                                   # not intro'd by a lone drawing verb
             if float(first.start_time) <= 1e-3:
                 continue                                   # created at t=0 → no early window
             if not _exposed_early(oid):
                 continue                                   # never pre-added → Manim won't flash it
             reveal_kf_id[oid] = first.id
-            hide_vars.append(var_map[oid])
 
-        # A move/scale/rotate on a hidden object — or on a group that *contains*
-        # one — must not use a plain `.animate` (its auto-generated target copies
-        # the current 0-opacity and fades the object out). Mark each hidden object
-        # and all of its ancestor groups; their transforms build a restore-based
-        # target instead. A transformed ancestor group also needs a saved (still
-        # visible) state to restore from, captured before its children are hidden.
-        restore_ids.update(reveal_kf_id)
-        for h in list(reveal_kf_id):
-            cur = obj_by_id.get(h)
-            while cur is not None and cur.parent_id and cur.parent_id not in restore_ids:
-                restore_ids.add(cur.parent_id)
-                cur = obj_by_id.get(cur.parent_id)
-        xformed = {kf.object_id for kf in keyframes if _enum(kf.verb) in _XFORM_ANIM}
-        group_savestate = [var_map[gid] for gid in restore_ids
-                           if gid not in reveal_kf_id and gid in var_map and gid in xformed]
+    hide_ids = fade_intro_ids + [oid for oid in reveal_kf_id if oid not in fade_intro_ids]
 
-        # Objects that first appear via a fused fade_in also start invisible (the
-        # fused `.animate.set_opacity(1)` fades them in while they move/scale/rotate).
-        for oid in fade_in_prehide:
-            v = var_map.get(oid)
-            if v and v not in hide_vars:
-                hide_vars.append(v)
-
-        if hide_vars or group_savestate:
-            lines.append("# keep these hidden until their creation animation plays")
-            # Save the transformed groups first, while their children are still
-            # visible, so a restore-based target recovers the correct opacity.
-            for v in group_savestate:
-                lines.append(f"{v}.save_state()")
-            for v in hide_vars:
-                lines.append(f"{v}.save_state()")
-                lines.append(f"{v}.set_opacity(0)")
-            lines.append("")
-    elif fade_in_prehide:
-        # Sequential (camera-tracking) model has no hide pass, but an object that
-        # first appears via a fused fade_in still must start at opacity 0.
-        pre = [var_map[o] for o in fade_in_prehide if o in var_map]
-        if pre:
-            lines.append("# start hidden until a fused fade_in reveals them")
-            for v in pre:
-                lines.append(f"{v}.set_opacity(0)")
-            lines.append("")
+    # Snapshot the authored look of every object a fade touches (plus the
+    # hidden ones): MasFade / MasApply(opacity=…) restore opacity from
+    # `saved_state`. The snapshot must be a scene-setup statement — in the
+    # sequential model each play's animations are constructed mid-scene, after
+    # an earlier fade_out may already have zeroed the live opacity.
+    fade_obj_ids = {kf.object_id for kf in keyframes if _enum(kf.verb) in _FADE_ANIM}
+    save_ids = [o.id for o in objects
+                if o.id in var_map and (o.id in fade_obj_ids or o.id in hide_ids)]
+    if save_ids:
+        lines.append("# snapshot the authored look (fades restore opacity from saved_state)")
+        for oid in save_ids:
+            lines.append(f"{var_map[oid]}.save_state()")
+        lines.append("")
+    if hide_ids:
+        lines.append("# start hidden until the creation animation reveals them")
+        for oid in hide_ids:
+            lines.append(f"{var_map[oid]}.set_opacity(0)")
+        lines.append("")
 
     # 3. Pre-add objects that are not animated in by a creation verb.
     # Children of a group are represented by their VGroup (added/created via the
@@ -820,7 +772,7 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
 
         for start, members in ungrouped_by_start.items():
             # Same object_id + same start → chain move/scale/rotate together.
-            anims = [u[1] for u in _merge_units(members, var_map, restore_ids,
+            anims = [u[1] for u in _merge_units(members, var_map, set(reveal_kf_id),
                                                 fused_fade_ids, fused_intro_ids)]
             if not anims:
                 continue
@@ -829,10 +781,10 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
         for gid, members in grouped.items():
             lag = lag_by_group.get(gid, 0.0)
             if lag <= 1e-9:
-                anims = [u[1] for u in _merge_units(members, var_map, restore_ids,
+                anims = [u[1] for u in _merge_units(members, var_map, set(reveal_kf_id),
                                                     fused_fade_ids, fused_intro_ids)]
             else:
-                anims = [a for kf in members if (a := _kf_anim_r(kf, var_map, restore_ids)) is not None]
+                anims = [a for kf in members if (a := _kf_anim(kf, var_map)) is not None]
             if not anims:
                 continue
             events.append({"start": min(k.start_time for k in members),
@@ -893,8 +845,8 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
         grouped: dict[str, list] = {}
         ungrouped: list = []
         # A reveal keyframe that fuses with a transform (MasIntro) stays in the
-        # normal flow — the fused unit carries its own Restore (see
-        # `_object_tracks`) — instead of the standalone Succession(Restore, …).
+        # normal flow — the fused unit carries its own reveal (see
+        # `_object_tracks`) — instead of the standalone Succession(MasFade, …).
         reveal_kf_ids = set(reveal_kf_id.values()) - fused_intro_ids
         reveal_kfs: list = []
         for kf in ordered:
@@ -904,42 +856,54 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
                 reveal_kfs.append(kf)
             else:
                 ungrouped.append(kf)
-        # Setup statements for accumulating transform targets (emitted before the
-        # play); see `_object_tracks`.
-        setup_lines: list[str] = []
         # Ungrouped: simultaneous move/scale/rotate on one object collapse to a
-        # single chained .animate track; a mobject's several (non-overlapping)
-        # clusters chain into one sequential track (Manim can't run two animations
-        # on one mobject as parallel tracks — see `_object_tracks`).
-        utracks, usetup = _object_tracks(
-            _merge_units(ungrouped, var_map, restore_ids, fused_fade_ids, fused_intro_ids), var_map)
-        tracks.extend(utracks)
-        setup_lines.extend(usetup)
-        # A hidden-until-creation object: restore its opacity the instant before
-        # its introducer draws it in (it was set invisible + save_state'd above).
+        # single MasApply track; a mobject's several (non-overlapping) clusters
+        # chain into one sequential track (Manim can't run two animations on one
+        # mobject as parallel tracks — see `_object_tracks`).
+        tracks.extend(_object_tracks(
+            _merge_units(ungrouped, var_map, set(reveal_kf_id),
+                         fused_fade_ids, fused_intro_ids), var_map))
+        # A hidden-until-creation object: restore its authored opacity the
+        # instant before its introducer draws it in (it was set invisible +
+        # save_state'd above; MasFade leaves geometry untouched).
         for kf in reveal_kfs:
             a = _kf_anim(kf, var_map)
             if a is None:
                 continue
             baked = _bake(a, max(0.01, float(kf.duration)), easing_func(_enum(kf.easing)))
             tracks.append((float(kf.start_time),
-                           f"Succession(Restore({var_map[kf.object_id]}, run_time=0.001), {baked})"))
+                           f"Succession(MasFade({var_map[kf.object_id]}, 1.0, run_time=0.001), {baked})"))
         for gid, members in grouped.items():
             lag = round(lag_by_group.get(gid, 0.0), 4)
             if lag <= 1e-9:
                 # Parallel group: members play together, so merge same-object
                 # transforms and chain each mobject's units sequentially. (A
                 # staggered group is sequential — don't merge.)
-                gtracks, gsetup = _object_tracks(
-                    _merge_units(members, var_map, restore_ids, fused_fade_ids, fused_intro_ids), var_map)
-                setup_lines.extend(gsetup)
+                gtracks = _object_tracks(
+                    _merge_units(members, var_map, set(reveal_kf_id),
+                                 fused_fade_ids, fused_intro_ids), var_map)
                 exprs = [e for _, e in gtracks]
             else:
-                exprs = [_bake(a, max(0.01, float(kf.duration)), easing_func(_enum(kf.easing)))
-                         for kf in members if (a := _kf_anim_r(kf, var_map, restore_ids)) is not None]
+                # Staggered group. Same timing as AnimationGroup(..., lag_ratio):
+                # member i starts at Σ(prev run_times) × lag — but emitted as
+                # parallel Succession(Wait(start), …) tracks so each member
+                # *begins* (and builds its MasApply/MasFade target) at its actual
+                # start instead of eagerly at the group's start, composing with
+                # earlier members' effects on shared objects.
+                exprs = []
+                offset = 0.0
+                for kf in members:
+                    a = _kf_anim(kf, var_map)
+                    if a is None:
+                        continue
+                    dur = max(0.01, float(kf.duration))
+                    baked = _bake(a, dur, easing_func(_enum(kf.easing)))
+                    exprs.append(f"Succession(Wait({round(offset, 4)}), {baked})"
+                                 if offset > 1e-6 else baked)
+                    offset += dur * lag
             if not exprs:
                 continue
-            inner = exprs[0] if len(exprs) == 1 else f"AnimationGroup({', '.join(exprs)}, lag_ratio={lag})"
+            inner = exprs[0] if len(exprs) == 1 else f"AnimationGroup({', '.join(exprs)}, lag_ratio=0.0)"
             tracks.append((min(float(k.start_time) for k in members), inner))
         for obj in objects:  # parameter sweeps
             if obj.id not in var_map:
@@ -953,10 +917,6 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
                                  easing_func(str(sw.get("easing", "linear"))))))
 
         if tracks:
-            if setup_lines:
-                lines.append("# accumulating transform targets (independent copies "
-                             "so each object's clusters don't share .animate's target)")
-                lines.extend(setup_lines)
             tracks.sort(key=lambda t: t[0])
             t0 = tracks[0][0]
             if t0 > 1e-6:

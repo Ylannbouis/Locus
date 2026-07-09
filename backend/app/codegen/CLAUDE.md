@@ -8,9 +8,9 @@ run by the render worker.
 
 | File | Role |
 |------|------|
-| `template.py` | The Jinja2 scaffold + `SCENE_CLASS_NAME = "MasScene"`. `render_script(body, background_color, base_class="Scene")` — `base_class` becomes `MovingCameraScene` when the scene uses the camera. Construct body is pre-indented (8 spaces) and injected; imports numpy fns (`sin`, `cos`, …) so plot expressions can use them bare. Also holds the `MasIntro` helper (a creation animation that applies a partial move/scale/rotate after each frame), emitted into the script only when the body references it. |
+| `template.py` | The Jinja2 scaffold + `SCENE_CLASS_NAME = "MasScene"`. `render_script(body, background_color, base_class="Scene")` — `base_class` becomes `MovingCameraScene` when the scene uses the camera. Construct body is pre-indented (8 spaces) and injected; imports numpy fns (`sin`, `cos`, …) so plot expressions can use them bare. Also holds the helper classes, each emitted into the script only when the body references it: `MasApply`/`MasFade` (all move/scale/rotate transforms and all fades — see "Fades & transforms" below) and `MasIntro` (a creation animation that applies a partial move/scale/rotate after each frame). |
 | `objects.py` | `emit_object(obj) -> (var, lines)`: Mobject construction + styling + placement, per object type/subtype. |
-| `animations.py` | `emit_animation(verb, var, params, var_map) -> expr`: one **object** verb → the inner expression of a `self.play(...)`. `emit_transform_chain(var, items)` fuses simultaneous move/scale/rotate into one chained `.animate`; `emit_intro_transform(...)` fuses a creation verb with such a cluster into a `MasIntro(...)` call. (Camera verbs are handled in `scene.py`, not here.) |
+| `animations.py` | `emit_animation(verb, var, params, var_map) -> expr`: one **object** verb → the inner expression of a `self.play(...)`. Fades emit `MasFade(var, alpha)`; `emit_transform_chain(var, items, opacity)` fuses simultaneous move/scale/rotate (and an overlapping fade's target opacity) into one `MasApply(var, lambda _m: _m.shift(…)…, opacity=…)`; `emit_intro_transform(...)` fuses a creation verb with such a cluster into a `MasIntro(...)` call. (Camera verbs are handled in `scene.py`, not here.) |
 | `scene.py` | Orchestrator: `build_body` / `generate_scene_script` / `generate_morph_preview_script`. Ties objects + relationships + timeline + camera together. |
 
 ## Key conventions
@@ -22,6 +22,18 @@ run by the render worker.
 - **LaTeX/string safety:** always emit user strings with `repr()` (`{tex!r}`) so backslashes in
   LaTeX survive. Numeric/expression coercion goes through `_num`, `_expr`, `_range`, `_point`,
   `_np` helpers — use them rather than raw f-string interpolation of untrusted props.
+- **Multi-line `latex_text` alignment:** MathTex defaults to LaTeX's `align*` environment, which
+  *right-aligns* lines carrying no `&`. Multi-line MathTex content (has `\\`, no `&`) is wrapped in
+  `\begin{array}{l|c|r}` per the `align` prop (default center); a user's own `&` wins (no wrap).
+  The frontend KaTeX preview mirrors this exactly (`equationTex` in `canvas/LatexOverlay.tsx`).
+- **`text` objects** (plain prose) emit `Tex(...)` in LaTeX text mode: the raw string goes through
+  `_tex_escape` — a *single-pass* char map, so a replacement's own braces (`\textbackslash{}`)
+  aren't re-escaped — then optional `\textit`/`\textbf` wrappers. Mirrored by `texEscape`/
+  `textKatex` in the frontend overlay. Styling/placement is the same as `latex_text`
+  (`set_color`, `.move_to`).
+- **Matrix font size:** Manim's `Matrix` has no `font_size` kwarg, so a non-default `font_size`
+  prop emits `.scale(font_size/48)` — glyphs, spacing and brackets grow together. The canvas
+  preview scales its fixed pitch/bracket constants by the same factor.
 - **Plot expressions are Python/numpy**, evaluated inside `lambda x: (...)`. `_range` clamps a
   non-positive step to 1.0 (a `<= 0` step makes Manim's tick generation hang/raise) and renders whole
   numbers without a trailing `.0` (`_fmt_num`) so Manim's `NumberLine` infers **0 decimal places** for
@@ -29,6 +41,13 @@ run by the render worker.
 - **Generic baked transforms:** `emit_object` applies a `rotation` prop (degrees, CCW) as
   `.rotate(rot * DEGREES)` after placement; scale is baked into the concrete size props by the frontend.
   Axes/number_line pass `number_font_size` through to their `font_size` / `axis_config`.
+- **Rotation pivot:** a rotate keyframe may carry an `about_point` param (`{x,y}`, scene coords);
+  it emits Manim's `about_point=np.array(…)` on every rotate path (`_rotate_call`: the `.animate`
+  branch and the fused `MasApply` chain) and flows into `MasIntro` as `rotate_about` — applied
+  *after* the shift there, because a fixed-point pivot doesn't commute with a move (the chain's
+  convention is move first, then orbit the anchor; `motion.ts` in the frontend mirrors this by
+  orbiting the object's center about the anchor). `emit_intro_transform` refuses to fold a cluster
+  whose rotations use *different* pivots (returns None → normal fallback paths).
 
 ## Images (`image` object type)
 
@@ -83,19 +102,19 @@ dependencies are missing/hidden:
      *between* plays, which a single play can't express. Here keyframes sharing a `group_id` *or* a
      `start_time` collapse into one parallel play; tracking emits **statement events** (`kind: "stmt"`).
    Both route each animation through `_kf_anim` (camera → `_camera_anim`, object → `emit_animation`), via
-   `_merge_units`, which **fuses same-object move/scale/rotate that overlap in time** into one chained
-   `.animate` over the union window (`emit_transform_chain`) — two separate `.animate`s on one mobject
-   fight over its state. Applies to ungrouped tracks and parallel (`lag_ratio == 0`) groups; staggered
-   groups and non-overlapping transforms stay separate.
-   A **fade** (fade_in/fade_out) that overlaps a same-object transform is fused into that same chain as a
-   trailing `.set_opacity(1.0/0.0)` — a standalone `FadeIn`/`FadeOut` alongside `m.animate…` is a second
-   animation on the same mobject and they cancel (the `.animate` target holds opacity where the fade wants
-   to change it; a hidden object's restore-target `Transform` also double-fades). `_plan_fade_fusion`
-   picks the fade keyframes to fuse (`fused_fade_ids`, threaded into `_merge_units`) and the objects a
-   fused **fade_in introduces** (`fade_in_prehide` — pre-hidden with `set_opacity(0)` in *both* models so
-   the fused `.set_opacity(1)` actually reads); such a fade_in skips the `reveal_kf`/restore-target path
-   since the explicit `.set_opacity` makes the plain `.animate` correct on its own. Fusion is per play
-   bucket (ungrouped / parallel group), same as the transform merge.
+   `_merge_units`, which **fuses same-object move/scale/rotate that overlap in time** into one `MasApply`
+   over the union window (`emit_transform_chain`) — two separate transforms on one mobject fight over its
+   state. Applies to ungrouped tracks and parallel (`lag_ratio == 0`) groups; non-overlapping transforms
+   stay separate. A **staggered group** (`lag_ratio > 0`) emits with the *same timing* as Manim's
+   `AnimationGroup(…, lag_ratio=…)` (member *i* starts at Σ previous run_times × lag) but as parallel
+   `Succession(Wait(start), member)` tracks inside a `lag_ratio=0` group, so each member *begins* — and
+   builds its MasApply/MasFade target — at its actual start, not eagerly at the group's start.
+   A **fade** (fade_in/fade_out) that overlaps a same-object transform is fused into that transform's
+   `MasApply` as its `opacity` — a standalone fade alongside a transform is a second animation on the
+   same mobject and they cancel. `_plan_fade_fusion` picks the fade keyframes to fuse (`fused_fade_ids`,
+   threaded into `_merge_units`); fusion is per play bucket (ungrouped / parallel group), same as the
+   transform merge. Cross-family overlaps (fade on a *group* while a *child* transforms, or vice versa)
+   need no fusion: MasApply/MasFade split geometry from style per-member (see below).
    A **drawing creation verb** (write/create/draw_border_then_fill) that overlaps a same-object transform
    cluster likewise fuses — into one **`MasIntro`** (template helper): the creation animation subclassed to
    apply the partial move/scale/rotate *after* each frame's interpolation. That composes cleanly because
@@ -105,52 +124,71 @@ dependencies are missing/hidden:
    runs over the union window with `intro_span`/`xform_span` fractions locating each part; the intro's
    easing is its `rate_func` (drives the drawing), the cluster's easing is `xform_rate`. Planned by
    `_plan_intro_fusion` (same bucket rules; one intro per cluster; a cluster already fusing a *fade* keeps
-   the fade and the intro stays standalone — an Animation-class intro can't join an `.animate` chain).
-   In `_object_tracks` a `MasIntro` unit is never rebuilt as a `Transform`, but its chain still advances
-   the accumulating target base; if the object was hidden (see 2b) a `Restore(m, run_time=0.001)` is
-   emitted immediately before it instead of the standalone reveal wrapping.
+   the fade and the intro stays standalone — an Animation-class intro can't join a MasApply). If the
+   object was hidden (see 2b) `_object_tracks` emits a `MasFade(m, 1.0, run_time=0.001)` immediately
+   before the fused intro instead of the standalone reveal wrapping.
    **One track per mobject (`_object_tracks`).** Manim can't run two animations on one mobject in a
-   single `self.play`: two `m.animate` share the mobject's `.target` (built eagerly at construction, so
-   the later builder clobbers the earlier — the first animation renders as nothing), and two
-   Animation-class anims fight each frame. So after `_merge_units`, each mobject's several units are
-   chained into **one** `Succession(seg, Wait(gap), seg, …)` track (an object that fades in + moves, then
-   later fades out + moves, must run its two clusters *in sequence*). A `.animate` cluster is rebuilt as an
-   explicit `Transform(m, tN)` with **independent, accumulating** target copies — `t1 = m.copy()<chain1>`,
-   `t2 = t1.copy()<chain2>`, … emitted as setup statements before the play — so the targets don't share
-   `m.target` and each cluster composes onto the previous (relative `.shift`s accumulate). Single-unit
-   objects keep their inline `.animate`. The sequential (camera-tracking) model is naturally safe here —
-   it emits a separate `self.play` per time slot, so same-mobject clusters never share one play.
+   single `self.play` — they fight each frame over its state. So after `_merge_units`, each mobject's
+   several units are chained into **one** `Succession(seg, Wait(gap), seg, …)` track (an object that
+   fades in + moves, then later fades out + moves, must run its two clusters *in sequence*). No target
+   copies are pre-built: each segment's MasApply/MasFade constructs its target at its own `begin()`
+   (`Succession` begins segments lazily), so segments compose on the live mobject. The sequential
+   (camera-tracking) model is naturally safe here — it emits a separate `self.play` per time slot.
 5. `_bake(expr, run_time, rate_func)` inserts timing into an animation expression so it can live inside
-   an `AnimationGroup`/`Succession`: `.animate.m(…)` → `.animate(run_time=…, rate_func=…).m(…)`; an
-   Animation-class call gets the kwargs inserted before the final `)`. Hold the final frame with a
-   trailing `self.wait`.
+   an `AnimationGroup`/`Succession`: `.animate.m(…)` → `.animate(run_time=…, rate_func=…).m(…)` (only
+   camera moves and sweep trackers still use `.animate`); an Animation-class call gets the kwargs
+   inserted before the final `)`. Hold the final frame with a trailing `self.wait`.
 
-**Hide-until-creation (`build_body` step 2b, timeline model only).** An object introduced by a
-*delayed* creation verb (Write/Create/…) that is otherwise pre-added by Manim at t=0 pops into view
-before its creation plays — a `Succession(Wait, <non-introducer>)` exposes the mobject in the play's
-`AnimationGroup` (each group's `mobject` is the `Group` of its *non-introducer* children). This
-happens when the object **or any ancestor group** is animated by a non-introducer (fade-out, move,
-…) — a group's own animation pulls its whole `VGroup` (including a not-yet-created child) into the
-play (`_exposed_early` walks the `parent_id` chain). Fix: `save_state()` +
-`set_opacity(0)` those objects up front (after relationships), then wrap the creation track as
-`Succession(Restore(m, run_time=0.001), <introducer>)` so opacity is restored the instant the
-introducer draws it in (no flash, keeps the write/draw effect). `reveal_kf_id` records which keyframe
-to un-hide at. On a start-time tie the creation verb sorts first (a write + move starting at the same
-instant still introduce via the write); a reveal keyframe fused into a `MasIntro` stays in the normal
-merge flow (the fused unit carries its own leading `Restore`). Not needed in the sequential model
-(adds are per-play).
+## Fades & transforms (MasFade / MasApply) — why not FadeIn/FadeOut/.animate
 
-**Restore-target transforms (paired with the hide pass).** A move/scale/rotate uses `.animate`, whose
-auto-generated target is a `.copy()` of the mobject *at play-construction time* — when a hidden object
-still has `set_opacity(0)`. So a plain `m.animate.shift(v)` on a hidden object (or on a **group that
-contains one**, since `m_G.animate` copies its whole family) bakes opacity 0 into the target and fades
-the object out when the transform runs — the object *disappears*. Fix: those transforms emit an explicit
-`Transform(m, m.copy().restore()<chain>)` (`emit_transform_chain(..., restore_target=True)`) so the
-target is the object's *saved* (fully-visible) state with the same methods applied — behaviour-identical
-to `.animate` except the opacity is correct. `restore_ids` (hidden objects + all their ancestor groups,
-built next to `reveal_kf_id`) selects which transforms get this; a transformed ancestor **group** also
-needs its own `save_state()` emitted *before* its children are hidden, so `m_G.copy().restore()` recovers
-each child's real opacity. Threaded through `_merge_units` / `_kf_anim_r`. Empty in the sequential model.
+All object fades emit **`MasFade(m, alpha, shift=…)`** and all move/scale/rotate emit
+**`MasApply(m, lambda _m: _m.shift(…)…, opacity=…)`** (template helpers; MasFade is a MasApply
+wrapper). Two Manim behaviours forced this — regressions here reintroduce **"group fades out, objects
+instantly reappear at the end"** and **"a later transform resurrects a faded object"**:
+
+- **Removers are unsafe with groups.** `FadeOut`'s clean-up calls `scene.remove(m)` *and then resets
+  the mobject to full visibility* (`self.interpolate(0)`). On Cairo, `Scene.remove` does **not**
+  extract the removed mobject's own family from *other* scene containers — and every play wraps its
+  animated mobjects in helper `Group`s (each `Succession`/`AnimationGroup` has a `.group`), so any
+  group child with its own keyframe stays reachable through one of those and pops back fully visible
+  when the play ends. MasFade never touches scene membership: it drives each family member's opacity
+  toward `alpha` × its **authored** value and leaves the (invisible) mobject in place — which is also
+  what lets a later fade_in bring it back.
+- **Pre-built targets snapshot stale state.** `.animate` (and any `Transform(m, m.copy()…)` target
+  built before the play) copies the mobject at construction time — the timeline model plays the whole
+  scene in *one* `self.play`, so such a target resurrects everything an earlier fade did (and bakes
+  opacity 0 into transforms of hidden objects). MasApply builds its target at `begin()` from the
+  *current* state, so every unit composes with whatever already played.
+- **Authored opacity**: MasFade/MasApply read per-member target opacities from `saved_state` when
+  present, else the member at construction time. `build_body` emits `save_state()` for every object a
+  fade touches (and every hidden object) as a setup statement — required in the sequential model,
+  where a play's animations are constructed mid-scene (after an earlier fade_out already zeroed the
+  live opacity). A partial fill (`fill_opacity: 0.5`) round-trips through fade-out/fade-in intact.
+- **Cross-family overlap**: a *pure* fade interpolates **style only** and a *pure* transform
+  interpolates **geometry only** (`interpolate_submobject`), so a fade on a group overlapping a
+  transform on its child (or vice versa) composes instead of the two animations clobbering the shared
+  member each frame. A fused fade+transform (or a shifted fade) owns its object and interpolates both.
+
+**Hide-until-creation (`build_body` step 2b).** Objects that must start at `set_opacity(0)`:
+
+- **Introduced by fade_in** (both models): the fade_in is the object's first keyframe (tie → creation
+  verbs first) — a MasFade on an already-visible object is a no-op, and the play's wrapper `Group`
+  exposes the mobject from t=0 (MasFade is not a Manim introducer). Exceptions: an **ancestor group's
+  earlier fade_out** implies the family started visible (`_ancestor_fadeout_before`, also excludes the
+  object from `created_ids` so the pre-add works), and Transform/morph **targets** are never hidden
+  (the transform interpolates toward them). No reveal wrapper needed — the fade_in *is* the reveal.
+- **Introduced by a *delayed* drawing verb** (Write/Create/…, timeline model only) that is otherwise
+  exposed at t=0: any non-drawing keyframe on the object **or any ancestor group** pulls the mobject
+  into the play's wrapper `Group` when the play starts (`_exposed_early` walks the `parent_id` chain),
+  flashing it before its creation plays. The creation track is wrapped as
+  `Succession(MasFade(m, 1.0, run_time=0.001), <introducer>)` — an opacity-only reveal (geometry stays
+  wherever earlier hidden transforms put it) the instant the introducer starts. `reveal_kf_id` records
+  which keyframe reveals; on a start-time tie the creation verb sorts first. Not needed in the
+  sequential model (adds are per-play).
+
+Hidden objects need no special transform handling: a MasApply target built at `begin()` simply carries
+the current 0 opacity, so a pre-creation move keeps the object hidden (the old `.animate`
+restore-target machinery is gone).
 
 ## Camera (Phase 5)
 
@@ -180,10 +218,14 @@ change** — it's all in the free-form `params` dict.
   only adds props (props are a free-form dict).
 - New **animation verb**: add to `AnimationVerb` (both `ir.py` and `ir.ts`), handle it in
   `emit_animation` (object verbs) or `_camera_anim`/`_kf_anim` (camera verbs), and add to
-  `CREATION_VERBS` if it introduces the object to the scene. A new `.animate`-based transform verb
-  (like move/scale/rotate) should also be added to `_XFORM_ANIM` + `emit_transform_chain` (and folded
-  in `emit_intro_transform`/`MasIntro` if it can overlap a creation) so it fuses when simultaneous;
-  a new *drawing* introducer verb belongs in `INTRO_VERBS` + `_SIMPLE` so it fuses with overlapping
-  transforms, and interacts with the hide-until-creation pass above.
+  `CREATION_VERBS` if it introduces the object to the scene. A new transform verb (like
+  move/scale/rotate) should also be added to `_XFORM_ANIM` + `transform_chain_suffix` (and folded
+  in `emit_intro_transform`/`MasIntro` if it can overlap a creation) so it fuses when simultaneous
+  and emits through `MasApply`; a new *drawing* introducer verb belongs in `INTRO_VERBS` + `_SIMPLE`
+  so it fuses with overlapping transforms, and interacts with the hide-until-creation pass above.
+- **Regression harness**: `backend/tests/stress_groups.py` (run with the venv python, no pytest
+  needed) builds IR scenes for ~23 group/fade scenarios, executes the generated scripts in-process
+  frame-by-frame, and asserts per-object visibility over time + final-frame pixels. Run it after any
+  change to fade/transform emission, the hide pass, or the template helpers.
 - A verb that can't emit (e.g. a transform with a missing target, or a camera move with no
   resolvable pan/focus) returns `None`; the scene builder drops it. Preserve that contract.

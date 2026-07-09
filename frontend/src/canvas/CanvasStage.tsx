@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { Stage, Layer, Rect, Arrow, Circle, Group } from 'react-konva';
+import { Stage, Layer, Rect, Arrow, Circle, Group, Line } from 'react-konva';
 import type Konva from 'konva';
 import { useProjectStore } from '../store/projectStore';
 import { useCanvasStore } from '../store/canvasStore';
@@ -10,11 +10,25 @@ import { LatexOverlay } from './LatexOverlay';
 import { SceneNodes } from './SceneNodes';
 import { effectivePosition, transformAfter, type Ghost } from './motion';
 import {
-  PX_PER_UNIT, FRAME_WIDTH, FRAME_HEIGHT,
+  PX_PER_UNIT, FRAME_WIDTH, FRAME_HEIGHT, SNAP_PX,
   MIN_SCALE, MAX_SCALE, manimX, manimY, worldX, worldY, type View,
 } from './coords';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+// Polyline (world px) tracing the arc the object's center sweeps while rotating
+// `deg` (Manim CCW degrees) about the fixed pivot `a`, starting at `from`.
+function arcPoints(a: Point2D, from: Point2D, deg: number): number[] {
+  const n = Math.min(64, Math.max(8, Math.ceil(Math.abs(deg) / 5)));
+  const rx = from.x - a.x, ry = from.y - a.y;
+  const pts: number[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = ((deg * Math.PI) / 180) * (i / n);
+    const c = Math.cos(t), s = Math.sin(t);
+    pts.push(worldX(a.x + rx * c - ry * s), worldY(a.y + rx * s + ry * c));
+  }
+  return pts;
+}
 
 export function CanvasStage() {
   const project = useProjectStore(s => s.project);
@@ -41,6 +55,8 @@ export function CanvasStage() {
   // else (Konva shapes + overlay equations) follows by (dx, dy) until release.
   const [groupDrag, setGroupDrag] = useState<{ anchorId: string; dx: number; dy: number } | null>(null);
   const [handleDrag, setHandleDrag] = useState<{ id: string; pos: Point2D } | null>(null);
+  // Live pivot while dragging a rotate keyframe's ⊕ anchor handle (committed on release).
+  const [anchorDrag, setAnchorDrag] = useState<{ id: string; pos: Point2D } | null>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
 
   // Hold Space (with a single object selected) to peek at every transform ghost
@@ -137,17 +153,28 @@ export function CanvasStage() {
         ? scene.timeline.keyframes.filter(k => k.object_id === selectedIds[0] && isXform(k.verb))
         : scene.timeline.keyframes.filter(k => selectedKfIds.includes(k.id) && isXform(k.verb)))
     : [];
-  // A lone selected move keyframe is draggable; everything else is read-only.
+  // A lone selected move keyframe is draggable; a lone selected rotate keyframe
+  // gets a draggable pivot (⊕) handle; everything else is read-only.
   const dragKf = (!spacePreview && previewKfs.length === 1 && previewKfs[0].verb === 'move') ? previewKfs[0] : null;
+  const anchorKf = (!spacePreview && previewKfs.length === 1 && previewKfs[0].verb === 'rotate') ? previewKfs[0] : null;
 
   const previewItems = scene ? previewKfs.flatMap(kf => {
     const obj = objects.find(o => o.id === kf.object_id);
     if (!obj) return [];
-    const { before, after } = transformAfter(scene, kf);
+    // While the pivot handle is dragged, recompute the ghost against the live
+    // pivot so the preview stays accurate mid-drag.
+    const liveAnchor = kf.verb === 'rotate' && anchorDrag?.id === kf.id ? anchorDrag.pos : null;
+    const kfEff = liveAnchor ? { ...kf, params: { ...kf.params, about_point: liveAnchor } } : kf;
+    const { before, after } = transformAfter(scene, kfEff);
     const live = dragKf?.id === kf.id && handleDrag?.id === kf.id ? handleDrag.pos : null;
     const dest = kf.verb === 'move' ? (live ?? after.pos) : after.pos;
     const ghost: Ghost = { key: kf.id, obj: { ...obj, position: dest }, scale: after.scale, rotationDeg: after.rotationDeg };
-    return [{ kf, ghost, from: before.pos, to: dest, isMove: kf.verb === 'move' }];
+    const p = kf.params as { about_point?: Point2D; angle_degrees?: number };
+    const anchor: Point2D | null = kf.verb === 'rotate' ? (liveAnchor ?? p.about_point ?? null) : null;
+    return [{
+      kf, ghost, from: before.pos, to: dest, isMove: kf.verb === 'move',
+      anchor, angleDeg: kf.verb === 'rotate' ? Number(p.angle_degrees ?? 90) : 0,
+    }];
   }) : [];
 
   const ghostLatex = previewItems.filter(it => isLatexLike(it.ghost.obj)).map(it => it.ghost);
@@ -156,6 +183,37 @@ export function CanvasStage() {
   // Ghosted objects shouldn't be draggable themselves while previewing.
   const previewFrozenIds = [...new Set(previewItems.map(it => it.kf.object_id))];
   const dragItem = dragKf ? previewItems.find(it => it.kf.id === dragKf.id) : undefined;
+
+  // Anchored-rotate previews: pivot marker + the arc the center sweeps.
+  const rotatePreviews = previewItems.filter(it => it.anchor);
+  const anchorItem = anchorKf ? previewItems.find(it => it.kf.id === anchorKf.id) : undefined;
+  // The ⊕ handle sits at the live drag pos, else the stored pivot, else the
+  // object's center as of the keyframe (= "rotate about center").
+  const anchorPos: Point2D | null = anchorItem
+    ? (anchorDrag?.id === anchorItem.kf.id ? anchorDrag.pos
+      : ((anchorItem.kf.params as { about_point?: Point2D }).about_point ?? anchorItem.from))
+    : null;
+
+  // Snap the pivot back onto the object's center within SNAP_PX, so "rotate
+  // about center" is easy to return to (committing there clears the param).
+  const snapAnchor = (pos: Point2D): Point2D => {
+    if (!anchorItem) return pos;
+    const t = SNAP_PX / (view.scale * PX_PER_UNIT);
+    const c = anchorItem.from;
+    return Math.hypot(pos.x - c.x, pos.y - c.y) <= t ? { x: c.x, y: c.y } : pos;
+  };
+
+  const commitRotateAnchor = (posRaw: Point2D) => {
+    if (!anchorKf || !scene) return;
+    const pos = snapAnchor(posRaw);
+    const center = transformAfter(scene, anchorKf).before.pos;
+    const p = anchorKf.params as Record<string, unknown>;
+    if (Math.hypot(pos.x - center.x, pos.y - center.y) < 1e-9) {
+      updateKeyframe(anchorKf.id, { params: { ...p, about_point: undefined } });
+    } else {
+      updateKeyframe(anchorKf.id, { params: { ...p, about_point: { x: round2(pos.x), y: round2(pos.y) } } });
+    }
+  };
 
   const commitMoveDestination = (x: number, y: number) => {
     if (!dragKf || !scene) return;
@@ -396,6 +454,23 @@ export function CanvasStage() {
               pointerLength={11} pointerWidth={10} listening={false} opacity={0.9}
             />
           ))}
+          {rotatePreviews.map(r => (
+            // Pivot guides for an anchored rotate: radius lines to the start and
+            // end centers, the swept arc, and (when not the draggable ⊕ handle,
+            // which lives in the HTML overlay) a small pivot marker.
+            <Group key={`rot-${r.kf.id}`} listening={false}>
+              <Line points={[worldX(r.anchor!.x), worldY(r.anchor!.y), worldX(r.from.x), worldY(r.from.y)]}
+                stroke="#a855f7" strokeWidth={1.5} dash={[4, 4]} opacity={0.65} />
+              <Line points={[worldX(r.anchor!.x), worldY(r.anchor!.y), worldX(r.to.x), worldY(r.to.y)]}
+                stroke="#a855f7" strokeWidth={1.5} dash={[4, 4]} opacity={0.65} />
+              <Line points={arcPoints(r.anchor!, r.from, r.angleDeg)}
+                stroke="#a855f7" strokeWidth={2} dash={[7, 5]} opacity={0.9} />
+              {r.kf.id !== anchorKf?.id && (
+                <Circle x={worldX(r.anchor!.x)} y={worldY(r.anchor!.y)}
+                  radius={5 / view.scale} stroke="#a855f7" strokeWidth={1.5 / view.scale} />
+              )}
+            </Group>
+          ))}
         </Layer>
         {ghostShapes.length > 0 && (
           <Layer listening={false} opacity={0.42}>
@@ -454,6 +529,11 @@ export function CanvasStage() {
           pos: dragItem.to,
           onDragMove: pos => setHandleDrag({ id: dragItem.kf.id, pos }),
           onCommit: pos => { commitMoveDestination(pos.x, pos.y); setHandleDrag(null); },
+        } : null}
+        anchorHandle={anchorKf && anchorPos ? {
+          pos: anchorPos,
+          onDragMove: pos => setAnchorDrag({ id: anchorKf.id, pos: snapAnchor(pos) }),
+          onCommit: pos => { commitRotateAnchor(pos); setAnchorDrag(null); },
         } : null}
       />
 
