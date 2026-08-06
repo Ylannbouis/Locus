@@ -36,21 +36,47 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 1. Python >= 3.10
+# 1. Python 3.11–3.13
+#   Upper bound matters: the pinned deps in backend/requirements.txt ship no
+#   wheels past cp313 (pydantic 2.9.0 / pydantic-core 2.23.x), so on a newer
+#   interpreter pip falls back to compiling Rust from source and dies. Prefer
+#   the newest supported minor; only use a bare `python3` if it lands in range.
 # ---------------------------------------------------------------------------
 step "Checking Python"
-PY_BIN="$(command -v python3 || true)"
+PY_MIN_MINOR=11
+PY_MAX_MINOR=13
+
+# Minor version of a python binary, or empty if it isn't a usable python 3.
+py_minor() { "$1" -c 'import sys; print(sys.version_info[1] if sys.version_info[0] == 3 else "")' 2>/dev/null; }
+
+PY_BIN=""
+for cand in python3.13 python3.12 python3.11; do
+    p="$(command -v "$cand" 2>/dev/null || true)"
+    for prefix in /opt/homebrew/bin /usr/local/bin; do
+        [[ -z "$p" && -x "$prefix/$cand" ]] && p="$prefix/$cand"
+    done
+    if [[ -n "$p" ]]; then PY_BIN="$p"; break; fi
+done
+
 if [[ -z "$PY_BIN" ]]; then
-    fail "python3 not found. Install it:  brew install python@3.12"
-    exit 1
+    # No versioned binary found — accept the default python3 only if in range.
+    p="$(command -v python3 2>/dev/null || true)"
+    if [[ -z "$p" ]]; then
+        fail "python3 not found. Install it:  brew install python@3.12"
+        exit 1
+    fi
+    m="$(py_minor "$p")"
+    if [[ -z "$m" ]] || (( m < PY_MIN_MINOR || m > PY_MAX_MINOR )); then
+        fail "Need Python 3.$PY_MIN_MINOR–3.$PY_MAX_MINOR; the only one found is $("$p" --version 2>&1)."
+        warn "This project's pinned dependencies have no wheels outside that range."
+        warn "Install a supported one:  brew install python@3.12"
+        exit 1
+    fi
+    PY_BIN="$p"
 fi
+
 PY_VER="$("$PY_BIN" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])')"
-PY_OK="$("$PY_BIN" -c 'import sys; print(1 if sys.version_info[:2] >= (3, 10) else 0)')"
-if [[ "$PY_OK" != "1" ]]; then
-    fail "Python 3.10+ required, found $PY_VER.  brew install python@3.12"
-    exit 1
-fi
-ok "Python $PY_VER"
+ok "Python $PY_VER ($PY_BIN)"
 
 # ---------------------------------------------------------------------------
 # 2. Node.js >= 18
@@ -106,6 +132,39 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 3b. cairo + pkg-config — build deps for pycairo, a hard Manim dependency.
+#     pycairo publishes *Windows-only* wheels, so on macOS pip always compiles
+#     it from source; that build shells out to pkg-config to locate cairo, and
+#     without both it fails with "Dependency lookup for cairo ... failed".
+#     (ManimPango does ship macOS wheels, so pango is not needed here.)
+# ---------------------------------------------------------------------------
+step "Checking cairo + pkg-config (needed to build pycairo)"
+NEED_BUILD_DEPS=()
+command -v pkg-config >/dev/null 2>&1 || NEED_BUILD_DEPS+=(pkg-config)
+if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists cairo 2>/dev/null; then
+    :
+else
+    NEED_BUILD_DEPS+=(cairo)
+fi
+
+if (( ${#NEED_BUILD_DEPS[@]} == 0 )); then
+    ok "cairo and pkg-config present"
+elif (( HAS_BREW )); then
+    warn "Missing: ${NEED_BUILD_DEPS[*]} — installing via Homebrew..."
+    if brew install "${NEED_BUILD_DEPS[@]}"; then
+        ok "Installed ${NEED_BUILD_DEPS[*]}"
+    else
+        fail "Could not install ${NEED_BUILD_DEPS[*]}; pycairo will fail to build."
+        warn "Install manually:  brew install ${NEED_BUILD_DEPS[*]}"
+        exit 1
+    fi
+else
+    fail "Missing ${NEED_BUILD_DEPS[*]} and Homebrew is unavailable."
+    warn "pycairo cannot build without them. Install:  brew install ${NEED_BUILD_DEPS[*]}"
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # 4. LaTeX (MacTeX). Manim shells out to latex/dvisvgm to typeset equations.
 #    mactex-no-gui is large (~4GB) but is the reliable, complete option; the
 #    lighter BasicTeX works too but then needs `tlmgr install` for several
@@ -135,26 +194,58 @@ fi
 # ---------------------------------------------------------------------------
 step "Setting up Python virtual environment"
 VENV_PATH="$PROJECT_ROOT/backend/.venv"
-if [[ ! -d "$VENV_PATH" ]]; then
-    "$PY_BIN" -m venv "$VENV_PATH"
-    ok "Created venv at $VENV_PATH"
-else
-    ok "venv already exists"
-fi
-
 VENV_PY="$VENV_PATH/bin/python"
 
+# An existing venv built on an out-of-range interpreter can never install the
+# pinned deps, so replace it rather than reporting "already exists" and then
+# failing obscurely downstream.
+if [[ -d "$VENV_PATH" ]]; then
+    existing_minor="$(py_minor "$VENV_PY")"
+    if [[ -z "$existing_minor" ]]; then
+        warn "Existing venv at $VENV_PATH is broken — recreating it."
+        rm -rf "$VENV_PATH"
+    elif (( existing_minor < PY_MIN_MINOR || existing_minor > PY_MAX_MINOR )); then
+        warn "Existing venv uses Python 3.$existing_minor (outside 3.$PY_MIN_MINOR–3.$PY_MAX_MINOR) — recreating it on $PY_VER."
+        rm -rf "$VENV_PATH"
+    fi
+fi
+
+if [[ ! -d "$VENV_PATH" ]]; then
+    if ! "$PY_BIN" -m venv "$VENV_PATH"; then
+        fail "Could not create the venv at $VENV_PATH"
+        exit 1
+    fi
+    ok "Created venv at $VENV_PATH (Python $PY_VER)"
+else
+    ok "venv already exists (Python 3.$existing_minor)"
+fi
+
+# pip failures must be fatal and visible: a silent one here is what produces a
+# baffling "No module named manim" at the verification step below.
+pip_install() {
+    local label="$1"; shift
+    local out
+    if ! out="$("$VENV_PY" -m pip install --quiet "$@" 2>&1)"; then
+        fail "pip install failed: $label"
+        printf '%s\n' "$out"
+        exit 1
+    fi
+}
+
 step "Installing Python dependencies (this may take a few minutes)"
-"$VENV_PY" -m pip install --upgrade pip --quiet
-"$VENV_PY" -m pip install manim --quiet
-"$VENV_PY" -m pip install -r "$PROJECT_ROOT/backend/requirements.txt" --quiet
+pip_install "pip upgrade" --upgrade pip
+pip_install "manim" manim
+pip_install "backend requirements" -r "$PROJECT_ROOT/backend/requirements.txt"
 ok "Python packages installed"
 
 step "Verifying Manim"
-if MANIM_VER="$("$VENV_PY" -m manim --version 2>&1 | head -n1)"; then
-    ok "Manim: $MANIM_VER"
+# Capture first, then test: piping straight into `head` would report head's
+# exit status (and can SIGPIPE), masking a genuine Manim import failure.
+if MANIM_OUT="$("$VENV_PY" -m manim --version 2>&1)"; then
+    ok "Manim: $(printf '%s\n' "$MANIM_OUT" | grep -m1 . || printf 'installed')"
 else
-    fail "Manim verification failed: $MANIM_VER"
+    fail "Manim verification failed:"
+    printf '%s\n' "$MANIM_OUT"
     exit 1
 fi
 

@@ -15,15 +15,24 @@ function Write-Warn([string]$msg) { Write-Host "  [!!] $msg" -ForegroundColor Ye
 function Write-Fail([string]$msg) { Write-Host "  [FAIL] $msg" -ForegroundColor Red }
 
 # ---------------------------------------------------------------------------
-# 1. Python >= 3.10
+# 1. Python 3.11-3.13
+#   The upper bound is real: the pinned deps in backend\requirements.txt ship
+#   no wheels past cp313 (pydantic 2.9.0 / pydantic-core 2.23.x), so a newer
+#   interpreter sends pip into a from-source Rust build that fails.
 # ---------------------------------------------------------------------------
+$PyMinMinor = 11
+$PyMaxMinor = 13
+
 Write-Step "Checking Python"
 try {
     $pyVer = & python --version 2>&1
     $parts = ($pyVer -replace "Python ","").Split(".")
-    if ([int]$parts[0] -lt 3 -or ([int]$parts[0] -eq 3 -and [int]$parts[1] -lt 10)) {
-        Write-Fail "Python 3.10+ required, found: $pyVer"
-        Write-Host "  Install from https://www.python.org/downloads/ or run:"
+    $major = [int]$parts[0]
+    $minor = [int]$parts[1]
+    if ($major -ne 3 -or $minor -lt $PyMinMinor -or $minor -gt $PyMaxMinor) {
+        Write-Fail "Python 3.$PyMinMinor-3.$PyMaxMinor required, found: $pyVer"
+        Write-Warn "This project's pinned dependencies have no wheels outside that range."
+        Write-Host "  Install a supported one from https://www.python.org/downloads/ or run:"
         Write-Host "  winget install Python.Python.3.12"
         exit 1
     }
@@ -145,30 +154,63 @@ if (-not $pdflatexPath) {
 # ---------------------------------------------------------------------------
 Write-Step "Setting up Python virtual environment"
 $venvPath = Join-Path $ProjectRoot "backend\.venv"
+$python = Join-Path $venvPath "Scripts\python.exe"
+$pip = Join-Path $venvPath "Scripts\pip.exe"
+
+# An existing venv built on an out-of-range interpreter can never install the
+# pinned deps, so replace it instead of reporting "already exists" and then
+# failing obscurely further down.
+if (Test-Path $venvPath) {
+    $venvMinor = -1
+    if (Test-Path $python) {
+        $probe = & $python -c "import sys; print(sys.version_info[1] if sys.version_info[0] == 3 else -1)" 2>&1
+        if ($LASTEXITCODE -eq 0) { $venvMinor = [int]$probe }
+    }
+    if ($venvMinor -lt $PyMinMinor -or $venvMinor -gt $PyMaxMinor) {
+        Write-Warn "Existing venv is broken or uses an unsupported Python - recreating it."
+        Remove-Item -Recurse -Force $venvPath
+    }
+}
+
 if (-not (Test-Path $venvPath)) {
     & python -m venv $venvPath
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "Could not create the venv at $venvPath"
+        exit 1
+    }
     Write-OK "Created venv at $venvPath"
 } else {
     Write-OK "venv already exists"
 }
 
-$pip = Join-Path $venvPath "Scripts\pip.exe"
-$python = Join-Path $venvPath "Scripts\python.exe"
-
 Write-Step "Installing Python dependencies (this may take a few minutes)"
-& $pip install --upgrade pip --quiet
-& $pip install manim --quiet
-& $pip install -r (Join-Path $ProjectRoot "backend\requirements.txt") --quiet
+# pip failures must be fatal and visible: a silent one here is what produces a
+# baffling "No module named manim" at the verification step below.
+$pipSteps = @(
+    @{ Label = "pip upgrade";          Args = @("install", "--upgrade", "pip") },
+    @{ Label = "manim";                Args = @("install", "manim") },
+    @{ Label = "backend requirements"; Args = @("install", "-r", (Join-Path $ProjectRoot "backend\requirements.txt")) }
+)
+foreach ($s in $pipSteps) {
+    $pipOut = & $pip @($s.Args) --quiet 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "pip install failed: $($s.Label)"
+        Write-Host $pipOut
+        exit 1
+    }
+}
 Write-OK "Python packages installed"
 
 Write-Step "Verifying Manim"
-try {
-    $manimVer = & (Join-Path $venvPath "Scripts\manim.exe") --version 2>&1
-    Write-OK "Manim: $manimVer"
-} catch {
-    Write-Fail "Manim verification failed: $_"
+# Invoke via `python -m manim` (not manim.exe) to match how the backend runs it,
+# and check the exit code - try/catch alone does not trip on a nonzero exit.
+$manimVer = & $python -m manim --version 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Fail "Manim verification failed:"
+    Write-Host $manimVer
     exit 1
 }
+Write-OK "Manim: $($manimVer | Select-Object -First 1)"
 
 # ---------------------------------------------------------------------------
 # 6. Frontend npm dependencies

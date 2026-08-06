@@ -42,9 +42,12 @@ codegen between them. When you change one, change the other.
   its own window, then opens http://localhost:5173.
 
 **macOS (and Linux):**
-- `bash scripts/setup.sh` — same bootstrap via Homebrew (ffmpeg + MacTeX). Creates the venv at
+- `bash scripts/setup.sh` — same bootstrap via Homebrew (ffmpeg + MacTeX, plus `cairo`/`pkg-config`,
+  which macOS needs because pycairo ships Windows-only wheels and must compile). Creates the venv at
   `backend/.venv/` — note the interpreter is `backend/.venv/bin/python` here, **not**
-  `Scripts\python.exe`.
+  `Scripts\python.exe`. Requires Python **3.11–3.13**: the pinned `pydantic==2.9.0` has no
+  `pydantic-core` wheels past cp313, so 3.14 fails to install. The script probes for a supported
+  interpreter rather than trusting bare `python3`, and recreates an out-of-range venv.
 - `bash scripts/start.sh` — runs both dev servers as background jobs of one shell; a
   `trap … kill 0` on Ctrl+C/exit tears down the whole process group (the Unix stand-in for the
   Windows Job Object — see the platform note below), then opens http://localhost:5173.
