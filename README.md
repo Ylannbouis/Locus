@@ -44,6 +44,21 @@ bash scripts/start.sh    # launches both dev servers; Ctrl+C stops both
 
 Then open **http://localhost:5173** in your browser.
 
+## Project kinds: animation or slideshow
+
+When you create a project you pick how its scenes are meant to be watched:
+
+- **🎬 Animation** — the scenes form one continuous video. Exporting "all scenes" stitches
+  them together (optionally with a crossfade).
+- **🖥 Slideshow** — each scene is a **slide**. It plays, freezes on its last frame, and the
+  next one starts when you click. Slides are never stitched. Exporting gives you a
+  self-contained HTML deck (`index.html` + one mp4 per slide, zipped) that runs from a local
+  file with no server, and **▶ Present** plays the deck straight from the editor. Keys in both
+  players: `Space`/`→` next, `←` back, `R` replay the slide, `F` fullscreen. A slide can be set
+  to **auto-advance** (⏩ on its tab) to roll into the next one without a click.
+
+Everything else — objects, timeline, camera, voiceover — works the same in both kinds.
+
 ## Project Structure
 
 ```

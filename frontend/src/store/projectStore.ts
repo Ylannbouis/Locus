@@ -33,6 +33,7 @@ interface ProjectState {
   renameScene: (id: string, name: string) => void;
   moveScene: (id: string, dir: -1 | 1) => void;
   reorderScene: (id: string, toIndex: number) => void;
+  setSceneAutoAdvance: (id: string, on: boolean) => void;
 
   // Selection
   selectObject: (id: string | null) => void;
@@ -131,12 +132,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   addScene: () => {
     const id = newId('scene');
     _mutate(set, get, draft => {
+      const unit = draft.kind === 'slideshow' ? 'Slide' : 'Scene';
       draft.scenes.push({
-        id, name: `Scene ${draft.scenes.length + 1}`, background_color: null,
+        id, name: `${unit} ${draft.scenes.length + 1}`, background_color: null,
         objects: [], relationships: [], timeline: { keyframes: [], groups: [] },
         audio: [],
         camera_track: { initial_pan: { x: 0, y: 0 }, initial_zoom: 1 },
         transition_in: null, transition_out: null,
+        auto_advance: false,
       });
     });
     useTimelineStore.getState().clearKf();
@@ -189,6 +192,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         camera_track: cameraTrack,
         transition_in: src.transition_in ? { ...src.transition_in } : null,
         transition_out: src.transition_out ? { ...src.transition_out } : null,
+        auto_advance: src.auto_advance ?? false,
       });
     });
     useTimelineStore.getState().clearKf();
@@ -206,6 +210,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     if (idx < 0 || j < 0 || j >= draft.scenes.length) return;
     const [s] = draft.scenes.splice(idx, 1);
     draft.scenes.splice(j, 0, s);
+  }),
+
+  // Slideshow projects only: skip the click and roll straight into the next slide.
+  setSceneAutoAdvance: (id, on) => _mutate(set, get, draft => {
+    const s = draft.scenes.find(sc => sc.id === id);
+    if (s) s.auto_advance = on;
   }),
 
   reorderScene: (id, toIndex) => _mutate(set, get, draft => {

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import { useRenderStore } from '../store/renderStore';
 import { CodeView } from './CodeView';
+import { Presenter } from './Presenter';
 import type { RenderFormat, ResolutionPreset } from '../types/ir';
 
 const FORMATS: { value: RenderFormat; label: string }[] = [
@@ -11,8 +12,12 @@ const FORMATS: { value: RenderFormat; label: string }[] = [
   { value: 'still', label: 'Still frame (PNG)' },
 ];
 
+// Slideshow projects lead with the deck export; the per-slide formats still work.
+const SLIDESHOW_FORMAT: { value: RenderFormat; label: string } =
+  { value: 'slideshow', label: 'Slideshow (HTML deck)' };
+
 const RESOLUTIONS: ResolutionPreset[] = ['480p', '720p', '1080p', '4k'];
-const EXT: Record<RenderFormat, string> = { mp4: 'mp4', gif: 'gif', png: 'zip', still: 'png' };
+const EXT: Record<RenderFormat, string> = { mp4: 'mp4', gif: 'gif', png: 'zip', still: 'png', slideshow: 'zip' };
 
 export function RenderPanel() {
   const project = useProjectStore(s => s.project);
@@ -21,20 +26,27 @@ export function RenderPanel() {
   const save = useProjectStore(s => s.save);
   const { job, videoUrl, isRendering, triggerRender, reset } = useRenderStore();
 
-  const [format, setFormat] = useState<RenderFormat>('mp4');
+  const isSlideshow = project?.kind === 'slideshow';
+  const [format, setFormat] = useState<RenderFormat>(isSlideshow ? 'slideshow' : 'mp4');
   const [resolution, setResolution] = useState<ResolutionPreset>(project?.settings.default_resolution ?? '1080p');
   const [fps, setFps] = useState<number>(project?.settings.default_fps ?? 30);
   const [scope, setScope] = useState<'scene' | 'all'>('scene');
   const [transparent, setTransparent] = useState(false);
   const [crossfade, setCrossfade] = useState(true);
   const [showCode, setShowCode] = useState(false);
+  const [presenting, setPresenting] = useState(false);
 
   if (!project) return null;
 
+  const formats = isSlideshow ? [SLIDESHOW_FORMAT, ...FORMATS] : FORMATS;
+  const deckExport = format === 'slideshow';
   const multiScene = project.scenes.length > 1;
-  const canStitch = format === 'mp4';
-  const renderAll = multiScene && canStitch && scope === 'all';
-  const allowTransparent = format !== 'mp4';
+  // Slideshow projects never stitch — their slides stay separate by design.
+  const canStitch = format === 'mp4' && !isSlideshow;
+  const renderAll = deckExport || (multiScene && canStitch && scope === 'all');
+  const allowTransparent = format !== 'mp4' && !deckExport;
+  const unit = isSlideshow ? 'slide' : 'scene';
+  const canPresent = job?.status === 'done' && job.format === 'slideshow';
 
   const run = async () => {
     if (resolution !== '480p' &&
@@ -48,10 +60,12 @@ export function RenderPanel() {
     });
   };
 
-  // Quick 480p MP4 preview, ignoring the format/resolution selectors.
+  // Quick 480p MP4 preview, ignoring the format/resolution selectors. In a
+  // slideshow project this always previews the current slide on its own —
+  // stitching every slide into one video is exactly what the kind rules out.
   const runPreview = async () => {
     if (isDirty) await save();
-    await triggerRender(project.id, renderAll ? null : selectedSceneId, {
+    await triggerRender(project.id, renderAll && !isSlideshow ? null : selectedSceneId, {
       quality: 'preview', format: 'mp4', resolution: '480p', fps,
       transparent: false, transition: crossfade,
     });
@@ -67,12 +81,17 @@ export function RenderPanel() {
         <button className="btn btn--ghost" onClick={() => setShowCode(true)} title="View generated code / JSON">&lt;/&gt; Code</button>
       </div>
 
-      {multiScene && (
+      {deckExport ? (
+        <p className="render-panel__note">
+          Renders all {project.scenes.length} slides and packages them with a click-through
+          HTML player. Present it here, or download the zip to run it anywhere.
+        </p>
+      ) : multiScene && (
         <label className="field">
           <span className="field__label">Scope</span>
           <select className="field__input" value={canStitch ? scope : 'scene'} disabled={!canStitch}
             onChange={e => setScope(e.target.value as 'scene' | 'all')}>
-            <option value="scene">This scene</option>
+            <option value="scene">This {unit}</option>
             <option value="all">All scenes (stitched)</option>
           </select>
         </label>
@@ -82,7 +101,7 @@ export function RenderPanel() {
         <label className="field">
           <span className="field__label">Format</span>
           <select className="field__input" value={format} onChange={e => setFormat(e.target.value as RenderFormat)}>
-            {FORMATS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+            {formats.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
           </select>
         </label>
         <label className="field">
@@ -107,7 +126,7 @@ export function RenderPanel() {
         )}
       </div>
 
-      {renderAll && (
+      {renderAll && !deckExport && (
         <label className="field field--check">
           <input type="checkbox" checked={crossfade} onChange={e => setCrossfade(e.target.checked)} />
           <span className="field__label" style={{ margin: 0 }}>Crossfade between scenes</span>
@@ -115,11 +134,14 @@ export function RenderPanel() {
       )}
 
       <button className="btn btn--secondary render-panel__trigger" onClick={runPreview} disabled={isRendering}
-        title="Fast 480p MP4 preview">
+        title={`Fast 480p MP4 preview of this ${unit}`}>
         {isRendering ? 'Rendering…' : 'Render Preview (480p)'}
       </button>
       <button className="btn btn--primary render-panel__trigger" onClick={run} disabled={isRendering}>
-        {isRendering ? 'Rendering…' : renderAll ? 'Render all scenes' : 'Render scene'}
+        {isRendering ? 'Rendering…'
+          : deckExport ? 'Render slideshow'
+          : renderAll ? 'Render all scenes'
+          : `Render ${unit}`}
       </button>
 
       {job && (
@@ -138,6 +160,11 @@ export function RenderPanel() {
         <div className="render-panel__video">
           {doneFmt === 'mp4' && <video controls src={videoUrl} className="render-panel__player" />}
           {(doneFmt === 'gif' || doneFmt === 'still') && <img src={videoUrl} alt="render" className="render-panel__player" />}
+          {canPresent && (
+            <button className="btn btn--primary render-panel__trigger" onClick={() => setPresenting(true)}>
+              ▶ Present
+            </button>
+          )}
           <a href={videoUrl} download={downloadName} className="btn btn--secondary render-panel__download">
             Download {EXT[doneFmt].toUpperCase()}
           </a>
@@ -145,6 +172,7 @@ export function RenderPanel() {
         </div>
       )}
 
+      {presenting && job && <Presenter jobId={job.job_id} onClose={() => setPresenting(false)} />}
       {showCode && <CodeView onClose={() => setShowCode(false)} />}
     </div>
   );

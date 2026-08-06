@@ -18,6 +18,7 @@ from app.codegen.template import SCENE_CLASS_NAME
 from app.models.ir import RenderJob, Scene
 from app.render import queue as rq
 from app.render.audio import audible_clips, mux_scene_audio
+from app.render.slideshow import build_slideshow, zip_slideshow
 from app.render.stitch import concat_scenes, crossfade_scenes, zip_dir
 from app.storage.projects import assets_dir, load_project, renders_dir
 
@@ -61,6 +62,7 @@ def _find_output(media_dir: Path, fmt: str) -> Path | None:
             return None
         # The sequence lives in one folder; pick the folder with the most frames.
         return Counter(p.parent for p in pngs).most_common(1)[0][0]
+    # mp4 — also the "slideshow" case, whose slides are ordinary mp4 renders.
     c = [p for p in media_dir.rglob("*.mp4") if "partial_movie_files" not in p.parts]
     return max(c, key=_mtime) if c else None
 
@@ -132,22 +134,25 @@ async def _process(job: RenderJob) -> None:
         scenes = list(project.scenes)
 
     is_morph = job.mode == "morph" and bool(job.keyframe_id)
-    # Stitching only applies to multi-scene mp4 renders; other formats / morph
-    # render a single scene.
+    # A slideshow keeps its scenes as separate mp4s (one per slide) instead of
+    # stitching them; every other multi-scene mp4 render is stitched. Other
+    # formats / morph render a single scene.
+    is_slideshow = job.format == "slideshow" and not is_morph
     stitch = job.format == "mp4" and not is_morph and len(scenes) > 1
-    if (job.format != "mp4" or is_morph) and len(scenes) > 1:
+    if (job.format not in ("mp4", "slideshow") or is_morph) and len(scenes) > 1:
         scenes = scenes[:1]
 
     job_dir = renders_dir(job.project_id) / job.job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
     rq.update_job(job.job_id, progress=10, message="Launching Manim…")
-    ticker = asyncio.create_task(_progress_ticker(job.job_id, ceiling=85 if stitch else 90))
+    ticker = asyncio.create_task(_progress_ticker(job.job_id, ceiling=85 if stitch or is_slideshow else 90))
     try:
         outputs: list[Path] = []
+        unit = "slide" if is_slideshow else "scene"
         for i, scene in enumerate(scenes):
             if len(scenes) > 1:
-                rq.update_job(job.job_id, message=f"Rendering scene {i + 1}/{len(scenes)}…")
+                rq.update_job(job.job_id, message=f"Rendering {unit} {i + 1}/{len(scenes)}…")
             if is_morph:
                 script = generate_morph_preview_script(project, scene, job.keyframe_id)
             else:
@@ -172,10 +177,10 @@ async def _process(job: RenderJob) -> None:
     # Mix voiceover audio under each scene's mp4 (post-render, so codegen and
     # Manim never see it). When stitching, scenes *without* clips get a silent
     # track so every input has identical streams for concat.
-    if job.format == "mp4" and not is_morph:
+    if job.format in ("mp4", "slideshow") and not is_morph:
         assets = assets_dir(project.id)
         if any(audible_clips(s.audio, assets) for s in scenes):
-            rq.update_job(job.job_id, progress=88 if stitch else 91, message="Mixing audio…")
+            rq.update_job(job.job_id, progress=88 if stitch or is_slideshow else 91, message="Mixing audio…")
             try:
                 for i, scene in enumerate(scenes):
                     if not stitch and not audible_clips(scene.audio, assets):
@@ -189,7 +194,19 @@ async def _process(job: RenderJob) -> None:
 
     # Combine / package the per-scene outputs.
     try:
-        if stitch:
+        if is_slideshow:
+            rq.update_job(job.job_id, progress=92, message="Building slideshow…")
+            # The player folder stays on disk (the editor's Present mode streams
+            # the slides straight out of it); the zip is what gets downloaded.
+            deck_dir = job_dir / "slideshow"
+            await asyncio.to_thread(
+                build_slideshow, outputs, scenes, deck_dir,
+                project.metadata.get("name", "Slideshow"),
+            )
+            zip_path = job_dir / "slideshow.zip"
+            await asyncio.to_thread(zip_slideshow, deck_dir, zip_path)
+            output_path = zip_path
+        elif stitch:
             rq.update_job(job.job_id, progress=92, message="Stitching scenes…")
             final = job_dir / "project.mp4"
             if job.transition:

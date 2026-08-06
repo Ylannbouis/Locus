@@ -44,6 +44,11 @@ export type TransitionType = 'fade_to_black' | 'wipe_left' | 'wipe_right' | 'cro
 
 export type ResolutionPreset = '480p' | '720p' | '1080p' | '4k';
 
+// How a project's scenes are consumed. 'animation' = one continuous video
+// (scenes stitched on export); 'slideshow' = each scene is a slide that plays,
+// freezes on its last frame, and advances on a click.
+export type ProjectKind = 'animation' | 'slideshow';
+
 export interface Point2D {
   x: number;
   y: number;
@@ -164,6 +169,9 @@ export interface Scene {
   camera_track: CameraTrack;
   transition_in?: Transition | null;
   transition_out?: Transition | null;
+  // Slideshow projects only: play the next slide automatically instead of
+  // waiting for a click. Ignored by animation projects.
+  auto_advance?: boolean;
 }
 
 export interface ProjectSettings {
@@ -177,6 +185,7 @@ export interface ProjectSettings {
 export interface Project {
   version: string;
   id: string;
+  kind: ProjectKind;
   created_at: string;
   updated_at: string;
   metadata: Record<string, string>;
@@ -190,9 +199,26 @@ export interface ProjectSummary {
   name: string;
   updated_at: string;
   scene_count: number;
+  kind: ProjectKind;
 }
 
-export type RenderFormat = 'mp4' | 'gif' | 'png' | 'still';
+// 'slideshow' renders every scene to its own mp4 and packages them with an HTML
+// player into a zip; the unzipped player also stays on the server for Present mode.
+export type RenderFormat = 'mp4' | 'gif' | 'png' | 'still' | 'slideshow';
+
+export interface SlideInfo {
+  index: number;
+  name: string;
+  file: string;
+  duration: number;
+  auto_advance: boolean;
+  url: string; // API path serving this slide's mp4
+}
+
+export interface SlideManifest {
+  title: string;
+  slides: SlideInfo[];
+}
 
 export interface RenderRequest {
   project_id: string;

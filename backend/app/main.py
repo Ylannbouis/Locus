@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -9,16 +10,17 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import deps_check
 from app.codegen.scene import generate_scene_script
 from app.models.ir import (
-    MorphPreviewRequest, Project, ProjectSummary, RenderJob, RenderRequest, new_id,
+    MorphPreviewRequest, Project, ProjectKind, ProjectSummary, RenderJob, RenderRequest, new_id,
 )
 from app.render import queue as rq
+from app.render.slideshow import MANIFEST_NAME, SLIDES_SUBDIR, slide_filename
 from app.render.stitch import probe_duration
 from app.render.worker import run_worker
 from app.storage.projects import (
@@ -98,6 +100,7 @@ async def refresh_deps() -> dict[str, Any]:
 
 class CreateProjectBody(BaseModel):
     name: str = "Untitled Project"
+    kind: ProjectKind = ProjectKind.ANIMATION
 
 
 @app.get("/api/projects", response_model=list[ProjectSummary])
@@ -107,7 +110,7 @@ async def get_projects() -> list[ProjectSummary]:
 
 @app.post("/api/projects", response_model=Project)
 async def post_project(body: CreateProjectBody) -> Project:
-    return create_project(body.name)
+    return create_project(body.name, body.kind)
 
 
 @app.get("/api/projects/{project_id}", response_model=Project)
@@ -229,6 +232,86 @@ async def download_render(job_id: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="Output file missing")
     media_type = _MEDIA_TYPES.get(path.suffix.lower(), "application/octet-stream")
     return FileResponse(str(path), media_type=media_type, filename=path.name)
+
+
+# ---------------------------------------------------------------------------
+# Slideshow playback — a finished `slideshow` render leaves an unzipped player
+# folder in the job dir, so the editor's Present mode can stream the slides one
+# by one instead of downloading the zip.
+# ---------------------------------------------------------------------------
+
+def _deck_dir(job_id: str) -> Path:
+    job = rq.get_job(job_id)
+    if not job or job.status != "done" or not job.output_path or job.format != "slideshow":
+        raise HTTPException(status_code=404, detail="No finished slideshow for this job")
+    d = Path(job.output_path).parent / "slideshow"
+    if not d.is_dir():
+        raise HTTPException(status_code=404, detail="Slideshow files are missing")
+    return d
+
+
+@app.get("/api/render/{job_id}/slides")
+async def get_slide_manifest(job_id: str) -> dict[str, Any]:
+    manifest_file = _deck_dir(job_id) / MANIFEST_NAME
+    if not manifest_file.is_file():
+        raise HTTPException(status_code=404, detail="Slideshow manifest is missing")
+    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+    # Swap the archive-relative paths for URLs this server can serve.
+    for slide in manifest.get("slides", []):
+        slide["url"] = f"/api/render/{job_id}/slides/{slide['index']}"
+    return manifest
+
+
+_RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
+
+
+def _serve_range(path: Path, range_header: str | None, media_type: str) -> Response:
+    """Serve a file, honouring a single `Range: bytes=…` request.
+
+    Presenting seeks (stepping back lands on a slide's last frame), and a browser
+    will only seek a video the server can serve in pieces. This installed
+    Starlette (0.38) has no range support in FileResponse, so do it here.
+    """
+    size = path.stat().st_size
+    m = _RANGE_RE.match((range_header or "").strip()) if range_header else None
+    if not m:
+        return FileResponse(str(path), media_type=media_type, filename=path.name,
+                            headers={"Accept-Ranges": "bytes"})
+
+    first, last = m.group(1), m.group(2)
+    if first:
+        start = int(first)
+        end = min(int(last), size - 1) if last else size - 1
+    else:
+        # A suffix range ("bytes=-500") asks for the final N bytes.
+        start, end = max(0, size - int(last or 0)), size - 1
+    if start >= size or start > end:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+
+    def chunks(chunk_size: int = 64 * 1024):
+        remaining = end - start + 1
+        with path.open("rb") as fh:
+            fh.seek(start)
+            while remaining > 0:
+                data = fh.read(min(chunk_size, remaining))
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    return StreamingResponse(chunks(), status_code=206, media_type=media_type, headers={
+        "Content-Range": f"bytes {start}-{end}/{size}",
+        "Content-Length": str(end - start + 1),
+        "Accept-Ranges": "bytes",
+    })
+
+
+@app.get("/api/render/{job_id}/slides/{index}")
+async def get_slide_video(job_id: str, index: int, request: Request) -> Response:
+    path = _deck_dir(job_id) / SLIDES_SUBDIR / slide_filename(index + 1)
+    if index < 0 or not path.is_file():
+        raise HTTPException(status_code=404, detail="Slide not found")
+    return _serve_range(path, request.headers.get("range"), "video/mp4")
 
 
 # ---------------------------------------------------------------------------

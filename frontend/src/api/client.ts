@@ -1,5 +1,7 @@
 import axios from 'axios';
-import type { DepsResult, Project, ProjectSummary, RenderJob, RenderRequest } from '../types/ir';
+import type {
+  DepsResult, Project, ProjectKind, ProjectSummary, RenderJob, RenderRequest, SlideManifest,
+} from '../types/ir';
 
 // Vite dev proxy routes /api/* and /ws/* to http://localhost:8000
 const http = axios.create({ baseURL: '' });
@@ -8,8 +10,8 @@ const http = axios.create({ baseURL: '' });
 export const getProjects = (): Promise<ProjectSummary[]> =>
   http.get('/api/projects').then(r => r.data);
 
-export const createProject = (name: string): Promise<Project> =>
-  http.post('/api/projects', { name }).then(r => r.data);
+export const createProject = (name: string, kind: ProjectKind = 'animation'): Promise<Project> =>
+  http.post('/api/projects', { name, kind }).then(r => r.data);
 
 export const getProject = (id: string): Promise<Project> =>
   http.get(`/api/projects/${id}`).then(r => r.data);
@@ -71,6 +73,11 @@ export const getRenderStatus = (jobId: string): Promise<RenderJob> =>
 
 export const downloadUrl = (jobId: string): string =>
   `/api/render/${jobId}/download`;
+
+// Slideshow renders leave an unzipped player folder on the server; these stream
+// its slides for the in-app Present mode (the zip is the portable copy).
+export const getSlideManifest = (jobId: string): Promise<SlideManifest> =>
+  http.get(`/api/render/${jobId}/slides`).then(r => r.data);
 
 // WebSocket — connect to Vite proxy which forwards to backend
 export const wsRenderUrl = (jobId: string): string => {

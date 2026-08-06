@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.models.ir import Project, ProjectSummary, Scene
+from app.models.ir import Project, ProjectKind, ProjectSummary, Scene
 
 PROJECTS_ROOT = Path.home() / "MathAnimStudio" / "projects"
 
@@ -48,6 +48,8 @@ def list_projects() -> list[ProjectSummary]:
                 name=data.get("metadata", {}).get("name", "Untitled"),
                 updated_at=updated,
                 scene_count=len(data.get("scenes", [])),
+                # Projects saved before slideshows existed have no `kind`.
+                kind=data.get("kind") or ProjectKind.ANIMATION,
             ))
         except Exception:
             continue
@@ -55,13 +57,14 @@ def list_projects() -> list[ProjectSummary]:
     return summaries
 
 
-def create_project(name: str) -> Project:
+def create_project(name: str, kind: ProjectKind = ProjectKind.ANIMATION) -> Project:
     PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
     now = _now()
-    project = Project(created_at=now, updated_at=now)
+    project = Project(created_at=now, updated_at=now, kind=kind)
     project.metadata["name"] = name
-    # Start with one empty scene
-    project.scenes.append(Scene(name="Scene 1"))
+    # Start with one empty scene ("slide" in a slideshow project)
+    first = "Slide 1" if kind == ProjectKind.SLIDESHOW else "Scene 1"
+    project.scenes.append(Scene(name=first))
     _project_dir(project.id).mkdir(parents=True, exist_ok=True)
     _renders_dir(project.id)
     _project_file(project.id).write_text(

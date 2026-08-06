@@ -118,6 +118,18 @@ canvas — uploaded to the project's `assets/` dir like audio, rendered via `Ima
 absolute asset path baked into the script. Vector-only verbs (Write/Create/Draw+Fill) degrade to
 FadeIn for images, and a group containing an image emits Manim's `Group` instead of `VGroup`.
 
+**Slideshow projects**: `Project.kind` is `animation` (default — scenes stitch into one video)
+or `slideshow`, chosen in the New Project form and fixed thereafter. In a slideshow each scene is
+a **slide**: it plays, freezes on its last frame, and the next one starts on a click. Slides are
+never stitched. The `slideshow` render *format* renders every scene to its own mp4 and packages
+them with a generated single-file HTML player (`backend/app/render/slideshow.py` → `index.html` +
+`manifest.json` + `slides/slide_NN.mp4`, zipped for download); the unzipped folder stays in the
+job dir so the editor's **Present** mode (`frontend/src/components/Presenter.tsx`) can stream the
+slides from `/api/render/{job_id}/slides[/{i}]`. The "hold" between slides is just a paused
+`<video>`, so no ffmpeg padding is involved. `Scene.auto_advance` skips the click for one slide.
+The in-app presenter and the exported player deliberately mirror each other's controls —
+**change both together**.
+
 **Voiceover / audio track**: each scene has an `audio: AudioClip[]` track — upload an audio file
 (stored under the project's `assets/` dir), place clips on a dedicated timeline lane with waveforms,
 drag/trim/split (non-destructive: clips window into the source via `offset`+`duration`), per-clip

@@ -14,6 +14,7 @@ storage is JSON files on disk and the render queue is an in-process `asyncio.Que
 | `codegen/` | IR `Scene` → Manim Python script. See `codegen/CLAUDE.md`. |
 | `render/queue.py` | In-process job registry + pub/sub for progress events. |
 | `render/worker.py` | Pulls jobs, runs Manim as a subprocess, locates the output MP4. |
+| `render/slideshow.py` | Slideshow packaging: copies the per-scene mp4s into a player folder and generates the single-file `index.html` (+ `manifest.json`), then zips it. The player holds between slides by *pausing* a `<video>`, so there is no ffmpeg work here. |
 | `render/stitch.py` | ffmpeg `concat_scenes` / `crossfade_scenes` (xfade) for multi-scene export, `zip_dir` for PNG sequences, `probe_duration` (ffprobe). All via blocking `subprocess.run` (see rule 1). |
 | `render/audio.py` | ffmpeg voiceover mixing: trims/gains/fades/delays each `AudioClip` and muxes the mix under a scene mp4 (video copied, AAC 44.1kHz stereo — fixed params so concat can stream-copy). When a clip runs past the video, the last frame is held (`tpad`, forcing a video re-encode) so the scene ends on the later of last-animation / last-audio instead of truncating the voiceover. |
 
@@ -60,8 +61,14 @@ pushed to subscribers; the client watches via `WS /ws/render/{job_id}` and downl
 - `RenderJob.scene_id` is a specific scene, or **`None` = every scene**. Multi-scene **mp4** jobs
   render each scene then stitch (`crossfade_scenes` when `transition`, else `concat_scenes`); other
   formats / morph render a single scene.
-- `RenderJob.format` ∈ `mp4 | gif | png | still`. `png` returns the frame *directory*, which the
-  worker zips for download; `still` uses `-s` (last frame); `transparent` adds `-t` (non-mp4 only).
+- `RenderJob.format` ∈ `mp4 | gif | png | still | slideshow`. `png` returns the frame *directory*,
+  which the worker zips for download; `still` uses `-s` (last frame); `transparent` adds `-t`
+  (non-mp4 only).
+- **`slideshow`** (for `Project.kind == "slideshow"`) renders every scene as an ordinary mp4 —
+  same Manim flags as `mp4`, no `--format` — and then packages them instead of stitching:
+  `job_dir/slideshow/` (player folder, kept for Present mode) + `job_dir/slideshow.zip` (the
+  download). Audio is mixed per slide, with no silent-track padding: nothing is concatenated, so
+  stream parity doesn't matter.
 - `RenderJob.mode` is `"scene"` (normal) or `"morph"` (a 1s standalone `morph_equation` preview).
 
 **Assets**: `POST /api/projects/{id}/assets/audio` and `.../assets/image` upload a file (raw bytes
@@ -72,6 +79,13 @@ baked into the generated script as absolute `ImageMobject` paths (see `codegen/C
 video (`render/audio.py`) — codegen and the ejected script never see audio. When stitching, scenes
 without clips get a *silent* AAC track so the concat demuxer sees uniform streams, and
 `crossfade_scenes` delays+amixes the per-scene tracks to match the video offsets.
+
+**Slideshow playback**: `GET /api/render/{job_id}/slides` returns the deck manifest (with each
+slide's URL rewritten to this API) and `.../slides/{index}` serves one slide's mp4. That endpoint
+implements **HTTP `Range`** itself (`_serve_range` in `main.py`) — browsers refuse to *seek* a
+video the server can't serve in pieces, and Present mode seeks to a slide's last frame when you
+step back. The installed Starlette (0.38) has no range support in `FileResponse`, so don't replace
+it with a plain `FileResponse`.
 
 `GET /api/projects/{id}/scenes/{scene_id}/script` ejects the generated Manim `.py` (one-way). If
 `frontend/dist` exists it's mounted at `/` (single-process / packaged mode); API + WS routes are

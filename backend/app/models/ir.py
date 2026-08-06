@@ -80,6 +80,18 @@ class ResolutionPreset(str, Enum):
     P4K = "4k"
 
 
+class ProjectKind(str, Enum):
+    """How a project's scenes are meant to be consumed.
+
+    ANIMATION — the scenes form one continuous video (stitched on export).
+    SLIDESHOW — each scene is a *slide*: it plays, freezes on its last frame,
+    and the presenter clicks to start the next one. Slides are never stitched;
+    they're packaged as a self-contained HTML player (see render/slideshow.py).
+    """
+    ANIMATION = "animation"
+    SLIDESHOW = "slideshow"
+
+
 # ---------------------------------------------------------------------------
 # Shared building blocks
 # ---------------------------------------------------------------------------
@@ -332,6 +344,9 @@ class Scene(BaseModel):
     camera_track: CameraTrack = Field(default_factory=CameraTrack)
     transition_in: Optional[Transition] = None
     transition_out: Optional[Transition] = None
+    # Slideshow projects only: play the next slide automatically when this one
+    # ends instead of waiting for a click. Ignored by animation projects.
+    auto_advance: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +368,7 @@ class ProjectSettings(BaseModel):
 class Project(BaseModel):
     version: str = "1.0.0"
     id: str = Field(default_factory=new_id)
+    kind: ProjectKind = ProjectKind.ANIMATION
     created_at: str = ""
     updated_at: str = ""
     metadata: dict[str, str] = Field(default_factory=lambda: {"name": "Untitled Project", "author": "", "description": ""})
@@ -372,9 +388,12 @@ class ProjectSummary(BaseModel):
     name: str
     updated_at: str
     scene_count: int
+    kind: ProjectKind = ProjectKind.ANIMATION
 
 
-RenderFormat = Literal["mp4", "gif", "png", "still"]
+# "slideshow" renders every scene to its own mp4 and packages them with an HTML
+# player into a zip — see render/slideshow.py.
+RenderFormat = Literal["mp4", "gif", "png", "still", "slideshow"]
 
 
 class RenderRequest(BaseModel):

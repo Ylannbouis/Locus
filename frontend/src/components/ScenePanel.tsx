@@ -12,6 +12,7 @@ export function ScenePanel() {
   const renameScene = useProjectStore(s => s.renameScene);
   const moveScene = useProjectStore(s => s.moveScene);
   const reorderScene = useProjectStore(s => s.reorderScene);
+  const setSceneAutoAdvance = useProjectStore(s => s.setSceneAutoAdvance);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
@@ -21,6 +22,8 @@ export function ScenePanel() {
 
   if (!project) return null;
   const scenes = project.scenes;
+  // In a slideshow project a "scene" is a slide — same data, different words.
+  const isSlideshow = project.kind === 'slideshow';
 
   const endDrag = () => { setDragId(null); setDropIndex(null); };
   const onDrop = () => {
@@ -40,7 +43,7 @@ export function ScenePanel() {
 
   return (
     <div className="scene-bar">
-      <span className="scene-bar__label">Scenes</span>
+      <span className="scene-bar__label">{isSlideshow ? 'Slides' : 'Scenes'}</span>
       <div className="scene-bar__tabs" onDragOver={e => e.preventDefault()} onDrop={onDrop}>
         {scenes.map((s, i) => {
           const active = s.id === selectedSceneId;
@@ -77,8 +80,20 @@ export function ScenePanel() {
                   {s.name}
                 </span>
               )}
+              {isSlideshow && s.auto_advance && !active && (
+                <span className="scene-tab__auto" title="Auto-advances to the next slide">⏩</span>
+              )}
               {active && (
                 <span className="scene-tab__actions" onClick={e => e.stopPropagation()}>
+                  {isSlideshow && (
+                    <button
+                      className={`scene-tab__auto-btn ${s.auto_advance ? 'is-on' : ''}`}
+                      title={s.auto_advance
+                        ? 'Auto-advance on: the next slide starts without a click'
+                        : 'Auto-advance off: hold on the last frame until clicked'}
+                      onClick={() => setSceneAutoAdvance(s.id, !s.auto_advance)}
+                    >⏩</button>
+                  )}
                   <button title="Move left" disabled={i === 0} onClick={() => moveScene(s.id, -1)}>‹</button>
                   <button title="Move right" disabled={i === scenes.length - 1} onClick={() => moveScene(s.id, 1)}>›</button>
                   <button title="Duplicate" onClick={() => duplicateScene(s.id)}>⧉</button>
@@ -89,7 +104,9 @@ export function ScenePanel() {
             </div>
           );
         })}
-        <button className="scene-bar__add" onClick={addScene} title="Add scene">+ Scene</button>
+        <button className="scene-bar__add" onClick={addScene} title={isSlideshow ? 'Add slide' : 'Add scene'}>
+          + {isSlideshow ? 'Slide' : 'Scene'}
+        </button>
       </div>
     </div>
   );

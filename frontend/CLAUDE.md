@@ -11,7 +11,7 @@ Stack: React 19 + react-konva + zustand + immer + katex + axios. Dev server on *
 
 | Path | What |
 |------|------|
-| `types/ir.ts` | **TS mirror of `backend/app/models/ir.py`.** Keep in sync by hand — no codegen between them. |
+| `types/ir.ts` | **TS mirror of `backend/app/models/ir.py`.** Keep in sync by hand — no codegen between them. (`SlideManifest`/`SlideInfo` mirror the slideshow manifest, not the IR.) |
 | `store/projectStore.ts` | Main Zustand store: the `Project`, selection, undo/redo, autosave, clipboard, grouping, all IR mutations. Plus global keyboard shortcuts. |
 | `store/renderStore.ts` | Render/morph-preview job state + WebSocket progress subscription. |
 | `store/objectFactory.ts` | `newId()` + `uniqueName()` (auto-numbers a repeated default name → "Expression 2") + factories that build default `SceneObject`s per type. |
@@ -22,7 +22,7 @@ Stack: React 19 + react-konva + zustand + immer + katex + axios. Dev server on *
 | `inspector/` | Per-type property editors (right sidebar). |
 | `outliner/` | Object tree: select, z-order, show/hide, delete, group/ungroup. |
 | `timeline/` | Keyframe timeline UI (incl. dedicated camera + audio tracks) + per-keyframe / per-audio-clip inspectors + its own UI-only store. Overlapping items auto-stack into sub-rows (`packLanes`). `audioPlayback.ts` is the Web Audio preview engine (buffer cache, transport, playhead rAF); `Waveform.tsx` draws clip waveforms from cached per-block peaks. |
-| `components/` | `DepGate` (blocks until deps OK), `ProjectHome`, `EditorShell` (layout), `AddPanel`, `ScenePanel` (multi-scene list), `RenderPanel` (export options), `CodeView` (eject-to-code / JSON modal). |
+| `components/` | `DepGate` (blocks until deps OK), `ProjectHome` (open/create — incl. the animation-vs-slideshow kind picker), `EditorShell` (layout), `AddPanel`, `ScenePanel` (multi-scene list), `RenderPanel` (export options), `Presenter` (fullscreen slideshow playback), `CodeView` (eject-to-code / JSON modal). |
 
 `App.tsx`: `DepGate` → (`EditorShell` if a project is loaded, else `ProjectHome`).
 
@@ -204,6 +204,24 @@ codegen is the source of truth for the actual animation).
   job's `format` (mp4 → `<video>`, gif/still → `<img>`, png → zip download).
 - `CodeView` shows the ejected Manim Python (`getSceneScript`, saved first so the backend sees the
   latest IR) and the project JSON, read-only — the JSON is the source of truth, code export is one-way.
+
+## Slideshow projects
+
+`project.kind` (`'animation' | 'slideshow'`, picked in `ProjectHome`, immutable afterwards) only
+changes wording and export — the scene/timeline editor is identical. In a slideshow, a scene *is*
+a slide: `ScenePanel` says "Slides"/"+ Slide", `addScene` names them `Slide N`, and each tab gets a
+⏩ toggle for `scene.auto_advance` (`setSceneAutoAdvance`).
+
+- `RenderPanel` leads with the `slideshow` **format**, which always renders every slide
+  (`sceneId === null`) and never stitches or crossfades; the other formats still export the
+  *current* slide. The quick 480p preview stays per-slide too. When the job finishes, **▶ Present**
+  opens `Presenter`.
+- `Presenter` streams the rendered slides from `/api/render/{job}/slides` (`getSlideManifest`) into
+  one `<video>` per slide, and is a **deliberate mirror of the exported HTML player** in
+  `backend/app/render/slideshow.py` — same keys (`Space`/`→` next, `←` back, `R` replay, `F`
+  fullscreen), same freeze-on-last-frame, same "click mid-slide jumps to its end first". Change
+  both or they drift. Stepping back seeks to `duration − 0.05` (the *last frame*, not a replay),
+  which is why the backend slide route implements HTTP Range.
 
 ## When changing the IR
 
