@@ -55,6 +55,13 @@ def _is_image(obj) -> bool:
     return _enum(obj.type) == "image"
 
 
+def _is_pango_text(obj) -> bool:
+    """A `text` object carrying a `font` prop — the only thing that emits Manim's
+    Pango-backed `Text`, and so the only thing with per-glyph submobjects."""
+    return (_enum(obj.type) == "text"
+            and bool(str((obj.props or {}).get("font") or "").strip()))
+
+
 # Vector-drawing verbs that can't run on a raster ImageMobject (Write/Create/…
 # need VMobject points and raise in Manim) — they degrade to a FadeIn.
 _VECTOR_ONLY_VERBS = {"write", "create", "draw_border_then_fill"}
@@ -312,7 +319,8 @@ def _plan_intro_fusion(keyframes, var_map: dict[str, str],
 def _merge_units(members, var_map: dict[str, str],
                  hidden_ids: set[str] | None = None,
                  fused_fade_ids: set[str] | None = None,
-                 fused_intro_ids: set[str] | None = None) -> list[tuple]:
+                 fused_intro_ids: set[str] | None = None,
+                 reveal_kf_ids: set[str] | None = None) -> list[tuple]:
     """Turn a set of keyframes into units, chaining move/scale/rotate on the *same
     object* that **overlap in time** into a single `MasApply` over the union
     window (two animations on one mobject in one play fight over its state).
@@ -341,6 +349,7 @@ def _merge_units(members, var_map: dict[str, str],
     hidden_ids = hidden_ids or set()
     fused_fade_ids = fused_fade_ids or set()
     fused_intro_ids = fused_intro_ids or set()
+    reveal_kf_ids = reveal_kf_ids or set()
     xform_by_obj: dict[str, list] = {}
     fade_by_obj: dict[str, list] = {}
     intro_by_obj: dict[str, list] = {}
@@ -360,9 +369,13 @@ def _merge_units(members, var_map: dict[str, str],
         else:
             a = _kf_anim(kf, var_map)
             if a is not None:
+                # A standalone (unfused) introducer of a hidden-until-creation
+                # object carries the reveal flag, so `_object_tracks` prepends the
+                # opacity restore — inside the object's single track, keeping any
+                # overlapping transform on the same mobject in the same Succession.
                 order.append(("e", (kf.object_id, a, max(0.01, float(kf.duration)),
                                     easing_func(_enum(kf.easing)), float(kf.start_time),
-                                    False, False)))
+                                    kf.id in reveal_kf_ids, False)))
 
     units: list[tuple] = []
     seen: set[str] = set()
@@ -469,10 +482,11 @@ def _object_tracks(units, var_map: dict[str, str]) -> list[tuple[float, str]]:
         for (_, expr, rt, rf, start, reveal, intro) in us:
             if prev_end is not None and start - prev_end > 1e-6:
                 segs.append(f"Wait({round(start - prev_end, 4)})")
-            if intro and reveal and var is not None:
-                # Hidden-until-creation object whose introducer is a fused
-                # MasIntro: restore the authored opacity the instant before the
-                # creation draws it in (opacity only — geometry stays put).
+            if reveal and var is not None:
+                # Hidden-until-creation object, at the unit that introduces it
+                # (a fused MasIntro, or a standalone Write/Create/…/type_on):
+                # restore the authored opacity the instant before the creation
+                # draws it in (opacity only — geometry stays put).
                 segs.append(f"MasFade({var}, 1.0, run_time=0.001)")
             segs.append(_bake(expr, rt, rf))
             prev_end = start + rt
@@ -487,6 +501,19 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
     objects = sorted(scene.objects, key=_emit_order)
     keyframes = list(scene.timeline.keyframes)
     lag_by_group = {g.id: float(g.lag_ratio) for g in scene.timeline.groups}
+
+    # `type_on` (AddTextLetterByLetter) reveals one *submobject* at a time, which
+    # only means "one letter" for a Pango `Text`. A `Tex`/`MathTex`/shape would
+    # pop in whole, so degrade it to a Write everywhere else — the IR can carry a
+    # stale type_on after the user clears a text object's `font` prop. Runs
+    # before the image pass so an image inherits that Write's FadeIn degrade.
+    type_on_ok = {o.id for o in scene.objects if _is_pango_text(o)}
+    keyframes = [
+        kf.model_copy(update={"verb": AnimationVerb.WRITE})
+        if _enum(kf.verb) == "type_on" and kf.object_id not in type_on_ok
+        else kf
+        for kf in keyframes
+    ]
 
     # A Write/Create/DrawBorderThenFill on a raster image would raise in Manim
     # (they need VMobject points) — normalize to FadeIn. fade_in is also a
@@ -856,35 +883,22 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
         tracks: list[tuple[float, str]] = []
         grouped: dict[str, list] = {}
         ungrouped: list = []
-        # A reveal keyframe that fuses with a transform (MasIntro) stays in the
-        # normal flow — the fused unit carries its own reveal (see
-        # `_object_tracks`) — instead of the standalone Succession(MasFade, …).
+        # Reveal keyframes (a hidden-until-creation object's introducer) stay in
+        # the normal flow: `_object_tracks` prepends the opacity restore, whether
+        # the introducer fused into a MasIntro or stands alone. Emitting them as
+        # their own tracks would put two animations on one mobject in this play
+        # whenever the object also has an overlapping transform that did *not*
+        # fuse — which `type_on` never does.
         reveal_kf_ids = set(reveal_kf_id.values()) - fused_intro_ids
-        reveal_kfs: list = []
         for kf in ordered:
-            if kf.group_id:
-                grouped.setdefault(kf.group_id, []).append(kf)
-            elif kf.id in reveal_kf_ids:
-                reveal_kfs.append(kf)
-            else:
-                ungrouped.append(kf)
+            (grouped.setdefault(kf.group_id, []) if kf.group_id else ungrouped).append(kf)
         # Ungrouped: simultaneous move/scale/rotate on one object collapse to a
         # single MasApply track; a mobject's several (non-overlapping) clusters
         # chain into one sequential track (Manim can't run two animations on one
         # mobject as parallel tracks — see `_object_tracks`).
         tracks.extend(_object_tracks(
             _merge_units(ungrouped, var_map, set(reveal_kf_id),
-                         fused_fade_ids, fused_intro_ids), var_map))
-        # A hidden-until-creation object: restore its authored opacity the
-        # instant before its introducer draws it in (it was set invisible +
-        # save_state'd above; MasFade leaves geometry untouched).
-        for kf in reveal_kfs:
-            a = _kf_anim(kf, var_map)
-            if a is None:
-                continue
-            baked = _bake(a, max(0.01, float(kf.duration)), easing_func(_enum(kf.easing)))
-            tracks.append((float(kf.start_time),
-                           f"Succession(MasFade({var_map[kf.object_id]}, 1.0, run_time=0.001), {baked})"))
+                         fused_fade_ids, fused_intro_ids, reveal_kf_ids), var_map))
         for gid, members in grouped.items():
             lag = round(lag_by_group.get(gid, 0.0), 4)
             if lag <= 1e-9:

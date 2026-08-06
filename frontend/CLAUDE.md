@@ -81,6 +81,12 @@ the browser and Pango lay out the *same* font file, matching the em is enough to
 advances. The Inspector's picker (`FontField`) lists only fonts `GET /api/fonts` reports, cached
 once per session; the empty option means "LaTeX", which is the default.
 
+Such an object is also the **only** one offered the **Type On** verb (`timelineVerbsFor` takes the
+`SceneObject`, not just its type, so it can read the `font` prop): it emits
+`AddTextLetterByLetter`, which reveals one submobject per step — one *letter* only for a Pango
+`Text`. Prefer it over Write for textured/handwriting fonts, whose jagged outlines stroke-trace as
+grey scribble under Write. The codegen degrades a stale `type_on` to `write` for anything else.
+
 Coordinate systems draw their tick **numbers** on the canvas when `include_numbers` is set, sized
 by a `number_font_size` prop; whole-number ticks render without a trailing `.0` (`fmtNum`). Shapes
 and text also honor a generic baked-transform prop **`rotation`** (degrees, CCW) — applied via

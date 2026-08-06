@@ -48,6 +48,21 @@ run by the render worker.
   path (`MANIM_TEXT_EM_UNITS_PER_PT` / `MANIM_EM_UNITS_PER_PT`) and previews a `font` object as
   plain styled HTML rather than KaTeX. The picker only offers fonts `GET /api/fonts` reports, i.e.
   what this machine's Pango can actually resolve; an unknown name would silently fall back.
+- **`type_on` (typewriter reveal) — Pango text only.** Emits `AddTextLetterByLetter`: whole glyphs
+  appear one at a time, each already filled. It exists because Write/Create *stroke-trace* the glyph
+  outline before filling, and a textured font (Chalkduster & co. — 213 subpaths for one 9-character
+  word) traces as grey scribble for the whole animation. `ShowIncreasingSubsets` reveals one
+  **submobject** per step, which only means "one letter" for a Pango `Text`; a `Tex` is a single
+  submobject and would pop in whole, so `build_body` **degrades `type_on` → `write`** for anything
+  that isn't a `text` object with a `font` prop (`_is_pango_text`) — the IR can carry a stale
+  `type_on` after the user clears `font`. That pass runs *before* the image→FadeIn degrade, so an
+  image inherits it. `type_on` is in `CREATION_VERBS` and `INTRO_VERBS` but deliberately **not in
+  `_SIMPLE`**, which is what gates MasIntro fusion: `AddTextLetterByLetter` swaps
+  `mobject.submobjects` each frame instead of rebuilding from a captured start state, so MasIntro's
+  post-frame `m.shift(delta * t)` would accumulate every frame and fling the text off screen.
+  `emit_intro_transform` returns None for it, so `_plan_intro_fusion`'s dry-run never marks it
+  fused. An overlapping move/scale/rotate therefore stays a separate unit — and `_object_tracks`
+  chains it *after* the type-on in the object's single `Succession` instead of running both at once.
 - **Matrix font size:** Manim's `Matrix` has no `font_size` kwarg, so a non-default `font_size`
   prop emits `.scale(font_size/48)` — glyphs, spacing and brackets grow together. The canvas
   preview scales its fixed pitch/bracket constants by the same factor.
@@ -198,11 +213,17 @@ instantly reappear at the end"** and **"a later transform resurrects a faded obj
 - **Introduced by a *delayed* drawing verb** (Write/Create/…, timeline model only) that is otherwise
   exposed at t=0: any non-drawing keyframe on the object **or any ancestor group** pulls the mobject
   into the play's wrapper `Group` when the play starts (`_exposed_early` walks the `parent_id` chain),
-  flashing it before its creation plays. The creation track is wrapped as
-  `Succession(MasFade(m, 1.0, run_time=0.001), <introducer>)` — an opacity-only reveal (geometry stays
-  wherever earlier hidden transforms put it) the instant the introducer starts. `reveal_kf_id` records
-  which keyframe reveals; on a start-time tie the creation verb sorts first. Not needed in the
-  sequential model (adds are per-play).
+  flashing it before its creation plays. The creation is preceded by
+  `MasFade(m, 1.0, run_time=0.001)` — an opacity-only reveal (geometry stays wherever earlier hidden
+  transforms put it) the instant the introducer starts. `reveal_kf_id` records which keyframe
+  reveals; on a start-time tie the creation verb sorts first. Not needed in the sequential model
+  (adds are per-play).
+  **The reveal is emitted inside `_object_tracks`**, as the first segment of the object's own track,
+  for *both* a fused MasIntro and a standalone introducer (the unit's `reveal` flag; `_merge_units`
+  takes `reveal_kf_ids` to set it). Don't hoist reveals back out into their own tracks: an object
+  whose introducer does *not* fuse with an overlapping transform (i.e. `type_on`, which never fuses)
+  would then get two parallel tracks on one mobject in one play — the exact thing `_object_tracks`
+  exists to prevent.
 
 Hidden objects need no special transform handling: a MasApply target built at `begin()` simply carries
 the current 0 opacity, so a pre-creation move keeps the object hidden (the old `.animate`

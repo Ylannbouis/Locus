@@ -688,7 +688,7 @@ export function Timeline() {
               <>
                 <div className="tl__menu-head">Change verb</div>
                 <div className="tl__menu-verbs">
-                  {timelineVerbsFor(scene?.objects.find(o => o.id === kf.object_id)?.type).map(v => (
+                  {timelineVerbsFor(scene?.objects.find(o => o.id === kf.object_id)).map(v => (
                     <button key={v} className={`tl__menu-verb ${kf.verb === v ? 'is-active' : ''}`}
                       onClick={() => { updateKeyframe(kf.id, { verb: v, params: defaultParams(v) }); setMenu(null); }}>{VERB_META[v].label}</button>
                   ))}

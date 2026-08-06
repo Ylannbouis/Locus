@@ -12,7 +12,7 @@ from typing import Any
 
 # Verbs that introduce a mobject into the scene. Objects whose first keyframe is
 # one of these are animated in; all other objects are pre-added via self.add().
-CREATION_VERBS = {"write", "create", "draw_border_then_fill", "fade_in"}
+CREATION_VERBS = {"write", "create", "draw_border_then_fill", "type_on", "fade_in"}
 
 EASING_MAP = {
     "smooth": "smooth",
@@ -32,7 +32,15 @@ _SIMPLE = {
 
 # Creation verbs that draw the mobject in (fade_in is excluded: a fade fuses into
 # an `.animate` chain as `.set_opacity`, these need the MasIntro wrapper instead).
-INTRO_VERBS = set(_SIMPLE)
+# `type_on` counts as a drawing introducer for the *hide-until-creation* pass —
+# it must not flash before its turn — but it is deliberately absent from _SIMPLE,
+# which is what gates MasIntro fusion. AddTextLetterByLetter is a
+# ShowIncreasingSubsets: it swaps `mobject.submobjects` per frame instead of
+# rebuilding the mobject from a captured start state, so MasIntro's post-frame
+# `m.shift(delta * t)` would accumulate every frame and fling the text off screen.
+# `emit_intro_transform` returns None for it, and `_plan_intro_fusion`'s dry-run
+# therefore never marks it fused — it falls back to standalone emission.
+INTRO_VERBS = set(_SIMPLE) | {"type_on"}
 
 
 def _num(v: Any, default: float) -> float:
@@ -73,6 +81,17 @@ def emit_animation(verb: str, var: str, params: dict[str, Any] | None = None,
 
     if verb in _SIMPLE:
         return f"{_SIMPLE[verb]}({var})"
+
+    if verb == "type_on":
+        # Typewriter reveal for a Pango `Text`: whole glyphs appear one at a time,
+        # each already filled. Write/Create stroke-trace the glyph outline first,
+        # which turns a textured font (Chalkduster and friends — hundreds of
+        # jagged subpaths per word) into grey scribble for the whole animation.
+        # run_time/rate_func are baked in by the scene builder, overriding this
+        # class's time_per_char-derived default. Only meaningful on the Pango
+        # path — `scene.build_body` degrades it to a Write elsewhere, since a
+        # `Tex` is one submobject and would just pop in whole.
+        return f"AddTextLetterByLetter({var})"
 
     if verb in ("fade_in", "fade_out"):
         # MasFade (template helper), not FadeIn/FadeOut: it fades in place to

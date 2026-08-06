@@ -31,6 +31,7 @@ class AnimationVerb(str, Enum):
     WRITE = "write"
     CREATE = "create"
     DRAW_BORDER_THEN_FILL = "draw_border_then_fill"
+    TYPE_ON = "type_on"
     FADE_IN = "fade_in"
     FADE_OUT = "fade_out"
     TRANSFORM = "transform"

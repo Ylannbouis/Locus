@@ -15,6 +15,7 @@ export type AnimationVerb =
   | 'write'
   | 'create'
   | 'draw_border_then_fill'
+  | 'type_on'
   | 'fade_in'
   | 'fade_out'
   | 'transform'

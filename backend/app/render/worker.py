@@ -8,6 +8,7 @@ output formats at a chosen resolution/fps.
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
 import sys
 from collections import Counter
@@ -30,6 +31,23 @@ _RESOLUTION = {
     "1080p": (1920, 1080),
     "4k": (3840, 2160),
 }
+
+# Per-scene wall-clock cap on the Manim subprocess, in seconds. Heavy scenes
+# (4k, long durations, lots of LaTeX) legitimately run for hours, so this is a
+# runaway guard, not a deadline: set MAS_RENDER_TIMEOUT=0 to disable it.
+_DEFAULT_RENDER_TIMEOUT = 21600  # 6 hours
+
+
+def _render_timeout() -> int | None:
+    """Manim subprocess timeout in seconds; None = wait forever."""
+    raw = os.environ.get("MAS_RENDER_TIMEOUT", "").strip()
+    if not raw:
+        return _DEFAULT_RENDER_TIMEOUT
+    try:
+        secs = int(float(raw))
+    except ValueError:
+        return _DEFAULT_RENDER_TIMEOUT
+    return secs if secs > 0 else None
 
 
 async def run_worker() -> None:
@@ -108,7 +126,7 @@ def _render_one(script: str, scene_dir: Path, job: RenderJob) -> tuple[int, list
     cmd = _build_cmd(script_path, media_dir, job)
     proc = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        cwd=str(scene_dir), timeout=1800,
+        cwd=str(scene_dir), timeout=_render_timeout(),
     )
     lines = [ln for ln in proc.stdout.decode(errors="replace").splitlines() if ln.strip()]
     return proc.returncode, lines[-40:], media_dir
@@ -159,8 +177,13 @@ async def _process(job: RenderJob) -> None:
                 script = generate_scene_script(project, scene)
             try:
                 rc, tail, media_dir = await asyncio.to_thread(_render_one, script, job_dir / f"scene_{i}", job)
-            except subprocess.TimeoutExpired:
-                rq.update_job(job.job_id, status="error", message="Manim render timed out (30 min)")
+            except subprocess.TimeoutExpired as exc:
+                mins = int((exc.timeout or 0) / 60)
+                rq.update_job(
+                    job.job_id, status="error",
+                    message=f"Manim render timed out after {mins} min "
+                            f"(raise or disable with MAS_RENDER_TIMEOUT, in seconds; 0 = no limit)",
+                )
                 return
             if rc != 0:
                 detail = " | ".join(tail[-6:]) or "unknown error"

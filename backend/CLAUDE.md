@@ -58,6 +58,11 @@ scene to render: generate script → write `scene.py` under the job dir → run 
 pushed to subscribers; the client watches via `WS /ws/render/{job_id}` and downloads from
 `/api/render/{job_id}/download` (media type inferred from the file suffix).
 
+- The Manim subprocess has a **per-scene** wall-clock cap (`_render_timeout`), default 6 h — a
+  runaway guard, not a deadline. Override with the `MAS_RENDER_TIMEOUT` env var (seconds; `0`
+  disables it entirely). The ffmpeg helpers in `render/stitch.py` (30 min) and `render/audio.py`
+  (10 min) keep their own separate, fixed timeouts.
+
 - `RenderJob.scene_id` is a specific scene, or **`None` = every scene**. Multi-scene **mp4** jobs
   render each scene then stitch (`crossfade_scenes` when `transition`, else `concat_scenes`); other
   formats / morph render a single scene.

@@ -117,7 +117,10 @@ optional `about_point` (scene coords → Manim's `about_point`), placed by dragg
 canvas, with the ghost preview orbiting accurately about it. Also **rounded rectangles** (an opt-in
 `corner_radius` prop; 0 keeps a plain `Rectangle`, > 0 emits `RoundedRectangle` clamped to half the
 shorter side) and **system fonts for `text` objects** (a `font` prop switches codegen from LaTeX
-`Tex` to Pango `Text`, listed by `GET /api/fonts` — see `backend/app/codegen/CLAUDE.md`).
+`Tex` to Pango `Text`, listed by `GET /api/fonts` — see `backend/app/codegen/CLAUDE.md`), with a
+**`type_on`** verb for those (Manim's `AddTextLetterByLetter` — a typewriter reveal that shows whole
+filled glyphs one at a time, since Write stroke-traces the outline and turns a textured font like
+Chalkduster into grey scribble for the length of the animation).
 
 **Images**: an `image` object type places an uploaded raster file (png/jpg/webp/bmp) on the
 canvas — uploaded to the project's `assets/` dir like audio, rendered via `ImageMobject` with the

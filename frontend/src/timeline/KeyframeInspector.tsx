@@ -152,7 +152,7 @@ export function KeyframeInspector() {
         <label className="field">
           <span className="field__label">Verb</span>
           <select className="field__input" value={verb} onChange={e => { const v = e.target.value as AnimationVerb; updateKeyframe(kf.id, { verb: v, params: defaultParams(v) }); }}>
-            {timelineVerbsFor(obj?.type).map(v => <option key={v} value={v}>{VERB_META[v].label}</option>)}
+            {timelineVerbsFor(obj).map(v => <option key={v} value={v}>{VERB_META[v].label}</option>)}
           </select>
         </label>
       )}

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AnimationVerb } from '../types/ir';
+import type { AnimationVerb, SceneObject } from '../types/ir';
 
 // Sentinel object id for keyframes that drive the camera (mirrors the backend).
 export const CAMERA_ID = '__camera__';
@@ -61,6 +61,7 @@ export const VERB_META: Record<AnimationVerb, { label: string; color: string }> 
   write: { label: 'Write', color: '#2563eb' },
   create: { label: 'Create', color: '#2563eb' },
   draw_border_then_fill: { label: 'Draw+Fill', color: '#2563eb' },
+  type_on: { label: 'Type On', color: '#2563eb' },
   fade_in: { label: 'Fade In', color: '#16a34a' },
   fade_out: { label: 'Fade Out', color: '#64748b' },
   transform: { label: 'Transform', color: '#a855f7' },
@@ -78,7 +79,7 @@ export const VERB_META: Record<AnimationVerb, { label: string; color: string }> 
 // Verbs offered in the timeline "add animation" picker for object lanes.
 // (camera_move is authored from the dedicated camera track, not here.)
 export const TIMELINE_VERBS: AnimationVerb[] = [
-  'write', 'create', 'draw_border_then_fill', 'fade_in', 'fade_out',
+  'write', 'create', 'draw_border_then_fill', 'type_on', 'fade_in', 'fade_out',
   'transform', 'replacement_transform', 'move', 'scale', 'rotate',
   'indicate', 'circumscribe', 'flash',
 ];
@@ -87,8 +88,17 @@ export const TIMELINE_VERBS: AnimationVerb[] = [
 // image (the codegen degrades them to FadeIn) — don't offer them for one.
 const VECTOR_ONLY_VERBS: AnimationVerb[] = ['write', 'create', 'draw_border_then_fill'];
 
-export function timelineVerbsFor(objType?: string): AnimationVerb[] {
-  return objType === 'image' ? TIMELINE_VERBS.filter(v => !VECTOR_ONLY_VERBS.includes(v)) : TIMELINE_VERBS;
+// `type_on` (AddTextLetterByLetter) reveals one submobject per step, which only
+// reads as "one letter" for a Pango `Text` — i.e. a `text` object carrying a
+// `font` prop. A LaTeX `Tex` is a single submobject and would pop in whole, so
+// the codegen degrades type_on to a Write for everything else; don't offer it.
+function supportsTypeOn(o?: SceneObject): boolean {
+  return o?.type === 'text' && !!String((o.props as Record<string, unknown>)?.font ?? '').trim();
+}
+
+export function timelineVerbsFor(o?: SceneObject): AnimationVerb[] {
+  const base = supportsTypeOn(o) ? TIMELINE_VERBS : TIMELINE_VERBS.filter(v => v !== 'type_on');
+  return o?.type === 'image' ? base.filter(v => !VECTOR_ONLY_VERBS.includes(v)) : base;
 }
 
 // Sensible starting params when a verb is chosen, so a new keyframe does
