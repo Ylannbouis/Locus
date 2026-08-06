@@ -9,7 +9,7 @@ storage is JSON files on disk and the render queue is an in-process `asyncio.Que
 |--------|----------------|
 | `main.py` | FastAPI app: all routes + the WebSocket progress stream. Launches the render worker in the lifespan. |
 | `models/ir.py` | **Canonical IR schema.** Every other module imports from here. Mirror of `frontend/src/types/ir.ts`. |
-| `storage/projects.py` | Load/save `Project` JSON under `~/MathAnimStudio/projects/`. |
+| `storage/projects.py` | Load/save/delete `Project` JSON under `~/MathAnimStudio/projects/`. `delete_project` rmtrees the whole project dir, and is the one place that validates the id against a regex + asserts the target is a direct child of the root (traversal would be destructive here). |
 | `deps_check.py` | Verifies manim/ffmpeg/latex are available; cached in-memory per process. |
 | `codegen/` | IR `Scene` → Manim Python script. See `codegen/CLAUDE.md`. |
 | `render/queue.py` | In-process job registry + pub/sub for progress events. |

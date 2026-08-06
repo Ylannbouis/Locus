@@ -22,7 +22,7 @@ Stack: React 19 + react-konva + zustand + immer + katex + axios. Dev server on *
 | `inspector/` | Per-type property editors (right sidebar). |
 | `outliner/` | Object tree: select, z-order, show/hide, delete, group/ungroup. |
 | `timeline/` | Keyframe timeline UI (incl. dedicated camera + audio tracks) + per-keyframe / per-audio-clip inspectors + its own UI-only store. Overlapping items auto-stack into sub-rows (`packLanes`). `audioPlayback.ts` is the Web Audio preview engine (buffer cache, transport, playhead rAF); `Waveform.tsx` draws clip waveforms from cached per-block peaks. |
-| `components/` | `DepGate` (blocks until deps OK), `ProjectHome` (open/create — incl. the animation-vs-slideshow kind picker), `EditorShell` (layout), `AddPanel`, `ScenePanel` (multi-scene list), `RenderPanel` (export options), `Presenter` (fullscreen slideshow playback), `CodeView` (eject-to-code / JSON modal). |
+| `components/` | `DepGate` (blocks until deps OK), `ProjectHome` (open/create/delete — incl. the animation-vs-slideshow kind picker; the per-row 🗑 opens a `.confirm-dialog` modal that must be confirmed before `DELETE /api/projects/{id}`, since deletion takes the scenes, assets and renders with it and there is no undo), `EditorShell` (layout), `AddPanel`, `ScenePanel` (multi-scene list), `RenderPanel` (export options), `Presenter` (fullscreen slideshow playback), `CodeView` (eject-to-code / JSON modal). |
 
 `App.tsx`: `DepGate` → (`EditorShell` if a project is loaded, else `ProjectHome`).
 
@@ -76,6 +76,18 @@ looks identical to the render. Keep these props in sync with the codegen (`objec
 `.rotate(rot * DEGREES)`).
 
 ## Direct manipulation & snapping (`canvas/SceneNodes.tsx`, `canvas/CanvasStage.tsx`)
+
+- **View navigation** (the `view` = scale + offset shared by the Konva stage and the LaTeX overlay):
+  two-finger/wheel scroll **pans**, pinch (delivered as `ctrl`+wheel) **zooms**, shift+scroll pans
+  horizontally, and a **discrete mouse wheel still zooms** with no modifier. Device kind is inferred
+  from the delta shape (pixel-mode, fractional, or any `deltaX` ⇒ trackpad) and the verdict is
+  **sticky** in a ref, so a fast two-finger flick can't be mistaken for a wheel notch mid-gesture.
+  **Drag-to-pan** is middle-button or **Alt+left**, captured on the container div (`pointerdown`
+  *and* `mousedown`, both in the capture phase) so it works over objects — Konva drags on mousedown,
+  the overlay on pointerdown, so swallowing only one leaks the gesture through. **Never
+  `preventDefault()` the pointerdown**: that suppresses the compatibility mouse events the drag is
+  driven by, so no mouseup arrives and the pan sticks to the cursor. The toolbar's **Fit** button
+  re-runs the mount-time fit (the way home from a pan into empty space).
 
 - **Line-like shapes** (`line`/`dashed_line`/`arrow`/`double_arrow`) render inside a `<Group>` at
   their `position` so draggable **endpoint handles** share the translation (no lag when the whole

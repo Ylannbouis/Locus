@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
 from app.models.ir import Project, ProjectKind, ProjectSummary, Scene
 
 PROJECTS_ROOT = Path.home() / "MathAnimStudio" / "projects"
+
+# Ids come from `new_id()` (uuid slug); anything else is refused before it can be
+# turned into a path — deletion is the one operation where traversal would hurt.
+_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 def _project_dir(project_id: str) -> Path:
@@ -89,6 +95,23 @@ def save_project(project: Project) -> Project:
         project.model_dump_json(indent=2), encoding="utf-8"
     )
     return project
+
+
+def delete_project(project_id: str) -> None:
+    """Delete a project's whole directory — JSON, uploaded assets and renders.
+
+    Irreversible: there is no trash. Callers must confirm with the user first.
+    """
+    if not _ID_RE.match(project_id):
+        raise ValueError(f"Invalid project id {project_id!r}")
+    d = _project_dir(project_id)
+    # Belt and braces on top of the id check: only ever remove a direct child of
+    # the projects root, and only one that actually holds a project.
+    if d.resolve().parent != PROJECTS_ROOT.resolve():
+        raise ValueError(f"Refusing to delete {d} — outside the projects root")
+    if not _project_file(project_id).exists():
+        raise FileNotFoundError(f"Project {project_id} not found")
+    shutil.rmtree(d)
 
 
 def renders_dir(project_id: str) -> Path:

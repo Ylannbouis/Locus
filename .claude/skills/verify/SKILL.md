@@ -43,6 +43,7 @@ npm run dev                                                       # background, 
 
 ## Cleanup
 
-- Delete the scratch project dir: `~\MathAnimStudio\projects\<id>` (no DELETE API route).
+- Delete the scratch project: `DELETE /api/projects/{id}` (removes the whole dir), or remove
+  `~\MathAnimStudio\projects\<id>` by hand.
 - Kill both servers (they were started in background; match on
   `uvicorn app.main` / `mas\frontend` command lines).

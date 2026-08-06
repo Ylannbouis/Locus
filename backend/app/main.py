@@ -26,6 +26,7 @@ from app.render.worker import run_worker
 from app.storage.projects import (
     assets_dir,
     create_project,
+    delete_project,
     list_projects,
     load_project,
     save_project,
@@ -126,6 +127,20 @@ async def put_project(project_id: str, project: Project) -> Project:
     if project.id != project_id:
         raise HTTPException(status_code=400, detail="Project ID mismatch")
     return save_project(project)
+
+
+@app.delete("/api/projects/{project_id}", status_code=204)
+async def del_project(project_id: str) -> Response:
+    """Delete a project and everything under it. The client confirms first — there
+    is no undo and no trash."""
+    try:
+        # rmtree can walk a big renders/ tree, so keep it off the event loop.
+        await asyncio.to_thread(delete_project, project_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Project not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------------------

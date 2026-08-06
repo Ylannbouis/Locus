@@ -19,6 +19,11 @@ export const getProject = (id: string): Promise<Project> =>
 export const saveProject = (project: Project): Promise<Project> =>
   http.put(`/api/projects/${project.id}`, project).then(r => r.data);
 
+// Irreversible — deletes the project's scenes, uploaded assets and renders.
+// Only call behind a confirmation.
+export const deleteProject = (id: string): Promise<void> =>
+  http.delete(`/api/projects/${id}`).then(() => undefined);
+
 // Eject to code: the generated Manim script for one scene (one-way).
 export const getSceneScript = (projectId: string, sceneId: string): Promise<string> =>
   http.get(`/api/projects/${projectId}/scenes/${sceneId}/script`).then(r => r.data.script);

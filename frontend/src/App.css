@@ -171,6 +171,17 @@ body {
 .project-home__name { flex: 1; font-weight: 500; }
 .project-home__meta { color: var(--text-dim); font-size: 12px; }
 
+/* Delete affordance on a project row; stays quiet until the row is hovered. */
+.project-home__delete {
+  padding: 4px 8px; border-radius: 6px; line-height: 1; font-size: 14px; cursor: pointer;
+  background: none; border: 1px solid transparent; color: var(--text-dim); opacity: 0.35;
+  transition: opacity 0.15s, border-color 0.15s, background 0.15s;
+}
+.project-home__item:hover .project-home__delete { opacity: 1; }
+.project-home__delete:hover, .project-home__delete:focus-visible {
+  opacity: 1; background: var(--surface); border-color: var(--danger);
+}
+
 /* Project kind — animation vs slideshow, chosen at creation */
 .project-home__create {
   display: flex;
@@ -442,6 +453,19 @@ body {
   position: fixed; inset: 0; z-index: 100; background: rgba(15, 23, 42, 0.55);
   display: flex; align-items: center; justify-content: center; padding: 24px;
 }
+
+/* Confirmation before a destructive, un-undoable action (project deletion). */
+.confirm-dialog {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  width: min(440px, 100%); padding: 20px; display: flex; flex-direction: column; gap: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+.confirm-dialog h2 { font-size: 17px; }
+.confirm-dialog p { font-size: 13px; color: var(--text-dim); line-height: 1.5; }
+.confirm-dialog__error { color: var(--danger); }
+.confirm-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.btn--danger { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 600; }
+.btn--danger:hover:not(:disabled) { background: #b91c1c; border-color: #b91c1c; }
 .code-view {
   background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
   width: min(900px, 100%); max-height: 88vh; display: flex; flex-direction: column;
@@ -515,12 +539,24 @@ body {
 
 .canvas-toolbar {
   position: absolute; top: 8px; right: 8px; z-index: 5;
-  display: flex; align-items: center; gap: 6px;
-  padding: 5px 10px; border-radius: 8px; font-size: 12px; cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px; border-radius: 8px; font-size: 12px;
   background: rgba(15, 23, 42, 0.82); color: #e2e8f0;
   border: 1px solid var(--border); backdrop-filter: blur(4px); user-select: none;
 }
+.canvas-toolbar label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .canvas-toolbar input { cursor: pointer; }
+/* Lives on the translucent dark chip, so it borrows the chip's palette rather
+   than the light-theme button colors. */
+.canvas-toolbar__btn {
+  padding: 2px 8px; border-radius: 5px; cursor: pointer; font-size: 12px;
+  background: rgba(255, 255, 255, 0.1); color: inherit; border: 1px solid rgba(255, 255, 255, 0.22);
+}
+.canvas-toolbar__btn:hover { background: rgba(255, 255, 255, 0.2); }
+
+/* While drag-panning, the grabbing cursor has to beat the cursor Konva sets on
+   its own container (and any shape hover cursor) — hence the descendant rule. */
+.canvas-stage--panning, .canvas-stage--panning * { cursor: grabbing !important; }
 
 /* ---------------------------------------------------------------------------
    Inspector fields

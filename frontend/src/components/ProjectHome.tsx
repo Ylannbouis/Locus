@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ProjectKind, ProjectSummary } from '../types/ir';
-import { createProject, getProject, getProjects } from '../api/client';
+import { createProject, deleteProject, getProject, getProjects } from '../api/client';
 import { useProjectStore } from '../store/projectStore';
 
 const KINDS: { value: ProjectKind; label: string; blurb: string }[] = [
@@ -23,6 +23,10 @@ export function ProjectHome() {
   const [newName, setNewName] = useState('');
   const [kind, setKind] = useState<ProjectKind>('animation');
   const [showForm, setShowForm] = useState(false);
+  // The project the delete confirmation is asking about (null = no dialog open).
+  const [pendingDelete, setPendingDelete] = useState<ProjectSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   const setProject = useProjectStore(s => s.setProject);
 
@@ -52,6 +56,31 @@ export function ProjectHome() {
   };
 
   const closeForm = () => { setShowForm(false); setNewName(''); setKind('animation'); };
+
+  const cancelDelete = () => { setPendingDelete(null); setDeleteError(''); };
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await deleteProject(pendingDelete.id);
+      setPendingDelete(null);
+      await load();
+    } catch {
+      setDeleteError('Could not delete the project — is the backend still running?');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // Escape closes the confirmation, like every other dismissable surface here.
+  useEffect(() => {
+    if (!pendingDelete) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !deleting) cancelDelete(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pendingDelete, deleting]);
 
   return (
     <div className="project-home">
@@ -110,9 +139,46 @@ export function ProjectHome() {
                 {p.scene_count} {p.kind === 'slideshow' ? 'slide' : 'scene'}{p.scene_count !== 1 ? 's' : ''}
               </span>
               <span className="project-home__meta">{p.updated_at ? new Date(p.updated_at).toLocaleString() : ''}</span>
+              <button
+                type="button"
+                className="project-home__delete"
+                title={`Delete ${p.name}`}
+                aria-label={`Delete ${p.name}`}
+                // The whole row opens the project — don't let that fire too.
+                onClick={e => { e.stopPropagation(); setDeleteError(''); setPendingDelete(p); }}
+              >
+                🗑
+              </button>
             </li>
           ))}
         </ul>
+      )}
+
+      {pendingDelete && (
+        <div className="modal-backdrop" onClick={() => { if (!deleting) cancelDelete(); }}>
+          <div
+            className="confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="confirm-delete-title"
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 id="confirm-delete-title">Delete “{pendingDelete.name}”?</h2>
+            <p>
+              This permanently deletes the {pendingDelete.kind === 'slideshow' ? 'slideshow' : 'project'} and
+              everything in it — {pendingDelete.scene_count}{' '}
+              {pendingDelete.kind === 'slideshow' ? 'slide' : 'scene'}{pendingDelete.scene_count !== 1 ? 's' : ''},
+              any uploaded audio and images, and every render. It cannot be undone.
+            </p>
+            {deleteError && <p className="confirm-dialog__error">{deleteError}</p>}
+            <div className="confirm-dialog__actions">
+              <button className="btn" onClick={cancelDelete} disabled={deleting} autoFocus>Cancel</button>
+              <button className="btn btn--danger" onClick={confirmDelete} disabled={deleting}>
+                {deleting ? 'Deleting…' : 'Delete permanently'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

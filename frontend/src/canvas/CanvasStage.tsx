@@ -16,6 +16,13 @@ import {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+// Wheel/trackpad tuning. A discrete mouse-wheel notch reports |deltaY| ≈ 100 px in
+// every browser that uses pixel deltaMode; trackpads report a stream of much
+// smaller (often fractional) deltas on both axes.
+const WHEEL_NOTCH = 50;   // px: at or above this, a pixel-mode delta looks like a wheel notch
+const NOTCH_ZOOM = 1.1;   // zoom step per wheel notch
+const PINCH_RATE = 0.01;  // zoom exponent per px of pinch delta
+
 // Polyline (world px) tracing the arc the object's center sweeps while rotating
 // `deg` (Manim CCW degrees) about the fixed pivot `a`, starting at `from`.
 function arcPoints(a: Point2D, from: Point2D, deg: number): number[] {
@@ -58,6 +65,8 @@ export function CanvasStage() {
   // Live pivot while dragging a rotate keyframe's ⊕ anchor handle (committed on release).
   const [anchorDrag, setAnchorDrag] = useState<{ id: string; pos: Point2D } | null>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
+  // Drives the grabbing cursor while a drag-pan is in flight.
+  const [panning, setPanning] = useState(false);
 
   // Hold Space (with a single object selected) to peek at every transform ghost
   // for that object. Only swallow Space then, so it stays usable elsewhere.
@@ -85,6 +94,8 @@ export function CanvasStage() {
   const centered = useRef(false);
   const viewRef = useRef(view); viewRef.current = view;
   const pan = useRef({ active: false, sx: 0, sy: 0, ox: 0, oy: 0 });
+  // Latches once this session's pointing device looks like a trackpad (see onWheel).
+  const trackpadSeen = useRef(false);
   const bandRef = useRef<{ active: boolean; sx: number; sy: number; x1: number; y1: number; moved: boolean }>(
     { active: false, sx: 0, sy: 0, x1: 0, y1: 0, moved: false });
 
@@ -236,16 +247,30 @@ export function CanvasStage() {
     return () => ro.disconnect();
   }, []);
 
+  // Center the frame and scale it to fit — once on mount, and on demand from the
+  // toolbar's Fit button (the way back when a pan has wandered off into space).
+  const fitView = () => {
+    if (size.w <= 0 || size.h <= 0) return;
+    const fitW = size.w / (FRAME_WIDTH * PX_PER_UNIT);
+    const fitH = size.h / (FRAME_HEIGHT * PX_PER_UNIT);
+    const scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Math.min(fitW, fitH) * 0.92));
+    setView({ scale, offsetX: size.w / 2, offsetY: size.h / 2 });
+  };
+
   useEffect(() => {
     if (!centered.current && size.w > 0 && size.h > 0) {
-      const fitW = size.w / (FRAME_WIDTH * PX_PER_UNIT);
-      const fitH = size.h / (FRAME_HEIGHT * PX_PER_UNIT);
-      const scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Math.min(fitW, fitH) * 0.92));
-      setView({ scale, offsetX: size.w / 2, offsetY: size.h / 2 });
+      fitView();
       centered.current = true;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size]);
 
+  // Wheel gestures. Two-finger trackpad scroll pans; pinch-zoom (which both macOS
+  // and Windows deliver as ctrl+wheel) zooms; a discrete mouse wheel keeps zooming
+  // with no modifier, as it always did. Devices are told apart by the shape of the
+  // deltas, and the verdict is sticky: once a trackpad-shaped event has been seen
+  // we stop guessing and pan on every unmodified scroll, so a fast two-finger
+  // flick can never be mistaken for a wheel notch and zoom instead.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -254,20 +279,68 @@ export function CanvasStage() {
       const rect = el!.getBoundingClientRect();
       const px = e.clientX - rect.left;
       const py = e.clientY - rect.top;
-      setView(v => {
-        const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-        const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor));
-        const wx = (px - v.offsetX) / v.scale;
-        const wy = (py - v.offsetY) / v.scale;
-        return { scale: newScale, offsetX: px - wx * newScale, offsetY: py - wy * newScale };
-      });
+      // deltaMode 1 = lines, 2 = pages; normalize both to pixels.
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? rect.height : 1;
+      let dx = e.deltaX * unit;
+      let dy = e.deltaY * unit;
+      const notch = e.deltaMode !== 0 || (Number.isInteger(dy) && Math.abs(dy) >= WHEEL_NOTCH);
+      if (e.deltaMode === 0 && (e.deltaX !== 0 || !notch)) trackpadSeen.current = true;
+
+      if (e.ctrlKey || e.metaKey || !trackpadSeen.current) {
+        const factor = notch
+          ? (dy < 0 ? NOTCH_ZOOM : 1 / NOTCH_ZOOM)  // one wheel notch = one 10% step
+          : Math.exp(-dy * PINCH_RATE);             // pinch: many small deltas, so scale smoothly
+        setView(v => {
+          const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor));
+          const wx = (px - v.offsetX) / v.scale;
+          const wy = (py - v.offsetY) / v.scale;
+          return { scale: newScale, offsetX: px - wx * newScale, offsetY: py - wy * newScale };
+        });
+      } else {
+        // Shift+scroll pans horizontally; macOS swaps the axes for us, Windows doesn't.
+        if (e.shiftKey && dx === 0) { dx = dy; dy = 0; }
+        setView(v => ({ ...v, offsetX: v.offsetX - dx, offsetY: v.offsetY - dy }));
+      }
     }
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
-  // Pan (middle mouse) and rubber-band select (left drag on empty) are driven by
-  // window listeners so a release anywhere reliably finalizes the gesture.
+  // Drag-to-pan: middle button, or Alt+left for trackpads (which have no middle
+  // button). Captured on the container so the gesture works over objects too —
+  // neither Konva nor the LaTeX overlay sees the press, so nothing starts dragging.
+  // Both event kinds are captured: the overlay drags on `pointerdown` (which fires
+  // first), Konva on `mousedown`, so swallowing only one still lets the other through.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    function onDown(e: MouseEvent) {
+      if (e.button !== 1 && !(e.button === 0 && e.altKey)) return;
+      // Leave the floating controls clickable.
+      if ((e.target as HTMLElement | null)?.closest('.camera-hud, .canvas-toolbar')) return;
+      // Never preventDefault a pointerdown: that suppresses the compatibility mouse
+      // events (mousedown/mousemove/mouseup) this gesture is driven by, so the release
+      // would never arrive and the pan would stick to the cursor. Stopping propagation
+      // is enough to keep Konva and the overlay out of it; the paired mousedown, which
+      // we capture too, does the preventing (text selection, native drag).
+      if (e.type !== 'pointerdown') e.preventDefault();
+      e.stopPropagation();
+      if (pan.current.active) return; // already started on the paired pointerdown
+      const rect = el!.getBoundingClientRect();
+      const v = viewRef.current;
+      pan.current = { active: true, sx: e.clientX - rect.left, sy: e.clientY - rect.top, ox: v.offsetX, oy: v.offsetY };
+      setPanning(true);
+    }
+    el.addEventListener('pointerdown', onDown, true);
+    el.addEventListener('mousedown', onDown, true);
+    return () => {
+      el.removeEventListener('pointerdown', onDown, true);
+      el.removeEventListener('mousedown', onDown, true);
+    };
+  }, []);
+
+  // Pan and rubber-band select (left drag on empty) are driven by window
+  // listeners so a release anywhere reliably finalizes the gesture.
   useEffect(() => {
     function onMove(e: MouseEvent) {
       const el = containerRef.current;
@@ -283,7 +356,7 @@ export function CanvasStage() {
       }
     }
     function onUp() {
-      if (pan.current.active) { pan.current.active = false; return; }
+      if (pan.current.active) { pan.current.active = false; setPanning(false); return; }
       if (!bandRef.current.active) return;
       const b = bandRef.current;
       const st = useProjectStore.getState();
@@ -313,10 +386,8 @@ export function CanvasStage() {
     if (e.target !== e.target.getStage()) return; // an object handles its own press
     const stage = e.target.getStage()!;
     const p = stage.getPointerPosition()!;
-    if (e.evt.button === 1) {
-      e.evt.preventDefault();
-      pan.current = { active: true, sx: p.x, sy: p.y, ox: view.offsetX, oy: view.offsetY };
-    } else if (e.evt.button === 0) {
+    // Middle / Alt+left never reach here — the container's capture listener pans instead.
+    if (e.evt.button === 0) {
       bandRef.current = { active: true, sx: p.x, sy: p.y, x1: p.x, y1: p.y, moved: false };
       setBand({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
     }
@@ -424,7 +495,8 @@ export function CanvasStage() {
   }
 
   return (
-    <div ref={containerRef} className="canvas-stage" style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', background: bgColor }}>
+    <div ref={containerRef} className={`canvas-stage${panning ? ' canvas-stage--panning' : ''}`}
+      style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', background: bgColor }}>
       <Stage
         width={size.w}
         height={size.h}
@@ -581,10 +653,16 @@ export function CanvasStage() {
         }} />
       )}
 
-      <label className="canvas-toolbar" title="Snap objects to the center lines while dragging">
-        <input type="checkbox" checked={snapToCenter} onChange={e => setSnapToCenter(e.target.checked)} />
-        Snap to center
-      </label>
+      <div className="canvas-toolbar">
+        <label title="Snap objects to the center lines while dragging">
+          <input type="checkbox" checked={snapToCenter} onChange={e => setSnapToCenter(e.target.checked)} />
+          Snap to center
+        </label>
+        <button type="button" className="canvas-toolbar__btn" onClick={fitView}
+          title="Fit the frame in view — scroll or Alt+drag to pan, pinch or Ctrl+scroll to zoom">
+          Fit
+        </button>
+      </div>
 
       {objects.length === 0 && (
         <div className="canvas-empty">Add an object from the left panel to begin.</div>
