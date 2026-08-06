@@ -84,6 +84,8 @@ function bakeTransform(obj: SceneObject, T: Transform2D): SceneObject {
     } else if (st === 'rectangle' || st === 'ellipse') {
       p.width = num(p.width, 2) * s;
       p.height = num(p.height, 1.2) * s;
+      // Rounded corners grow with the shape (Manim's .scale() scales the arcs too).
+      if (p.corner_radius != null) p.corner_radius = num(p.corner_radius, 0) * s;
       addRot();
     } else if (st === 'polygon') {
       const verts = (Array.isArray(p.vertices) ? p.vertices : []).map(pt);

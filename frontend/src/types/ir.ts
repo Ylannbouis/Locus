@@ -158,6 +158,14 @@ export interface Transition {
   duration: number;
 }
 
+// A pause point inside a slide (slideshow projects only): playback stops here
+// and waits for a click. Player-side only — the scene still renders as one
+// continuous mp4, so breaks never reach codegen. Mirrors `SceneBreak` in ir.py.
+export interface SceneBreak {
+  id: string;
+  time: number; // seconds from the start of the scene
+}
+
 export interface Scene {
   id: string;
   name: string;
@@ -172,6 +180,8 @@ export interface Scene {
   // Slideshow projects only: play the next slide automatically instead of
   // waiting for a click. Ignored by animation projects.
   auto_advance?: boolean;
+  // Slideshow projects only: mid-slide pause points (see SceneBreak).
+  breaks?: SceneBreak[];
 }
 
 export interface ProjectSettings {
@@ -212,6 +222,8 @@ export interface SlideInfo {
   file: string;
   duration: number;
   auto_advance: boolean;
+  // Mid-slide pause timestamps (seconds), sorted, already clamped to the video.
+  breaks: number[];
   url: string; // API path serving this slide's mp4
 }
 

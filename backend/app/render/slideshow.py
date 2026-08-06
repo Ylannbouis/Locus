@@ -13,6 +13,10 @@ at the end just keeps showing it), and advances on click / Space / →. That
 freeze is why no ffmpeg work is needed here: the "hold" between slides is the
 player pausing, not padded video.
 
+A scene's `breaks` work the same way *inside* a slide: the mp4 is one continuous
+render, and the player pauses it at each break timestamp until the next click.
+So breaks cost no render time and stepping backwards through them is just a seek.
+
 The manifest is *inlined* into index.html because a page opened from file://
 cannot fetch() a sibling JSON file, while a relative <video src> works fine.
 """
@@ -48,18 +52,33 @@ def build_slideshow(videos: list[Path], scenes: list[Scene], out_dir: Path, titl
     for i, (video, scene) in enumerate(zip(videos, scenes)):
         name = slide_filename(i + 1)
         shutil.copyfile(video, slides_dir / name)
+        duration = probe_duration(slides_dir / name)
         slides.append({
             "index": i,
             "name": scene.name or f"Slide {i + 1}",
             "file": f"{SLIDES_SUBDIR}/{name}",
-            "duration": probe_duration(slides_dir / name),
+            "duration": duration,
             "auto_advance": bool(scene.auto_advance),
+            "breaks": _slide_breaks(scene, duration),
         })
 
     manifest = {"title": title, "slides": slides}
     (out_dir / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     (out_dir / "index.html").write_text(_render_player(manifest), encoding="utf-8")
     return manifest
+
+
+def _slide_breaks(scene: Scene, duration: float) -> list[float]:
+    """The scene's mid-slide pause points, as sorted seconds the player can use.
+
+    Dropped: duplicates, and anything outside the rendered video — a break at (or
+    past) the last frame is just the slide's own freeze, and one at t=0 would stop
+    the slide before it started.
+    """
+    times = sorted({round(b.time, 3) for b in (scene.breaks or [])})
+    if duration <= 0:
+        return times  # unprobeable video: keep them and let the player clamp
+    return [t for t in times if 0.05 < t < duration - 0.05]
 
 
 def zip_slideshow(src_dir: Path, output_zip: Path) -> None:
@@ -139,7 +158,7 @@ _PLAYER_HTML = """<!doctype html>
 <body>
 <div id="stage"></div>
 
-<div id="hint">Click or press <b>Space</b> for the next slide</div>
+<div id="hint"><span id="hint-text">Click or press <b>Space</b> for the next slide</span></div>
 
 <div id="hud">
   <span id="title"></span>
@@ -162,6 +181,7 @@ const SLIDES = MANIFEST.slides || [];
 const stage = document.getElementById('stage');
 const curtain = document.getElementById('curtain');
 const hintEl = document.getElementById('hint');
+const hintTextEl = document.getElementById('hint-text');
 const titleEl = document.getElementById('title');
 const counterEl = document.getElementById('counter');
 const dotsEl = document.getElementById('dots');
@@ -185,17 +205,59 @@ const videos = SLIDES.map((s, i) => {
 let current = 0;
 let started = false;
 let hudTimer = null, hintTimer = null;
+// The next break this slide should stop at, and the rAF handle watching for it.
+// `timeupdate` only fires ~4x a second, which would overshoot a break visibly.
+let breakTarget = null, rafId = 0;
 
 function flashHud() {
   document.body.classList.add('show-hud');
   clearTimeout(hudTimer);
   hudTimer = setTimeout(() => document.body.classList.remove('show-hud'), 2200);
 }
-function showHint(on) {
+function showHint(on, kind) {
   clearTimeout(hintTimer);
   if (!on) { document.body.classList.remove('show-hint'); return; }
+  hintTextEl.innerHTML = kind === 'break'
+    ? 'Click or press <b>Space</b> to continue'
+    : 'Click or press <b>Space</b> for the next slide';
   // Only nag once the slide has actually been sitting frozen for a moment.
   hintTimer = setTimeout(() => document.body.classList.add('show-hint'), 700);
+}
+
+// ---- mid-slide breaks ----------------------------------------------------
+function breaksOf(i) { return (SLIDES[i] && SLIDES[i].breaks) || []; }
+
+function nextBreakAfter(i, t) {
+  const bs = breaksOf(i);
+  for (let k = 0; k < bs.length; k++) if (bs[k] > t + 0.02) return bs[k];
+  return null;
+}
+
+function stopMonitor() { if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } }
+
+// Watch the playing slide and pause it the moment it reaches `breakTarget`.
+function monitor() {
+  rafId = 0;
+  const v = videos[current];
+  if (!v || v.paused || v.ended) return;
+  if (breakTarget !== null && v.currentTime >= breakTarget) {
+    v.pause();
+    v.currentTime = breakTarget; // land exactly on it, so stepping back is stable
+    showHint(true, 'break');
+    return;
+  }
+  rafId = requestAnimationFrame(monitor);
+}
+
+function playFromHere() {
+  const v = videos[current];
+  if (!v) return;
+  breakTarget = nextBreakAfter(current, v.currentTime);
+  showHint(false);
+  const p = v.play();
+  if (p && p.catch) p.catch(() => showHint(true, breakTarget === null ? 'end' : 'break'));
+  stopMonitor();
+  if (breakTarget !== null) rafId = requestAnimationFrame(monitor);
 }
 
 function renderHud() {
@@ -220,6 +282,8 @@ function show(i, mode) {
   if (i < 0 || i >= videos.length) return;
   const prev = videos[current];
   if (prev && prev !== videos[i]) { prev.pause(); prev.classList.remove('is-current'); }
+  stopMonitor();
+  breakTarget = null;
   current = i;
   const v = videos[i];
   v.classList.add('is-current');
@@ -233,28 +297,60 @@ function show(i, mode) {
     const seek = () => { try { v.currentTime = Math.max(0, (v.duration || 0) - 0.05); } catch (e) {} };
     if (v.readyState >= 1) seek(); else v.addEventListener('loadedmetadata', seek, { once: true });
     v.pause();
-    showHint(true);
+    showHint(true, 'end');
   } else {
     v.currentTime = 0;
-    const p = v.play();
-    if (p && p.catch) p.catch(() => showHint(true)); // autoplay blocked → wait for a click
+    playFromHere(); // picks up this slide's first break, if it has one
   }
 }
 
 function onSlideEnded() {
+  stopMonitor();
+  breakTarget = null;
   const s = SLIDES[current];
   if (s && s.auto_advance && current < videos.length - 1) next();
-  else showHint(true);
+  else showHint(true, 'end');
 }
 
 function next() {
   const v = videos[current];
-  // A click part-way through a slide skips to its end first (presenter reflex),
-  // matching how the frozen state looks before advancing.
-  if (v && !v.ended && !v.paused) { v.pause(); v.currentTime = Math.max(0, (v.duration || 0) - 0.05); showHint(true); return; }
+  if (!v) return;
+  const atEnd = v.ended || v.currentTime >= (v.duration || 0) - 0.1;
+  // Paused part-way through: we're sitting on a break (or autoplay was blocked).
+  // The click resumes the same slide rather than skipping it.
+  if (v.paused && !atEnd) { playFromHere(); return; }
+  // Playing: a click jumps to the next stop — the coming break if there is one,
+  // otherwise the slide's last frame (the presenter reflex of skipping ahead).
+  if (!v.paused) {
+    stopMonitor();
+    const target = breakTarget !== null ? breakTarget : Math.max(0, (v.duration || 0) - 0.05);
+    const kind = breakTarget !== null ? 'break' : 'end';
+    v.pause();
+    v.currentTime = target;
+    showHint(true, kind);
+    return;
+  }
   if (current < videos.length - 1) show(current + 1, 'play');
 }
-function back() { if (current > 0) show(current - 1, 'end'); }
+
+function back() {
+  const v = videos[current];
+  // Step back through this slide's own breaks before leaving it.
+  if (v) {
+    const bs = breaksOf(current);
+    let prev = null;
+    for (let k = 0; k < bs.length; k++) if (bs[k] < v.currentTime - 0.15) prev = bs[k];
+    if (prev !== null) {
+      stopMonitor();
+      v.pause();
+      v.currentTime = prev;
+      breakTarget = prev;
+      showHint(true, 'break');
+      return;
+    }
+  }
+  if (current > 0) show(current - 1, 'end');
+}
 function replay() { show(current, 'play'); }
 
 function start() {

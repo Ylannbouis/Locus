@@ -455,9 +455,15 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
       }
       // rectangle (default)
       const w = Number(p.width ?? 2) * PXU, h = Number(p.height ?? 1.2) * PXU;
+      // Optional rounded corners (`corner_radius`, Manim units, 0 = square).
+      // Clamped to half the shorter side exactly as the codegen does, so the
+      // preview matches Manim's RoundedRectangle.
+      const cr = Math.max(0, Number(p.corner_radius ?? 0)) * PXU;
       return (
         <Rotatable key={o.id} show={canRotate} viewScale={viewScale} onEnd={rotEnd}>
-          {ref => <Rect ref={ref as React.Ref<Konva.Rect>} {...common} rotation={rot} width={w} height={h} offsetX={w / 2} offsetY={h / 2} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />}
+          {ref => <Rect ref={ref as React.Ref<Konva.Rect>} {...common} rotation={rot} width={w} height={h} offsetX={w / 2} offsetY={h / 2}
+            cornerRadius={cr > 0 ? Math.min(cr, Math.min(Math.abs(w), Math.abs(h)) / 2) : 0}
+            fill={fill} stroke={stroke} strokeWidth={strokeWidth} />}
         </Rotatable>
       );
     }

@@ -10,13 +10,15 @@ const SNAP_KEY = 'mas.tlSnap';
 interface TimelineUIState {
   selectedKfIds: string[];
   selectedAudioId: string | null; // selected audio clip (mutually exclusive with kf selection)
+  selectedBreakId: string | null; // selected slide break (also mutually exclusive)
   pxPerSec: number;
   playhead: number; // seconds — audio-preview position marker
   playing: boolean;
   snapEnabled: boolean; // drag-snapping to neighbouring edges (persisted)
   selectKf: (id: string, additive?: boolean) => void;
   selectAudio: (id: string | null) => void;
-  clearKf: () => void; // clears the whole timeline selection (keyframes + audio)
+  selectBreak: (id: string | null) => void;
+  clearKf: () => void; // clears the whole timeline selection (keyframes + audio + breaks)
   setPxPerSec: (v: number) => void;
   setPlayhead: (t: number) => void;
   setPlaying: (v: boolean) => void;
@@ -26,21 +28,24 @@ interface TimelineUIState {
 export const useTimelineStore = create<TimelineUIState>((set) => ({
   selectedKfIds: [],
   selectedAudioId: null,
+  selectedBreakId: null,
   pxPerSec: 90,
   playhead: 0,
   playing: false,
   snapEnabled: localStorage.getItem(SNAP_KEY) !== '0', // default on
   selectKf: (id, additive) => set(s => {
-    if (!additive) return { selectedKfIds: [id], selectedAudioId: null };
+    if (!additive) return { selectedKfIds: [id], selectedAudioId: null, selectedBreakId: null };
     return {
       selectedAudioId: null,
+      selectedBreakId: null,
       selectedKfIds: s.selectedKfIds.includes(id)
         ? s.selectedKfIds.filter(x => x !== id)
         : [...s.selectedKfIds, id],
     };
   }),
-  selectAudio: (id) => set({ selectedAudioId: id, selectedKfIds: [] }),
-  clearKf: () => set({ selectedKfIds: [], selectedAudioId: null }),
+  selectAudio: (id) => set({ selectedAudioId: id, selectedKfIds: [], selectedBreakId: null }),
+  selectBreak: (id) => set({ selectedBreakId: id, selectedKfIds: [], selectedAudioId: null }),
+  clearKf: () => set({ selectedKfIds: [], selectedAudioId: null, selectedBreakId: null }),
   setPxPerSec: (v) => set({ pxPerSec: Math.max(20, Math.min(400, v)) }),
   setPlayhead: (t) => set({ playhead: Math.max(0, t) }),
   setPlaying: (v) => set({ playing: v }),

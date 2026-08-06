@@ -5,7 +5,7 @@ import { useTimelineStore, VERB_META, timelineVerbsFor, defaultParams, CAMERA_ID
 import { uploadAudioAsset } from '../api/client';
 import { playFrom, stopPlayback } from './audioPlayback';
 import { Waveform } from './Waveform';
-import type { AnimationVerb, AudioClip, Keyframe, SceneObject } from '../types/ir';
+import type { AnimationVerb, AudioClip, Keyframe, SceneBreak, SceneObject } from '../types/ir';
 
 const ROW_H = 30;
 const AUDIO_ROW_H = 46; // taller so the waveform is readable
@@ -109,10 +109,22 @@ interface AudioDragState {
   targets: number[];
 }
 
+// Slide-break drag: a break is a single point in time, so there's nothing to
+// trim — only its position moves.
+interface BreakDragState {
+  id: string;
+  startClientX: number;
+  origTime: number;
+  curTime: number;
+  targets: number[];
+  moved: boolean; // a click that never moved just selects (and must not write history)
+}
+
 type MenuState =
   | { kind: 'kf'; x: number; y: number; id: string }
   | { kind: 'clip'; x: number; y: number; id: string; time: number } // time = where the right-click landed
-  | { kind: 'lane'; x: number; y: number; time: number }; // empty audio-lane menu (paste target)
+  | { kind: 'lane'; x: number; y: number; time: number } // empty audio-lane menu (paste target)
+  | { kind: 'break'; x: number; y: number; id: string };
 
 // The playhead line + toolbar readout subscribe to the playhead on their own,
 // so the 60fps rAF updates during playback don't re-render the whole timeline.
@@ -137,6 +149,9 @@ export function Timeline() {
   const removeKeyframe = useProjectStore(s => s.removeKeyframe);
   const groupKeyframes = useProjectStore(s => s.groupKeyframes);
   const ungroupKeyframes = useProjectStore(s => s.ungroupKeyframes);
+  const addBreak = useProjectStore(s => s.addBreak);
+  const moveBreak = useProjectStore(s => s.moveBreak);
+  const removeBreak = useProjectStore(s => s.removeBreak);
   const addAudioClip = useProjectStore(s => s.addAudioClip);
   const updateAudioClip = useProjectStore(s => s.updateAudioClip);
   const removeAudioClip = useProjectStore(s => s.removeAudioClip);
@@ -151,6 +166,8 @@ export function Timeline() {
   // PlayheadLine / PlayheadTime subscribe to it.
   const selectedKfIds = useTimelineStore(s => s.selectedKfIds);
   const selectedAudioId = useTimelineStore(s => s.selectedAudioId);
+  const selectedBreakId = useTimelineStore(s => s.selectedBreakId);
+  const selectBreak = useTimelineStore(s => s.selectBreak);
   const pxPerSec = useTimelineStore(s => s.pxPerSec);
   const playing = useTimelineStore(s => s.playing);
   const selectKf = useTimelineStore(s => s.selectKf);
@@ -163,6 +180,7 @@ export function Timeline() {
 
   const [drag, setDrag] = useState<DragState | null>(null);
   const [aDrag, setADrag] = useState<AudioDragState | null>(null);
+  const [bDrag, setBDrag] = useState<BreakDragState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -188,11 +206,16 @@ export function Timeline() {
   const objects = scene?.objects ?? [];
   const keyframes = scene?.timeline.keyframes ?? [];
   const audioClips = scene?.audio ?? [];
+  // Breaks are a slideshow concept: in an animation project the scenes are
+  // stitched into one continuous video, so there is nothing to click through.
+  const isSlideshow = project?.kind === 'slideshow';
+  const breaks = isSlideshow ? scene?.breaks ?? [] : [];
 
   const contentEnd = Math.max(
     1,
     ...keyframes.map(k => k.start_time + k.duration),
     ...audioClips.map(c => c.start_time + c.duration),
+    ...breaks.map(b => b.time),
   );
   const totalDur = Math.max(4, contentEnd) + 2;
   const contentW = totalDur * pxPerSec;
@@ -238,6 +261,14 @@ export function Timeline() {
         }
         setDrag({ ...drag, curDur: Math.max(0.1, dur) });
       }
+    } else if (bDrag) {
+      const dx = (e.clientX - bDrag.startClientX) / pxPerSec;
+      let t = Math.max(0, bDrag.origTime + dx);
+      if (snapOn) {
+        const hit = snapTo(t, bDrag.targets, pxPerSec);
+        if (hit !== null) t = Math.max(0, hit);
+      }
+      setBDrag({ ...bDrag, curTime: t, moved: bDrag.moved || Math.abs(e.clientX - bDrag.startClientX) > 2 });
     } else if (aDrag) {
       const dx = (e.clientX - aDrag.startClientX) / pxPerSec;
       const o = aDrag.orig;
@@ -275,6 +306,10 @@ export function Timeline() {
         updateKeyframe(drag.kfId, { duration: Math.round(drag.curDur * 100) / 100 });
       }
       setDrag(null);
+    } else if (bDrag) {
+      // A plain click (no movement) only selects — don't push an undo entry for it.
+      if (bDrag.moved && bDrag.curTime !== bDrag.origTime) moveBreak(bDrag.id, bDrag.curTime);
+      setBDrag(null);
     } else if (aDrag) {
       const { orig, cur } = aDrag;
       if (cur.start !== orig.start_time || cur.offset !== orig.offset || cur.dur !== orig.duration) {
@@ -317,6 +352,26 @@ export function Timeline() {
       targets: groupIds.length > 1
         ? edgeTargetsExcluding(keyframes, groupSet)
         : edgeTargets(keyframes.filter(k => k.object_id === kf.object_id), kf.id),
+    });
+  };
+
+  // A break snaps to everything in the scene — keyframe *and* clip edges, t=0,
+  // the playhead and the other breaks — since "pause exactly when this animation
+  // finishes" is the common case.
+  const breakTargets = (excludeId: string): number[] => [
+    ...edgeTargets([...keyframes, ...audioClips], ''),
+    ...breaks.filter(b => b.id !== excludeId).map(b => b.time),
+  ];
+
+  const startBreakDrag = (e: React.PointerEvent, b: SceneBreak) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    setMenu(null);
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+    selectBreak(b.id);
+    setBDrag({
+      id: b.id, startClientX: e.clientX, origTime: b.time, curTime: b.time,
+      targets: breakTargets(b.id), moved: false,
     });
   };
 
@@ -469,7 +524,17 @@ export function Timeline() {
         <button className="btn btn--ghost tl__zoom" title="Zoom in" onClick={() => setPxPerSec(pxPerSec * 1.25)}>+</button>
         <button className="btn" disabled={selectedKfIds.length < 2} onClick={() => groupKeyframes(selectedKfIds)}>Group ∥</button>
         <button className="btn" disabled={!selectedHaveGroup} onClick={() => ungroupKeyframes(selectedKfIds)}>Ungroup</button>
-        <span className="tl__hint">double-click a lane to add · drag to move · drag right edge to resize · click the ruler to seek</span>
+        {isSlideshow && (
+          <button className="btn tl__break-add"
+            title="Add a break at the playhead — the slide pauses there and waits for a click before carrying on"
+            onClick={() => addBreak(useTimelineStore.getState().playhead)}>
+            ⏸ Break
+          </button>
+        )}
+        <span className="tl__hint">
+          double-click a lane to add · drag to move · drag right edge to resize · click the ruler to seek
+          {isSlideshow ? ' · double-click the ruler for a break' : ''}
+        </span>
       </div>
 
       <div className="tl__scroll">
@@ -491,12 +556,34 @@ export function Timeline() {
               if (s?.wasPlaying && project) {
                 void playFrom(project.id, audioClips, useTimelineStore.getState().playhead, contentEnd);
               }
-            }}>
+            }}
+            onDoubleClick={e => { if (isSlideshow) { e.stopPropagation(); addBreak(laneTime(e)); } }}>
             {Array.from({ length: ticks + 1 }, (_, i) => (
               <div key={i} className="tl__tick" style={{ left: i * pxPerSec }}>
                 <span className="tl__tick-label">{i}s</span>
               </div>
             ))}
+            {/* Break flags live in the (sticky) ruler so they stay grabbable while
+                the lanes scroll; the line itself is drawn across the grid below. */}
+            {breaks.map(b => {
+              const t = bDrag?.id === b.id ? bDrag.curTime : b.time;
+              return (
+                <span key={b.id}
+                  className={`tl__break-flag ${selectedBreakId === b.id ? 'is-sel' : ''}`}
+                  style={{ left: t * pxPerSec }}
+                  title={`Break @ ${t.toFixed(2)}s — the slide pauses here until the next click (drag to move, right-click to delete)`}
+                  onPointerDown={e => startBreakDrag(e, b)}
+                  onClick={e => e.stopPropagation()}
+                  onDoubleClick={e => e.stopPropagation()}
+                  onContextMenu={e => {
+                    e.preventDefault(); e.stopPropagation();
+                    selectBreak(b.id);
+                    setMenu({ kind: 'break', x: e.clientX, y: e.clientY, id: b.id });
+                  }}>
+                  ⏸
+                </span>
+              );
+            })}
           </div>
 
           {/* Dedicated camera track (pan / zoom / focus keyframes). */}
@@ -550,6 +637,17 @@ export function Timeline() {
             );
           })}
 
+          {/* Break lines: full-height verticals like the playhead, but amber and
+              static — where playback stops and waits for a click. */}
+          {breaks.map(b => {
+            const t = bDrag?.id === b.id ? bDrag.curTime : b.time;
+            return (
+              <div key={b.id}
+                className={`tl__break ${selectedBreakId === b.id ? 'tl__break--sel' : ''}`}
+                style={{ left: LABEL_W + t * pxPerSec }} />
+            );
+          })}
+
           <PlayheadLine pxPerSec={pxPerSec} />
         </div>
       </div>
@@ -593,6 +691,22 @@ export function Timeline() {
             <button className="tl__menu-item" onClick={() => { copyAudioClip(clip.id); setMenu(null); }}>Copy (Ctrl+C)</button>
             <button className="tl__menu-item" onClick={() => { duplicateAudioClip(clip.id); setMenu(null); }}>Duplicate</button>
             <button className="tl__menu-item tl__menu-item--danger" onClick={() => { removeAudioClip(clip.id); setMenu(null); }}>Delete</button>
+          </div>
+        );
+      })()}
+
+      {menu?.kind === 'break' && (() => {
+        const b = breaks.find(x => x.id === menu.id);
+        if (!b) return null;
+        return (
+          <div className="tl__menu" style={{ left: menu.x, top: menu.y }} onClick={e => e.stopPropagation()}>
+            <div className="tl__menu-head">Break @ {b.time.toFixed(2)}s</div>
+            <button className="tl__menu-item"
+              onClick={() => { moveBreak(b.id, useTimelineStore.getState().playhead); setMenu(null); }}>
+              Move to playhead
+            </button>
+            <button className="tl__menu-item tl__menu-item--danger"
+              onClick={() => { removeBreak(b.id); setMenu(null); }}>Delete</button>
           </div>
         );
       })()}

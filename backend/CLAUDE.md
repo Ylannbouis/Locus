@@ -14,7 +14,7 @@ storage is JSON files on disk and the render queue is an in-process `asyncio.Que
 | `codegen/` | IR `Scene` → Manim Python script. See `codegen/CLAUDE.md`. |
 | `render/queue.py` | In-process job registry + pub/sub for progress events. |
 | `render/worker.py` | Pulls jobs, runs Manim as a subprocess, locates the output MP4. |
-| `render/slideshow.py` | Slideshow packaging: copies the per-scene mp4s into a player folder and generates the single-file `index.html` (+ `manifest.json`), then zips it. The player holds between slides by *pausing* a `<video>`, so there is no ffmpeg work here. |
+| `render/slideshow.py` | Slideshow packaging: copies the per-scene mp4s into a player folder and generates the single-file `index.html` (+ `manifest.json`), then zips it. The player holds between slides by *pausing* a `<video>`, so there is no ffmpeg work here — and a scene's `breaks` are the same trick *inside* a slide (`_slide_breaks` clamps them to the probed duration; the player's rAF loop pauses on each until the next click). |
 | `render/stitch.py` | ffmpeg `concat_scenes` / `crossfade_scenes` (xfade) for multi-scene export, `zip_dir` for PNG sequences, `probe_duration` (ffprobe). All via blocking `subprocess.run` (see rule 1). |
 | `render/audio.py` | ffmpeg voiceover mixing: trims/gains/fades/delays each `AudioClip` and muxes the mix under a scene mp4 (video copied, AAC 44.1kHz stereo — fixed params so concat can stream-copy). When a clip runs past the video, the last frame is held (`tpad`, forcing a video re-encode) so the scene ends on the later of last-animation / last-audio instead of truncating the voiceover. |
 

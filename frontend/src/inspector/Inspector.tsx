@@ -186,6 +186,12 @@ export function Inspector() {
           <NumberField label="Height" value={Number(props.height ?? 1.2)} onChange={v => setProp({ height: v })} />
         </div>
       )}
+      {/* Rounded corners are opt-in: 0 keeps a plain Rectangle, > 0 emits a
+          RoundedRectangle (clamped to half the shorter side, as in the codegen). */}
+      {obj.type === 'shape' && subtype === 'rectangle' && (
+        <NumberField label="Corner radius" value={Number(props.corner_radius ?? 0)} step={0.05}
+          onChange={v => setProp({ corner_radius: Math.max(0, v) })} />
+      )}
       {obj.type === 'shape' && subtype === 'circle' && (
         <NumberField label="Radius" value={Number(props.radius ?? 1)} onChange={v => setProp({ radius: v })} />
       )}

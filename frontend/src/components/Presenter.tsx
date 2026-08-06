@@ -7,21 +7,27 @@ import type { SlideManifest } from '../types/ir';
  * slide from the job's player folder on the backend.
  *
  * Mirrors the exported HTML player (`backend/app/render/slideshow.py`) — same
- * keys, same freeze-on-last-frame behaviour — so rehearsing here matches what
- * the downloaded deck does. Keep the two in step when changing either.
+ * keys, same freeze-on-last-frame behaviour, same mid-slide breaks — so
+ * rehearsing here matches what the downloaded deck does. Keep the two in step
+ * when changing either.
  */
 export function Presenter({ jobId, onClose }: { jobId: string; onClose: () => void }) {
   const [manifest, setManifest] = useState<SlideManifest | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [current, setCurrent] = useState(0);
   const [started, setStarted] = useState(false);
-  const [frozen, setFrozen] = useState(false); // paused on a last frame, waiting for the click
+  // Paused and waiting for a click: on a mid-slide break, or on a last frame.
+  const [hint, setHint] = useState<'break' | 'end' | null>(null);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   // Key/click handlers are registered once, so they read the index from a ref.
   const currentRef = useRef(0);
   const startedRef = useRef(false);
+  // The break the playing slide should stop at next, and the rAF watching for
+  // it (`timeupdate` fires ~4x/sec, which overshoots a break visibly).
+  const breakTargetRef = useRef<number | null>(null);
+  const rafRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -31,11 +37,53 @@ export function Presenter({ jobId, onClose }: { jobId: string; onClose: () => vo
     return () => { cancelled = true; };
   }, [jobId]);
 
+  // ---- mid-slide breaks ---------------------------------------------------
+  const breaksOf = useCallback((i: number) => manifest?.slides[i]?.breaks ?? [], [manifest]);
+
+  const stopMonitor = useCallback(() => {
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0; }
+  }, []);
+
+  // Watch the playing slide and pause it the moment it reaches its next break.
+  const startMonitor = useCallback(() => {
+    const step = () => {
+      rafRef.current = 0;
+      const v = videoRefs.current[currentRef.current];
+      if (!v || v.paused || v.ended) return;
+      const target = breakTargetRef.current;
+      if (target !== null && v.currentTime >= target) {
+        v.pause();
+        v.currentTime = target; // land exactly on it, so stepping back is stable
+        setHint('break');
+        return;
+      }
+      rafRef.current = requestAnimationFrame(step);
+    };
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(step);
+  }, []);
+
+  const playFromHere = useCallback(() => {
+    const v = videoRefs.current[currentRef.current];
+    if (!v) return;
+    const t = v.currentTime;
+    breakTargetRef.current = breaksOf(currentRef.current).find(b => b > t + 0.02) ?? null;
+    setHint(null);
+    // autoplay blocked → wait for a click
+    v.play().catch(() => setHint(breakTargetRef.current === null ? 'end' : 'break'));
+    stopMonitor();
+    if (breakTargetRef.current !== null) startMonitor();
+  }, [breaksOf, startMonitor, stopMonitor]);
+
+  useEffect(() => stopMonitor, [stopMonitor]);
+
   const show = useCallback((i: number, mode: 'play' | 'end') => {
     const vids = videoRefs.current;
     if (i < 0 || i >= vids.length) return;
     const prev = vids[currentRef.current];
     if (prev && prev !== vids[i]) prev.pause();
+    stopMonitor();
+    breakTargetRef.current = null;
     currentRef.current = i;
     setCurrent(i);
 
@@ -47,13 +95,12 @@ export function Presenter({ jobId, onClose }: { jobId: string; onClose: () => vo
       const seek = () => { v.currentTime = Math.max(0, (v.duration || 0) - 0.05); };
       if (v.readyState >= 1) seek(); else v.addEventListener('loadedmetadata', seek, { once: true });
       v.pause();
-      setFrozen(true);
+      setHint('end');
     } else {
       v.currentTime = 0;
-      setFrozen(false);
-      v.play().catch(() => setFrozen(true)); // autoplay blocked → wait for a click
+      playFromHere(); // picks up this slide's first break, if it has one
     }
-  }, []);
+  }, [playFromHere, stopMonitor]);
 
   const start = useCallback(() => {
     if (startedRef.current) return;
@@ -64,26 +111,48 @@ export function Presenter({ jobId, onClose }: { jobId: string; onClose: () => vo
 
   const next = useCallback(() => {
     const v = videoRefs.current[currentRef.current];
-    // Clicking part-way through a slide skips to its end first — the same
-    // frozen state the slide would have reached on its own.
-    if (v && !v.ended && !v.paused) {
+    if (!v) return;
+    const atEnd = v.ended || v.currentTime >= (v.duration || 0) - 0.1;
+    // Paused part-way through: we're sitting on a break (or autoplay was
+    // blocked). The click resumes this slide rather than skipping it.
+    if (v.paused && !atEnd) { playFromHere(); return; }
+    // Playing: a click jumps to the next stop — the coming break if there is
+    // one, otherwise the slide's last frame (the presenter reflex).
+    if (!v.paused) {
+      stopMonitor();
+      const target = breakTargetRef.current;
       v.pause();
-      v.currentTime = Math.max(0, (v.duration || 0) - 0.05);
-      setFrozen(true);
+      v.currentTime = target !== null ? target : Math.max(0, (v.duration || 0) - 0.05);
+      setHint(target !== null ? 'break' : 'end');
       return;
     }
     if (currentRef.current < videoRefs.current.length - 1) show(currentRef.current + 1, 'play');
-  }, [show]);
+  }, [playFromHere, show, stopMonitor]);
 
   const back = useCallback(() => {
+    const v = videoRefs.current[currentRef.current];
+    // Step back through this slide's own breaks before leaving it.
+    if (v) {
+      const prev = breaksOf(currentRef.current).filter(b => b < v.currentTime - 0.15).pop();
+      if (prev !== undefined) {
+        stopMonitor();
+        v.pause();
+        v.currentTime = prev;
+        breakTargetRef.current = prev;
+        setHint('break');
+        return;
+      }
+    }
     if (currentRef.current > 0) show(currentRef.current - 1, 'end');
-  }, [show]);
+  }, [breaksOf, show, stopMonitor]);
 
   const onEnded = (i: number) => {
     if (i !== currentRef.current) return;
+    stopMonitor();
+    breakTargetRef.current = null;
     const slide = manifest?.slides[i];
     if (slide?.auto_advance && i < (manifest?.slides.length ?? 0) - 1) next();
-    else setFrozen(true);
+    else setHint('end');
   };
 
   const toggleFullscreen = () => {
@@ -157,7 +226,13 @@ export function Presenter({ jobId, onClose }: { jobId: string; onClose: () => vo
         </div>
       )}
 
-      {started && frozen && <div className="presenter__hint">Click or press Space for the next slide</div>}
+      {started && hint && (
+        <div className="presenter__hint">
+          {hint === 'break'
+            ? 'Click or press Space to continue'
+            : 'Click or press Space for the next slide'}
+        </div>
+      )}
 
       {started && (
         <div className="presenter__hud" onClick={e => e.stopPropagation()}>
@@ -174,7 +249,7 @@ export function Presenter({ jobId, onClose }: { jobId: string; onClose: () => vo
             ))}
           </span>
           <button className="btn btn--ghost" onClick={back} disabled={current === 0}>‹</button>
-          <button className="btn btn--ghost" onClick={next} disabled={current === slides.length - 1 && frozen}>›</button>
+          <button className="btn btn--ghost" onClick={next} disabled={current === slides.length - 1 && hint === 'end'}>›</button>
           <button className="btn btn--ghost" onClick={toggleFullscreen} title="Fullscreen (F)">⛶</button>
           <button className="btn btn--ghost" onClick={onClose} title="Exit (Esc)">✕</button>
         </div>

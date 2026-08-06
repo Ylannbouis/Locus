@@ -124,10 +124,22 @@ def _uses_camera(scene: Scene) -> bool:
 
 
 def _camera_anim(kf, var_map: dict[str, str]) -> str | None:
-    """A camera_move keyframe -> a `self.camera.frame.animate…` expression.
+    """A camera_move keyframe -> a `MasApply(self.camera.frame, …)` expression.
 
     params: pan {x,y} (or focus_object_id to track an object's center) and an
     absolute zoom level (frame width = config.frame_width / zoom).
+
+    **Never `.animate` here.** `m.animate` parks its target in the mobject's
+    single `m.target` slot, and a builder only becomes an Animation when the
+    enclosing AnimationGroup/Succession is constructed — which happens *after*
+    every builder in the play has been built. Several camera moves in one play
+    would therefore all read the same (last) `frame.target` and animate to the
+    last keyframe's framing, so only that one appeared to do anything. MasApply
+    builds its target at `begin()` from the live frame instead, which also means
+    a pan-only keyframe keeps whatever zoom the previous one left (and a focus
+    keyframe reads the object's position *when the move starts*, matching the
+    editor's ghost preview) — same reasoning as object transforms, see
+    `template.MasApply`.
     """
     p = kf.params or {}
     parts: list[str] = []
@@ -141,7 +153,7 @@ def _camera_anim(kf, var_map: dict[str, str]) -> str | None:
         parts.append(f"set(width=config.frame_width / {_zoom(p.get('zoom'))})")
     if not parts:
         return None
-    return "self.camera.frame.animate." + ".".join(parts)
+    return "MasApply(self.camera.frame, lambda _m: _m." + ".".join(parts) + ")"
 
 
 def _is_track_kf(kf, var_map: dict[str, str]) -> bool:

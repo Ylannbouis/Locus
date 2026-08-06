@@ -176,7 +176,16 @@ def _emit_construct(obj: SceneObject, assets_root: str | None = None) -> str:
     if otype == "shape":
         subtype = props.get("subtype", "rectangle")
         if subtype == "rectangle":
-            return f"Rectangle(width={_num(props.get('width'), 2.0)}, height={_num(props.get('height'), 1.0)})"
+            w = _num(props.get("width"), 2.0)
+            h = _num(props.get("height"), 1.0)
+            # Optional rounded corners. Manim happily accepts a radius larger than
+            # half the shorter side and emits self-intersecting arcs, so clamp
+            # (the canvas preview clamps identically).
+            cr = _num(props.get("corner_radius"), 0.0)
+            if cr > 0:
+                cr = min(cr, min(abs(w), abs(h)) / 2)
+                return f"RoundedRectangle(corner_radius={cr}, width={w}, height={h})"
+            return f"Rectangle(width={w}, height={h})"
         if subtype == "circle":
             return f"Circle(radius={_num(props.get('radius'), 1.0)})"
         if subtype == "ellipse":

@@ -224,6 +224,16 @@ changes wording and export — the scene/timeline editor is identical. In a slid
 a slide: `ScenePanel` says "Slides"/"+ Slide", `addScene` names them `Slide N`, and each tab gets a
 ⏩ toggle for `scene.auto_advance` (`setSceneAutoAdvance`).
 
+**Breaks** (`scene.breaks: SceneBreak[]`) are mid-slide stops — playback pauses at that timestamp
+and waits for a click. Slideshow-only UI: the timeline's **⏸ Break** button adds one at the playhead
+(as does double-clicking the ruler), each renders as an amber dashed vertical spanning the whole
+grid (`.tl__break`, the playhead's twin) with a draggable ⏸ flag in the sticky ruler
+(`.tl__break-flag`); drag to move, right-click to delete, Delete/Backspace removes the selected one
+(`timelineStore.selectedBreakId`, a third mutually-exclusive timeline selection alongside keyframes
+and audio clips). Store actions: `addBreak` / `moveBreak` / `removeBreak` — `addBreak` refuses a
+duplicate within 0.01s and keeps the list sorted. Breaks never reach codegen; they only ride along
+in the slide manifest for the players (below).
+
 - `RenderPanel` leads with the `slideshow` **format**, which always renders every slide
   (`sceneId === null`) and never stitches or crossfades; the other formats still export the
   *current* slide. The quick 480p preview stays per-slide too. When the job finishes, **▶ Present**
@@ -231,9 +241,15 @@ a slide: `ScenePanel` says "Slides"/"+ Slide", `addScene` names them `Slide N`, 
 - `Presenter` streams the rendered slides from `/api/render/{job}/slides` (`getSlideManifest`) into
   one `<video>` per slide, and is a **deliberate mirror of the exported HTML player** in
   `backend/app/render/slideshow.py` — same keys (`Space`/`→` next, `←` back, `R` replay, `F`
-  fullscreen), same freeze-on-last-frame, same "click mid-slide jumps to its end first". Change
-  both or they drift. Stepping back seeks to `duration − 0.05` (the *last frame*, not a replay),
-  which is why the backend slide route implements HTTP Range.
+  fullscreen), same freeze-on-last-frame, same break handling. Change both or they drift. Stepping
+  back seeks to `duration − 0.05` (the *last frame*, not a replay), which is why the backend slide
+  route implements HTTP Range.
+- **Break playback** (both players, identical logic): while a slide plays, a **rAF loop** watches
+  `currentTime` against the next break and pauses exactly on it — `timeupdate` only fires ~4×/sec
+  and overshoots visibly. A click then *resumes the same slide* rather than advancing (paused +
+  not-at-the-end ⇒ resume, which also recovers from blocked autoplay); a click while playing jumps
+  to the **next break** instead of the slide's end; `←` steps back to the previous break before
+  leaving the slide. The hint text switches between "…to continue" and "…for the next slide".
 
 ## When changing the IR
 

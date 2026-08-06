@@ -141,6 +141,8 @@ class ShapeProps(BaseModel):
     # rectangle / ellipse
     width: Optional[float] = None
     height: Optional[float] = None
+    # rectangle only: 0/None = square corners (default), > 0 = RoundedRectangle
+    corner_radius: Optional[float] = None
     # circle
     radius: Optional[float] = None
     # arrow / line / dashed_line
@@ -333,6 +335,18 @@ class Transition(BaseModel):
 # Scene
 # ---------------------------------------------------------------------------
 
+class SceneBreak(BaseModel):
+    """A pause point inside a slide (slideshow projects only).
+
+    Playback stops at `time` seconds into the scene and waits for a click before
+    carrying on. Breaks are a *player* concept: the scene renders to one
+    continuous mp4 and the player pauses at these timestamps, so nothing here
+    reaches codegen or Manim.
+    """
+    id: str = Field(default_factory=new_id)
+    time: float = 0.0
+
+
 class Scene(BaseModel):
     id: str = Field(default_factory=new_id)
     name: str = "Untitled Scene"
@@ -347,6 +361,8 @@ class Scene(BaseModel):
     # Slideshow projects only: play the next slide automatically when this one
     # ends instead of waiting for a click. Ignored by animation projects.
     auto_advance: bool = False
+    # Slideshow projects only: mid-slide pause points (see SceneBreak).
+    breaks: list[SceneBreak] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

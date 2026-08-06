@@ -737,6 +737,23 @@ body {
   position: absolute; top: 0; bottom: 0; width: 0; z-index: 1;
   border-left: 2px solid #ef4444; pointer-events: none;
 }
+
+/* Slide break (slideshow projects): a full-height vertical like the playhead,
+   but amber, dashed and static — playback stops here until the next click. The
+   grabbable flag lives in the sticky ruler (.tl__break-flag), not on the line. */
+.tl__break {
+  position: absolute; top: 0; bottom: 0; width: 0; z-index: 1;
+  border-left: 2px dashed #f59e0b; pointer-events: none;
+}
+.tl__break--sel { border-left-color: #b45309; border-left-style: solid; }
+.tl__break-flag {
+  position: absolute; top: 0; transform: translateX(-50%); z-index: 2;
+  padding: 0 3px; font-size: 11px; line-height: 22px; cursor: grab;
+  color: #7c4a03; background: #f59e0b; border-radius: 0 0 4px 4px; user-select: none;
+}
+.tl__break-flag:hover { background: #fbbf24; }
+.tl__break-flag.is-sel { background: #b45309; color: #fff; }
+.tl__break-add { color: #b45309; border-color: #f59e0b; }
 .tl__ruler { cursor: pointer; }
 
 .tl__label--audio { color: #a3e635; font-weight: 600; cursor: default; gap: 6px; }

@@ -68,6 +68,11 @@ interface ProjectState {
   groupKeyframes: (ids: string[]) => void;
   ungroupKeyframes: (ids: string[]) => void;
 
+  // Slide breaks (slideshow projects): mid-scene pause points
+  addBreak: (atTime: number) => void;
+  moveBreak: (id: string, time: number) => void;
+  removeBreak: (id: string) => void;
+
   // Audio track
   addAudioClip: (clip: AudioClip) => void;
   updateAudioClip: (id: string, patch: Partial<AudioClip>) => void;
@@ -426,6 +431,37 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       scene.timeline.keyframes.some(k => k.group_id === g.id));
   }),
 
+  // ---- Slide breaks -------------------------------------------------------
+  // Player-side pause points inside a slide. Kept sorted so "the next break
+  // after t" is a scan, and so the timeline draws them in order.
+  addBreak: (atTime) => _mutate(set, get, draft => {
+    const scene = activeScene(draft, get().selectedSceneId);
+    if (!scene) return;
+    if (!scene.breaks) scene.breaks = []; // scenes saved before breaks existed
+    const time = Math.max(0, Math.round(atTime * 100) / 100);
+    // A second break at the same instant would be indistinguishable on the
+    // timeline and would stop playback twice in a row.
+    if (scene.breaks.some(b => Math.abs(b.time - time) < 0.01)) return;
+    scene.breaks.push({ id: newId('brk'), time });
+    scene.breaks.sort((a, b) => a.time - b.time);
+  }),
+
+  moveBreak: (id, time) => _mutate(set, get, draft => {
+    const scene = activeScene(draft, get().selectedSceneId);
+    const brk = scene?.breaks?.find(b => b.id === id);
+    if (!scene || !brk) return;
+    brk.time = Math.max(0, Math.round(time * 100) / 100);
+    scene.breaks!.sort((a, b) => a.time - b.time);
+  }),
+
+  removeBreak: (id) => {
+    useTimelineStore.getState().selectBreak(null);
+    _mutate(set, get, draft => {
+      const scene = activeScene(draft, get().selectedSceneId);
+      if (scene?.breaks) scene.breaks = scene.breaks.filter(b => b.id !== id);
+    });
+  },
+
   addAudioClip: (clip) => _mutate(set, get, draft => {
     const scene = activeScene(draft, get().selectedSceneId);
     if (!scene) return;
@@ -588,6 +624,7 @@ if (typeof window !== 'undefined') {
       const tl = useTimelineStore.getState();
       if (tl.selectedKfIds.length) { tl.selectedKfIds.forEach(id => s.removeKeyframe(id)); }
       else if (tl.selectedAudioId) { s.removeAudioClip(tl.selectedAudioId); }
+      else if (tl.selectedBreakId) { s.removeBreak(tl.selectedBreakId); }
       else if (s.selectedObjectIds.length) { s.removeSelected(); }
     }
   });

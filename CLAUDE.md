@@ -130,6 +130,10 @@ them with a generated single-file HTML player (`backend/app/render/slideshow.py`
 job dir so the editor's **Present** mode (`frontend/src/components/Presenter.tsx`) can stream the
 slides from `/api/render/{job_id}/slides[/{i}]`. The "hold" between slides is just a paused
 `<video>`, so no ffmpeg padding is involved. `Scene.auto_advance` skips the click for one slide.
+`Scene.breaks` (`SceneBreak[]`, timestamps in seconds) are **mid-slide** stops: the slide renders as
+one continuous mp4 and the player pauses it at each break until the next click — same trick as the
+end-of-slide freeze, so breaks cost no render time and never reach codegen. They show in the
+timeline as amber dashed verticals alongside the red playhead.
 The in-app presenter and the exported player deliberately mirror each other's controls —
 **change both together**.
 

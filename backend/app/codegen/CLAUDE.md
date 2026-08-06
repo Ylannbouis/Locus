@@ -136,7 +136,8 @@ dependencies are missing/hidden:
    (camera-tracking) model is naturally safe here — it emits a separate `self.play` per time slot.
 5. `_bake(expr, run_time, rate_func)` inserts timing into an animation expression so it can live inside
    an `AnimationGroup`/`Succession`: `.animate.m(…)` → `.animate(run_time=…, rate_func=…).m(…)` (only
-   camera moves and sweep trackers still use `.animate`); an Animation-class call gets the kwargs
+   **sweep trackers** still use `.animate` — one per object, so no two builders share a `target`
+   slot; see the camera section for why that matters); an Animation-class call gets the kwargs
    inserted before the final `)`. Hold the final frame with a trailing `self.wait`.
 
 ## Fades & transforms (MasFade / MasApply) — why not FadeIn/FadeOut/.animate
@@ -199,9 +200,18 @@ change** — it's all in the free-form `params` dict.
 
 - `_uses_camera(scene)` → any camera keyframe or a non-default `camera_track`. Drives the
   `base_class` choice in `generate_scene_script` and the initial-framing emission in `build_body`.
-- `_camera_anim(kf, var_map)` → a one-shot `self.camera.frame.animate.move_to(…).set(width=config.frame_width / zoom)`
+- `_camera_anim(kf, var_map)` → a one-shot **`MasApply(self.camera.frame, lambda _m: _m.move_to(…).set(width=config.frame_width / zoom))`**
   (focus → `<objvar>.get_center()`). Width is only emitted when `zoom` is present, so a pure pan
   keeps the current zoom. `_zoom()` clamps non-positive/garbage zoom to 1.0 (guards `/ 0`).
+  **Never emit `.animate` here** — `m.animate` parks its target in the mobject's single `m.target`
+  slot, and a builder only becomes an Animation when the enclosing `AnimationGroup`/`Succession` is
+  constructed, i.e. *after* every builder in the play exists. So N camera moves in one play all read
+  the same (last) `frame.target`: every move animated to the last keyframe's framing and only that
+  one appeared to work. MasApply builds its target at `begin()` from the live frame, which is also
+  what makes a pan-only keyframe keep the previous zoom (the old target was a copy of the *pre-play*
+  frame, so it silently restored the initial zoom) and a focus keyframe read the object's position
+  when the move starts — matching the editor's ghost preview (`effectivePosition` at the keyframe's
+  time). Locked in by `backend/tests/stress_camera.py`.
 - **Continuous tracking** (`_is_track_kf`): emits a follow-updater over the keyframe's window as two
   statement events — `add_updater` at `start` (`order` 0, before same-time plays) and
   `remove_updater` at `start+duration` (`order` 2, after). **GOTCHA:** the start statement must run
@@ -227,5 +237,9 @@ change** — it's all in the free-form `params` dict.
   needed) builds IR scenes for ~23 group/fade scenarios, executes the generated scripts in-process
   frame-by-frame, and asserts per-object visibility over time + final-frame pixels. Run it after any
   change to fade/transform emission, the hide pass, or the template helpers.
+  `backend/tests/stress_camera.py` is its camera twin: it samples the real `self.camera.frame`
+  (center + width) frame by frame across both emission models, and covers multiple moves in one
+  play, pan-only/zoom-only keyframes, initial framing, focus, and tracking. Run it after any change
+  to `_camera_anim`, `_bake`, or how camera units are chained.
 - A verb that can't emit (e.g. a transform with a missing target, or a camera move with no
   resolvable pan/focus) returns `None`; the scene builder drops it. Preserve that contract.
