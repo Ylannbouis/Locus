@@ -19,6 +19,14 @@ export const FRAME_HEIGHT = 8;
 // KaTeX's advances, and overflowing a bounding box is the visible artifact.)
 export const MANIM_EM_UNITS_PER_PT = 0.009268;
 
+// Em size of Manim's Pango-backed `Text` (a `text` object with a `font` prop),
+// which is a different scale from the LaTeX one above. Measured against
+// monospace faces, whose advance width is an exact fraction of the em: at
+// font_size 48 a 0.6-em-advance glyph steps 0.4 units, so 1 em = font_size/72
+// units. The browser lays out the *same* system font file as Pango, so matching
+// the em is enough to match the glyph advances — no width fudge needed.
+export const MANIM_TEXT_EM_UNITS_PER_PT = 1 / 72;
+
 // Manim Matrix() layout defaults (scene units, center-to-center). Manim places
 // entries on a fixed-pitch grid independent of glyph width, so the canvas must
 // replicate the pitch rather than use KaTeX's (much tighter) matrix spacing.

@@ -95,6 +95,31 @@ async def refresh_deps() -> dict[str, Any]:
     return result
 
 
+_FONT_CACHE: list[str] | None = None
+
+
+@app.get("/api/fonts")
+async def system_fonts() -> dict[str, Any]:
+    """System fonts usable by a `text` object's `font` prop.
+
+    Enumerated through manimpango — the same Pango stack Manim's `Text` renders
+    with, so anything listed here is guaranteed to resolve at render time (a
+    missing font would silently fall back to the default). Rendering happens on
+    this machine, so the editor's list is always the renderer's list. Cached for
+    the process: scanning the font dirs is slow and fonts rarely change.
+    """
+    global _FONT_CACHE
+    if _FONT_CACHE is None:
+        try:
+            import manimpango
+
+            # Drop the dot-prefixed private system faces (".AppleSystemUIFont").
+            _FONT_CACHE = sorted(f for f in manimpango.list_fonts() if not f.startswith("."))
+        except Exception:
+            _FONT_CACHE = []
+    return {"fonts": _FONT_CACHE}
+
+
 # ---------------------------------------------------------------------------
 # Projects
 # ---------------------------------------------------------------------------

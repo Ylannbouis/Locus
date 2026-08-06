@@ -6,6 +6,12 @@ import type {
 // Vite dev proxy routes /api/* and /ws/* to http://localhost:8000
 const http = axios.create({ baseURL: '' });
 
+// System fonts usable by a `text` object's `font` prop. Enumerated by the
+// backend through the same Pango stack Manim renders with, so every name here
+// is guaranteed to resolve at render time.
+export const listFonts = (): Promise<string[]> =>
+  http.get('/api/fonts').then(r => r.data.fonts as string[]);
+
 // Projects
 export const getProjects = (): Promise<ProjectSummary[]> =>
   http.get('/api/projects').then(r => r.data);

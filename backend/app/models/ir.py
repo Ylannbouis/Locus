@@ -134,6 +134,10 @@ class TextProps(BaseModel):
     font_size: int = 48
     bold: bool = False
     italic: bool = False
+    # Empty/None = the LaTeX `Tex` path above. A system font name (see
+    # GET /api/fonts) switches emission to Manim's Pango-backed `Text`, which
+    # is the only mobject that accepts an arbitrary font.
+    font: Optional[str] = None
 
 
 class ShapeProps(BaseModel):

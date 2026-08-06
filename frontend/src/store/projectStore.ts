@@ -446,11 +446,37 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     scene.breaks.sort((a, b) => a.time - b.time);
   }),
 
+  // Moving a break is a *ripple* edit: everything that starts at or after it —
+  // keyframes, audio clips and the later breaks — rides along by the same delta.
+  // A break marks where one segment of the slide ends and the next begins, so
+  // dragging it re-times that segment while leaving the following ones intact
+  // (moving the break alone would just squeeze the next segment). Riders are
+  // picked by *start*: an animation that spans the break keeps its place, since
+  // it can't be split across a pause.
   moveBreak: (id, time) => _mutate(set, get, draft => {
     const scene = activeScene(draft, get().selectedSceneId);
     const brk = scene?.breaks?.find(b => b.id === id);
     if (!scene || !brk) return;
-    brk.time = Math.max(0, Math.round(time * 100) / 100);
+    const from = brk.time;
+    const EPS = 1e-6;
+    const kfs = scene.timeline.keyframes.filter(k => k.start_time >= from - EPS);
+    const clips = (scene.audio ?? []).filter(c => c.start_time >= from - EPS);
+    const later = scene.breaks!.filter(b => b.id !== id && b.time > from + EPS);
+
+    let delta = Math.round(time * 100) / 100 - from;
+    // Nothing may be pushed before t=0 …
+    const earliest = Math.min(from, ...kfs.map(k => k.start_time), ...clips.map(c => c.start_time));
+    delta = Math.max(delta, -earliest);
+    // … and a break may not be dragged past the one before it (which stays put,
+    // so crossing it would silently reorder the segments).
+    const prev = scene.breaks!.filter(b => b.time < from - EPS).map(b => b.time);
+    if (prev.length) delta = Math.max(delta, Math.max(...prev) + 0.01 - from);
+    if (!delta) return;
+
+    brk.time = Math.round((from + delta) * 100) / 100;
+    kfs.forEach(k => { k.start_time = Math.max(0, Math.round((k.start_time + delta) * 100) / 100); });
+    clips.forEach(c => { c.start_time = Math.max(0, Math.round((c.start_time + delta) * 1000) / 1000); });
+    later.forEach(b => { b.time = Math.round((b.time + delta) * 100) / 100; });
     scene.breaks!.sort((a, b) => a.time - b.time);
   }),
 

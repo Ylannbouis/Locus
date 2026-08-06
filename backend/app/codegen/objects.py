@@ -162,15 +162,43 @@ def _emit_construct(obj: SceneObject, assets_root: str | None = None) -> str:
         return f"{ctor}({body!r}, font_size={font_size})"
 
     if otype == "text":
+        raw = str(props.get("text", ""))
+        font_size = int(_num(props.get("font_size"), 48))
+        # A `font` prop switches this object off the LaTeX path onto Manim's
+        # Pango-backed `Text`, the only mobject that takes an arbitrary system
+        # font. No escaping there (Pango draws the string literally) and
+        # bold/italic become Pango weight/slant instead of \textbf/\textit.
+        font = str(props.get("font") or "").strip()
+        if font:
+            extra = ""
+            if props.get("bold"):
+                extra += ', weight="BOLD"'
+            if props.get("italic"):
+                extra += ', slant="ITALIC"'
+            # Pango breaks on a literal newline, so the raw string carries the
+            # editor's line breaks through as-is.
+            return f"Text({raw!r}, font={font!r}, font_size={font_size}{extra})"
         # Plain prose via Tex (LaTeX text mode). Escape LaTeX specials so the user
         # types literally; bold/italic wrap the escaped content.
-        raw = str(props.get("text", ""))
-        body = _tex_escape(raw)
-        if props.get("italic"):
-            body = r"\textit{" + body + "}"
-        if props.get("bold"):
-            body = r"\textbf{" + body + "}"
-        font_size = int(_num(props.get("font_size"), 48))
+        def _cell(s: str) -> str:
+            b = _tex_escape(s)
+            if props.get("italic"):
+                b = r"\textit{" + b + "}"
+            if props.get("bold"):
+                b = r"\textbf{" + b + "}"
+            return b
+
+        lines = raw.split("\n")
+        if len(lines) > 1:
+            # LaTeX collapses a raw newline to a space, so the editor's line breaks
+            # become tabular rows. `{l}` matches the left alignment the Pango path
+            # gives for free, and LaTeX's built-in row strut keeps the leading even
+            # — including blank lines, which stay blank rows. Single-line content
+            # keeps the bare form: wrapping it would change its bbox, and with it
+            # the vertical centering of every existing text object.
+            body = r"\begin{tabular}{l}" + r" \\ ".join(_cell(l) for l in lines) + r"\end{tabular}"
+        else:
+            body = _cell(raw)
         return f"Tex({body!r}, font_size={font_size})"
 
     if otype == "shape":

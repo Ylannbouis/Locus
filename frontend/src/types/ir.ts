@@ -86,6 +86,10 @@ export interface TextProps {
   font_size: number;
   bold: boolean;
   italic: boolean;
+  // Unset/'' = the LaTeX `Tex` path above. A system font name (from GET /api/fonts)
+  // switches the codegen to Manim's Pango-backed `Text`, which takes any installed
+  // font; bold/italic then map to Pango weight/slant instead of \textbf/\textit.
+  font?: string | null;
 }
 
 // Props of an `image` SceneObject (stored in the free-form `props` dict).

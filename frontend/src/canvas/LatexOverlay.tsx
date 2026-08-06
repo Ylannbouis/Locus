@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import katex from 'katex';
 import type { View } from './coords';
 import {
-  PX_PER_UNIT, MANIM_EM_UNITS_PER_PT, SNAP_PX,
+  PX_PER_UNIT, MANIM_EM_UNITS_PER_PT, MANIM_TEXT_EM_UNITS_PER_PT, SNAP_PX,
   MATRIX_H_PITCH, MATRIX_V_PITCH, MATRIX_BRACKET_BUFF,
   worldX, worldY,
 } from './coords';
@@ -111,10 +111,19 @@ function texEscape(s: string): string {
 // \textbf/\textit to match the codegen (Tex(...) with the same wrappers).
 function textKatex(o: SceneObject): string {
   const p = o.props as any;
-  let body = texEscape(String(p.text ?? ''));
-  if (p.italic) body = `\\textit{${body}}`;
-  if (p.bold) body = `\\textbf{${body}}`;
-  return `\\text{${body}}`;
+  const cell = (s: string) => {
+    let body = texEscape(s);
+    if (p.italic) body = `\\textit{${body}}`;
+    if (p.bold) body = `\\textbf{${body}}`;
+    return `\\text{${body}}`;
+  };
+  const lines = String(p.text ?? '').split('\n');
+  if (lines.length === 1) return cell(lines[0]);
+  // Multi-line mirrors the codegen's left-aligned `tabular{l}`; KaTeX has no
+  // tabular, so use the math-mode `array` twin. An empty line needs a phantom
+  // or KaTeX collapses the row, where LaTeX's row strut keeps it open.
+  const rows = lines.map(l => (l === '' ? '\\phantom{X}' : cell(l))).join(' \\\\ ');
+  return `\\begin{array}{l}${rows}\\end{array}`;
 }
 
 // The inner KaTeX/matrix content for a latex_text or matrix object (without the
@@ -182,6 +191,24 @@ function latexInner(o: SceneObject, fontSize: number, color: string): React.Reac
   }
 
   if (o.type === 'text') {
+    const p = o.props as any;
+    const font = textFont(o);
+    if (font) {
+      // Pango path (codegen emits `Text(font=…)`): the browser has the very same
+      // system font, so plain styled HTML at the matched em size is a closer
+      // preview than KaTeX could ever be. `pre` keeps newlines, and line-height
+      // 1.3 mirrors Manim's DEFAULT_LINE_SPACING_SCALE of 0.3.
+      return (
+        <div style={{
+          padding: '4px',
+          whiteSpace: 'pre',
+          lineHeight: 1.3,
+          fontFamily: `"${font.replace(/"/g, '')}", sans-serif`,
+          fontWeight: p.bold ? 700 : 400,
+          fontStyle: p.italic ? 'italic' : 'normal',
+        }}>{String(p.text ?? '')}</div>
+      );
+    }
     return (
       <div style={{ padding: '4px', whiteSpace: 'nowrap' }}
         dangerouslySetInnerHTML={{ __html: renderTex(textKatex(o)) }} />
@@ -194,8 +221,16 @@ function latexInner(o: SceneObject, fontSize: number, color: string): React.Reac
   );
 }
 
+// The system font a `text` object renders in, or '' when it takes the LaTeX path.
+function textFont(o: SceneObject): string {
+  return o.type === 'text' ? String((o.props as any).font ?? '').trim() : '';
+}
+
 function latexFontPx(o: SceneObject): number {
-  return Number((o.props as any).font_size ?? 48) * MANIM_EM_UNITS_PER_PT * PX_PER_UNIT;
+  // A Pango `Text` and a LaTeX `Tex` pack a different number of scene units per
+  // font_size point, so the two paths calibrate against different constants.
+  const em = textFont(o) ? MANIM_TEXT_EM_UNITS_PER_PT : MANIM_EM_UNITS_PER_PT;
+  return Number((o.props as any).font_size ?? 48) * em * PX_PER_UNIT;
 }
 
 export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [], moveHandle = null, anchorHandle = null, groupDrag = null, onGroupDrag }: Props) {

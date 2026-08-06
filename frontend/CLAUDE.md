@@ -66,6 +66,21 @@ unmarked lines (`equationTex`); a *`text`* object is LaTeX-escaped (`texEscape` 
 `\text{…}` with `\textbf`/`\textit` wrappers (`textKatex`); a *matrix* scales its fixed pitch/bracket
 constants by `font_size / 48`, mirroring the codegen's `.scale(font_size/48)`.
 
+A multi-line `text` object (the textarea stores real newlines) mirrors the codegen's `tabular{l}`
+with KaTeX's math-mode twin, `\begin{array}{l}` of `\text{…}` rows — one difference: an empty line
+needs `\phantom{X}` or KaTeX collapses the row where LaTeX's row strut holds it open. Single-line
+content stays a bare `\text{…}`, matching the codegen. `objectBounds` measures the widest line and
+scales its height by the row count (both text kinds break lines — `text` on `\n`, `latex_text` on
+`\\`).
+
+A `text` object with a **`font`** prop leaves KaTeX entirely: the codegen emits Pango `Text(font=…)`
+there, so the overlay previews it as plain styled HTML in that same system font (`textFont` gates
+both the renderer and the em constant — `MANIM_TEXT_EM_UNITS_PER_PT` = `1/72` units per point for
+Pango vs `MANIM_EM_UNITS_PER_PT` for LaTeX; `line-height: 1.3` mirrors Manim's line spacing). Since
+the browser and Pango lay out the *same* font file, matching the em is enough to match glyph
+advances. The Inspector's picker (`FontField`) lists only fonts `GET /api/fonts` reports, cached
+once per session; the empty option means "LaTeX", which is the default.
+
 Coordinate systems draw their tick **numbers** on the canvas when `include_numbers` is set, sized
 by a `number_font_size` prop; whole-number ticks render without a trailing `.0` (`fmtNum`). Shapes
 and text also honor a generic baked-transform prop **`rotation`** (degrees, CCW) — applied via
@@ -233,6 +248,17 @@ grid (`.tl__break`, the playhead's twin) with a draggable ⏸ flag in the sticky
 and audio clips). Store actions: `addBreak` / `moveBreak` / `removeBreak` — `addBreak` refuses a
 duplicate within 0.01s and keeps the list sorted. Breaks never reach codegen; they only ride along
 in the slide manifest for the players (below).
+
+**Moving a break is a ripple edit** (`moveBreak`, so drag *and* the "Move to playhead" menu item):
+everything starting at or after it — keyframes (camera included), audio clips and the later breaks —
+shifts by the same delta in one undo entry. A break is a segment boundary, so this re-times the
+segment before it and leaves the following ones intact; moving it alone would just squeeze the next
+segment. Riders are chosen by **start time**, so an animation that *spans* the break stays put (it
+can't be split across a pause). Two clamps, applied identically in the store and in `startBreakDrag`'s
+`lowerBound` (so the live preview can't promise a move the commit would refuse): no rider may cross
+t=0, and a break may not pass the break before it (which stays put, so crossing would silently
+reorder the segments). While dragging, `withRipple` offsets every rider's block live, and the snap
+targets drop the riders — their edges move with the break, so they'd be snapping to themselves.
 
 - `RenderPanel` leads with the `slideshow` **format**, which always renders every slide
   (`sceneId === null`) and never stitches or crossfades; the other formats still export the

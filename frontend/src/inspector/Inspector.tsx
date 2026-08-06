@@ -1,7 +1,38 @@
 import { useEffect, useState } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import { newId } from '../store/objectFactory';
+import { listFonts } from '../api/client';
 import type { SceneObject, Point2D, Scene, Relationship, RelationshipType } from '../types/ir';
+
+// Installed system fonts, fetched once per session and shared by every picker
+// (the backend scan is slow-ish and the list never changes while running).
+let fontsCache: string[] | null = null;
+let fontsPromise: Promise<string[]> | null = null;
+
+// Font picker for `text` objects. The empty value keeps the object on the LaTeX
+// (`Tex`) path; any other value switches the codegen to Pango `Text`.
+function FontField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [fonts, setFonts] = useState<string[]>(fontsCache ?? []);
+  useEffect(() => {
+    if (fontsCache) return;
+    let alive = true;
+    fontsPromise = fontsPromise ?? listFonts().catch(() => [] as string[]);
+    fontsPromise.then(f => { fontsCache = f; if (alive) setFonts(f); });
+    return () => { alive = false; };
+  }, []);
+  // A project authored on another machine can name a font that isn't installed
+  // here; keep it in the list so opening it doesn't silently reset the object.
+  const options = value && !fonts.includes(value) ? [value, ...fonts] : fonts;
+  return (
+    <label className="field">
+      <span className="field__label">Font</span>
+      <select className="field__input" value={value} onChange={e => onChange(e.target.value)}>
+        <option value="">LaTeX (default)</option>
+        {options.map(f => <option key={f} value={f}>{f}</option>)}
+      </select>
+    </label>
+  );
+}
 
 function NumberField({ label, value, step = 0.1, onChange }: {
   label: string; value: number; step?: number; onChange: (v: number) => void;
@@ -155,6 +186,10 @@ export function Inspector() {
             <textarea className="field__textarea" rows={3} value={String(props.text ?? '')}
               onChange={e => setProp({ text: e.target.value })} />
           </label>
+          <FontField value={String(props.font ?? '')} onChange={v => setProp({ font: v || null })} />
+          {props.font
+            ? <p className="panel-hint">Rendered with the system font (no LaTeX in the text).</p>
+            : null}
           <NumberField label="Font size" value={Number(props.font_size ?? 48)} step={1} onChange={v => setProp({ font_size: Math.max(1, Math.round(v)) })} />
           <div className="field-row">
             <label className="field field--check">

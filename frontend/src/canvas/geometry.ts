@@ -32,8 +32,14 @@ export function objectBounds(o: SceneObject): Bounds {
   if (o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix') {
     const fs = Number(p.font_size ?? 48) / 48;
     const content = o.type === 'text' ? String(p.text ?? '') : String(p.tex_string ?? '');
-    const len = o.type === 'matrix' ? 1.6 : Math.max(1, content.length * 0.28);
-    return { cx: pos.x, cy: pos.y, hw: (len * fs) / 2, hh: 0.35 * fs };
+    // Both text kinds break lines — `text` on a literal newline (the textarea's
+    // Enter), latex_text on '\\' — so measure the widest line, not the whole
+    // string, and grow the height per row.
+    const lines = o.type === 'text' ? content.split('\n') : content.split('\\\\');
+    const widest = lines.reduce((m, l) => Math.max(m, l.length), 0);
+    const len = o.type === 'matrix' ? 1.6 : Math.max(1, widest * 0.28);
+    const rows = o.type === 'matrix' ? 1 : lines.length;
+    return { cx: pos.x, cy: pos.y, hw: (len * fs) / 2, hh: 0.35 * fs * rows };
   }
   if (o.type === 'coordinate_system') return { cx: pos.x, cy: pos.y, hw: Number(p.x_length ?? 6) / 2, hh: Number(p.y_length ?? 4) / 2 };
   if (o.type === 'image') return { cx: pos.x, cy: pos.y, hw: Number(p.width ?? 4) / 2, hh: Number(p.height ?? 3) / 2 };

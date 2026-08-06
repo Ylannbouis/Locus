@@ -36,6 +36,10 @@ function snapMove(start: number, dur: number, targets: number[], pxPerSec: numbe
   return start;
 }
 
+// Float slack for "starts at or after the break" comparisons (times are stored
+// rounded to 2-3 decimals, so this only absorbs representation error).
+const RIPPLE_EPS = 1e-6;
+
 function edgeTargets(items: { id: string; start_time: number; duration: number }[], excludeId: string): number[] {
   const t = [0, useTimelineStore.getState().playhead];
   for (const it of items) {
@@ -110,13 +114,15 @@ interface AudioDragState {
 }
 
 // Slide-break drag: a break is a single point in time, so there's nothing to
-// trim — only its position moves.
+// trim — only its position moves. Moving it is a ripple edit (see the store's
+// `moveBreak`), so the whole tail of the scene previews the shift live.
 interface BreakDragState {
   id: string;
   startClientX: number;
   origTime: number;
   curTime: number;
   targets: number[];
+  lowerBound: number; // mirrors the store's clamp so the preview can't lie
   moved: boolean; // a click that never moved just selects (and must not write history)
 }
 
@@ -263,10 +269,10 @@ export function Timeline() {
       }
     } else if (bDrag) {
       const dx = (e.clientX - bDrag.startClientX) / pxPerSec;
-      let t = Math.max(0, bDrag.origTime + dx);
+      let t = Math.max(bDrag.lowerBound, bDrag.origTime + dx);
       if (snapOn) {
         const hit = snapTo(t, bDrag.targets, pxPerSec);
-        if (hit !== null) t = Math.max(0, hit);
+        if (hit !== null) t = Math.max(bDrag.lowerBound, hit);
       }
       setBDrag({ ...bDrag, curTime: t, moved: bDrag.moved || Math.abs(e.clientX - bDrag.startClientX) > 2 });
     } else if (aDrag) {
@@ -355,13 +361,18 @@ export function Timeline() {
     });
   };
 
-  // A break snaps to everything in the scene — keyframe *and* clip edges, t=0,
-  // the playhead and the other breaks — since "pause exactly when this animation
-  // finishes" is the common case.
-  const breakTargets = (excludeId: string): number[] => [
-    ...edgeTargets([...keyframes, ...audioClips], ''),
-    ...breaks.filter(b => b.id !== excludeId).map(b => b.time),
-  ];
+  // A break snaps to keyframe *and* clip edges, t=0, the playhead and the other
+  // breaks — "pause exactly when this animation finishes" is the common case.
+  // Only what *stays put* is a target though: the ripple carries everything
+  // starting at or after the break along with it, so those edges would be
+  // snapping to themselves.
+  const breakTargets = (excludeId: string, origTime: number): number[] => {
+    const stay = [...keyframes, ...audioClips].filter(i => i.start_time < origTime - RIPPLE_EPS);
+    return [
+      ...edgeTargets(stay, ''),
+      ...breaks.filter(b => b.id !== excludeId && b.time < origTime - RIPPLE_EPS).map(b => b.time),
+    ];
+  };
 
   const startBreakDrag = (e: React.PointerEvent, b: SceneBreak) => {
     if (e.button !== 0) return;
@@ -369,9 +380,19 @@ export function Timeline() {
     setMenu(null);
     (e.target as Element).setPointerCapture?.(e.pointerId);
     selectBreak(b.id);
+    // Same two clamps the store applies on commit: no rider may be dragged
+    // before t=0, and a break may not cross the one before it.
+    const rides = (t: number) => t >= b.time - RIPPLE_EPS;
+    const earliest = Math.min(
+      b.time,
+      ...keyframes.filter(k => rides(k.start_time)).map(k => k.start_time),
+      ...audioClips.filter(c => rides(c.start_time)).map(c => c.start_time),
+    );
+    const prev = breaks.filter(o => o.time < b.time - RIPPLE_EPS).map(o => o.time);
     setBDrag({
       id: b.id, startClientX: e.clientX, origTime: b.time, curTime: b.time,
-      targets: breakTargets(b.id), moved: false,
+      targets: breakTargets(b.id, b.time), moved: false,
+      lowerBound: Math.max(0, b.time - earliest, prev.length ? Math.max(...prev) + 0.01 : 0),
     });
   };
 
@@ -445,6 +466,12 @@ export function Timeline() {
   const selectedHaveGroup = keyframes.some(k => selectedKfIds.includes(k.id) && k.group_id);
   const cameraKfs = keyframes.filter(k => k.object_id === CAMERA_ID);
 
+  // Live ripple preview: while a break is dragged, everything that starts at or
+  // after its original time draws at the shifted position — the same set the
+  // store commits on pointer-up (see `moveBreak`).
+  const withRipple = (t: number) =>
+    bDrag && t >= bDrag.origTime - RIPPLE_EPS ? t + (bDrag.curTime - bDrag.origTime) : t;
+
   // One keyframe block, shared by the camera lane and every object lane. `row`
   // is its sub-row within the lane (0 = main row), used to stack simultaneous
   // animations vertically.
@@ -452,7 +479,7 @@ export function Timeline() {
     const isAnchor = drag?.kfId === kf.id;
     // A moving group member (incl. the anchor) follows the shared delta live.
     const moving = drag?.mode === 'move' && drag.members.some(m => m.id === kf.id);
-    const start = moving ? kf.start_time + (drag!.curStart - drag!.origStart) : kf.start_time;
+    const start = moving ? kf.start_time + (drag!.curStart - drag!.origStart) : withRipple(kf.start_time);
     const dur = isAnchor && drag!.mode === 'resize' ? drag!.curDur : kf.duration;
     const meta = VERB_META[kf.verb];
     const sel = selectedKfIds.includes(kf.id);
@@ -474,7 +501,7 @@ export function Timeline() {
   // One audio clip block: waveform + trim handles at both edges.
   const renderClipBlock = (c: AudioClip, row = 0) => {
     const isDragging = aDrag?.id === c.id;
-    const start = isDragging ? aDrag!.cur.start : c.start_time;
+    const start = isDragging ? aDrag!.cur.start : withRipple(c.start_time);
     const dur = isDragging ? aDrag!.cur.dur : c.duration;
     const off = isDragging ? aDrag!.cur.offset : c.offset;
     const sel = selectedAudioId === c.id;
@@ -566,12 +593,12 @@ export function Timeline() {
             {/* Break flags live in the (sticky) ruler so they stay grabbable while
                 the lanes scroll; the line itself is drawn across the grid below. */}
             {breaks.map(b => {
-              const t = bDrag?.id === b.id ? bDrag.curTime : b.time;
+              const t = bDrag?.id === b.id ? bDrag.curTime : withRipple(b.time);
               return (
                 <span key={b.id}
                   className={`tl__break-flag ${selectedBreakId === b.id ? 'is-sel' : ''}`}
                   style={{ left: t * pxPerSec }}
-                  title={`Break @ ${t.toFixed(2)}s — the slide pauses here until the next click (drag to move, right-click to delete)`}
+                  title={`Break @ ${t.toFixed(2)}s — the slide pauses here until the next click (drag to re-time this segment: everything after the break moves with it; right-click to delete)`}
                   onPointerDown={e => startBreakDrag(e, b)}
                   onClick={e => e.stopPropagation()}
                   onDoubleClick={e => e.stopPropagation()}
@@ -640,7 +667,7 @@ export function Timeline() {
           {/* Break lines: full-height verticals like the playhead, but amber and
               static — where playback stops and waits for a click. */}
           {breaks.map(b => {
-            const t = bDrag?.id === b.id ? bDrag.curTime : b.time;
+            const t = bDrag?.id === b.id ? bDrag.curTime : withRipple(b.time);
             return (
               <div key={b.id}
                 className={`tl__break ${selectedBreakId === b.id ? 'tl__break--sel' : ''}`}

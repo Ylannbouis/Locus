@@ -114,7 +114,10 @@ alignment** (l/c/r via an `array` wrap, since MathTex's `align*` default right-a
 **matrix font size** (emitted as `.scale(font_size/48)`); timeline **group-drag** of multi-selected
 keyframes (one shared delta, one undo entry); and a **rotation pivot** — rotate keyframes take an
 optional `about_point` (scene coords → Manim's `about_point`), placed by dragging a ⊕ handle on the
-canvas, with the ghost preview orbiting accurately about it.
+canvas, with the ghost preview orbiting accurately about it. Also **rounded rectangles** (an opt-in
+`corner_radius` prop; 0 keeps a plain `Rectangle`, > 0 emits `RoundedRectangle` clamped to half the
+shorter side) and **system fonts for `text` objects** (a `font` prop switches codegen from LaTeX
+`Tex` to Pango `Text`, listed by `GET /api/fonts` — see `backend/app/codegen/CLAUDE.md`).
 
 **Images**: an `image` object type places an uploaded raster file (png/jpg/webp/bmp) on the
 canvas — uploaded to the project's `assets/` dir like audio, rendered via `ImageMobject` with the
@@ -133,7 +136,9 @@ slides from `/api/render/{job_id}/slides[/{i}]`. The "hold" between slides is ju
 `Scene.breaks` (`SceneBreak[]`, timestamps in seconds) are **mid-slide** stops: the slide renders as
 one continuous mp4 and the player pauses it at each break until the next click — same trick as the
 end-of-slide freeze, so breaks cost no render time and never reach codegen. They show in the
-timeline as amber dashed verticals alongside the red playhead.
+timeline as amber dashed verticals alongside the red playhead, and dragging one is a **ripple edit**
+— every keyframe, audio clip and later break that starts at or after it moves along, so a segment's
+length is set by dragging its end (see `frontend/CLAUDE.md`).
 The in-app presenter and the exported player deliberately mirror each other's controls —
 **change both together**.
 

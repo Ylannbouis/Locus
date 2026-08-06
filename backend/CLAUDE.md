@@ -80,6 +80,11 @@ video (`render/audio.py`) — codegen and the ejected script never see audio. Wh
 without clips get a *silent* AAC track so the concat demuxer sees uniform streams, and
 `crossfade_scenes` delays+amixes the per-scene tracks to match the video offsets.
 
+**Fonts**: `GET /api/fonts` lists the system fonts a `text` object's `font` prop may name, via
+`manimpango.list_fonts()` — the same Pango stack Manim's `Text` renders with, so the editor's list
+is exactly what the renderer can resolve (dot-prefixed private faces are filtered out). Cached in a
+module global: the scan is slow and fonts don't change mid-process.
+
 **Slideshow playback**: `GET /api/render/{job_id}/slides` returns the deck manifest (with each
 slide's URL rewritten to this API) and `.../slides/{index}` serves one slide's mp4. That endpoint
 implements **HTTP `Range`** itself (`_serve_range` in `main.py`) — browsers refuse to *seek* a

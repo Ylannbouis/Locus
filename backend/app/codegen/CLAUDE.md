@@ -31,6 +31,23 @@ run by the render worker.
   aren't re-escaped — then optional `\textit`/`\textbf` wrappers. Mirrored by `texEscape`/
   `textKatex` in the frontend overlay. Styling/placement is the same as `latex_text`
   (`set_color`, `.move_to`).
+- **`text` line breaks:** the inspector's textarea stores real `\n`s, but LaTeX collapses a raw
+  newline to a space — so multi-line content is emitted as `\begin{tabular}{l}…\\…\end{tabular}`
+  (one row per line, each escaped/bold/italic-wrapped separately). `{l}` because that matches the
+  left alignment Pango gives for free; LaTeX's built-in row strut keeps the leading even and lets
+  a blank line stay a blank row, so no explicit `\strut` is needed. **Single-line content keeps
+  the bare `Tex('…')` form** — wrapping it would change its bbox and hence the vertical centering
+  of every existing text object. The Pango path needs none of this (`Text` breaks on `\n`).
+- **`text` fonts — two mobjects, one object type.** A non-empty `font` prop switches emission from
+  `Tex` to Manim's Pango-backed **`Text(raw, font=…, weight=…, slant=…)`**, the only mobject that
+  takes an arbitrary system font (LaTeX fonts are a preamble/`TexTemplate` affair, not a kwarg).
+  On that path the string is **not** escaped (Pango draws it literally, so no LaTeX may appear in
+  it) and bold/italic become Pango `weight="BOLD"` / `slant="ITALIC"` instead of `\textbf`/
+  `\textit`. The two paths also have **different em scales** — a Pango em is `font_size/72` scene
+  units vs the LaTeX calibration in `coords.ts` — so the canvas preview picks its constant per
+  path (`MANIM_TEXT_EM_UNITS_PER_PT` / `MANIM_EM_UNITS_PER_PT`) and previews a `font` object as
+  plain styled HTML rather than KaTeX. The picker only offers fonts `GET /api/fonts` reports, i.e.
+  what this machine's Pango can actually resolve; an unknown name would silently fall back.
 - **Matrix font size:** Manim's `Matrix` has no `font_size` kwarg, so a non-default `font_size`
   prop emits `.scale(font_size/48)` — glyphs, spacing and brackets grow together. The canvas
   preview scales its fixed pitch/bracket constants by the same factor.
