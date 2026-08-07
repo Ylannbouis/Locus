@@ -131,13 +131,6 @@ _PLAYER_HTML = """<!doctype html>
   .dot { width: 7px; height: 7px; border-radius: 50%; background: #555; }
   .dot.is-current { background: #fff; }
   .dot.is-seen { background: #999; }
-  #hint {
-    position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%);
-    padding: 7px 14px; border-radius: 999px; background: rgba(20,20,20,.82);
-    border: 1px solid rgba(255,255,255,.16); color: #eee; font-size: 13px;
-    opacity: 0; transition: opacity .3s; pointer-events: none;
-  }
-  body.show-hint #hint { opacity: 1; }
   #curtain {
     position: fixed; inset: 0; display: flex; flex-direction: column; gap: 14px;
     align-items: center; justify-content: center; background: #000; text-align: center; padding: 24px;
@@ -157,8 +150,6 @@ _PLAYER_HTML = """<!doctype html>
 </head>
 <body>
 <div id="stage"></div>
-
-<div id="hint"><span id="hint-text">Click or press <b>Space</b> for the next slide</span></div>
 
 <div id="hud">
   <span id="title"></span>
@@ -180,8 +171,6 @@ const SLIDES = MANIFEST.slides || [];
 
 const stage = document.getElementById('stage');
 const curtain = document.getElementById('curtain');
-const hintEl = document.getElementById('hint');
-const hintTextEl = document.getElementById('hint-text');
 const titleEl = document.getElementById('title');
 const counterEl = document.getElementById('counter');
 const dotsEl = document.getElementById('dots');
@@ -204,7 +193,7 @@ const videos = SLIDES.map((s, i) => {
 
 let current = 0;
 let started = false;
-let hudTimer = null, hintTimer = null;
+let hudTimer = null;
 // The next break this slide should stop at, and the rAF handle watching for it.
 // `timeupdate` only fires ~4x a second, which would overshoot a break visibly.
 let breakTarget = null, rafId = 0;
@@ -214,15 +203,11 @@ function flashHud() {
   clearTimeout(hudTimer);
   hudTimer = setTimeout(() => document.body.classList.remove('show-hud'), 2200);
 }
-function showHint(on, kind) {
-  clearTimeout(hintTimer);
-  if (!on) { document.body.classList.remove('show-hint'); return; }
-  hintTextEl.innerHTML = kind === 'break'
-    ? 'Click or press <b>Space</b> to continue'
-    : 'Click or press <b>Space</b> for the next slide';
-  // Only nag once the slide has actually been sitting frozen for a moment.
-  hintTimer = setTimeout(() => document.body.classList.add('show-hint'), 700);
-}
+// There is deliberately no on-screen "click to continue" prompt: a paused
+// slide is its own cue. Kept as a no-op so the playback flow below (which
+// marks every stop, including a blocked autoplay) stays in one piece and
+// mirrors the in-app Presenter's `hint` state.
+function showHint(_on, _kind) {}
 
 // ---- mid-slide breaks ----------------------------------------------------
 function breaksOf(i) { return (SLIDES[i] && SLIDES[i].breaks) || []; }

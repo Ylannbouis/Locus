@@ -17,6 +17,8 @@ export function Presenter({ jobId, onClose }: { jobId: string; onClose: () => vo
   const [current, setCurrent] = useState(0);
   const [started, setStarted] = useState(false);
   // Paused and waiting for a click: on a mid-slide break, or on a last frame.
+  // Not shown to the viewer (no on-screen prompt) — it only drives the HUD's
+  // next button, and mirrors the exported player's own hint state.
   const [hint, setHint] = useState<'break' | 'end' | null>(null);
 
   const rootRef = useRef<HTMLDivElement>(null);
@@ -223,14 +225,6 @@ export function Presenter({ jobId, onClose }: { jobId: string; onClose: () => vo
             <kbd>Space</kbd>/<kbd>→</kbd> next · <kbd>←</kbd> back · <kbd>R</kbd> replay ·
             <kbd>F</kbd> fullscreen · <kbd>Esc</kbd> exit
           </p>
-        </div>
-      )}
-
-      {started && hint && (
-        <div className="presenter__hint">
-          {hint === 'break'
-            ? 'Click or press Space to continue'
-            : 'Click or press Space for the next slide'}
         </div>
       )}
 

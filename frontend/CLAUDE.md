@@ -281,7 +281,9 @@ targets drop the riders — their edges move with the break, so they'd be snappi
   and overshoots visibly. A click then *resumes the same slide* rather than advancing (paused +
   not-at-the-end ⇒ resume, which also recovers from blocked autoplay); a click while playing jumps
   to the **next break** instead of the slide's end; `←` steps back to the previous break before
-  leaving the slide. The hint text switches between "…to continue" and "…for the next slide".
+  leaving the slide. Neither player shows an on-screen "click to continue" prompt — a frozen
+  slide is its own cue (the exported player keeps a no-op `showHint`, the Presenter keeps its
+  `hint` state for the HUD's next button).
 
 ## When changing the IR
 
