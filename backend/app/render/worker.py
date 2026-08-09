@@ -34,13 +34,13 @@ _RESOLUTION = {
 
 # Per-scene wall-clock cap on the Manim subprocess, in seconds. Heavy scenes
 # (4k, long durations, lots of LaTeX) legitimately run for hours, so this is a
-# runaway guard, not a deadline: set MAS_RENDER_TIMEOUT=0 to disable it.
+# runaway guard, not a deadline: set LOCUS_RENDER_TIMEOUT=0 to disable it.
 _DEFAULT_RENDER_TIMEOUT = 21600  # 6 hours
 
 
 def _render_timeout() -> int | None:
     """Manim subprocess timeout in seconds; None = wait forever."""
-    raw = os.environ.get("MAS_RENDER_TIMEOUT", "").strip()
+    raw = os.environ.get("LOCUS_RENDER_TIMEOUT", "").strip()
     if not raw:
         return _DEFAULT_RENDER_TIMEOUT
     try:
@@ -182,7 +182,7 @@ async def _process(job: RenderJob) -> None:
                 rq.update_job(
                     job.job_id, status="error",
                     message=f"Manim render timed out after {mins} min "
-                            f"(raise or disable with MAS_RENDER_TIMEOUT, in seconds; 0 = no limit)",
+                            f"(raise or disable with LOCUS_RENDER_TIMEOUT, in seconds; 0 = no limit)",
                 )
                 return
             if rc != 0:

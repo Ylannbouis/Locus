@@ -79,7 +79,7 @@ class StubFileWriter:
 
 def _instrument(src: str) -> str:
     """Register every generated `m_*` variable on the scene so probes can see
-    them: insert `self._mas_track.update({...})` after the last definition."""
+    them: insert `self._locus_track.update({...})` after the last definition."""
     lines = src.split("\n")
     names: list[str] = []
     last_def = -1
@@ -91,7 +91,7 @@ def _instrument(src: str) -> str:
     if last_def < 0:
         return src
     uniq = list(dict.fromkeys(names))
-    reg = "        self._mas_track.update({" + ", ".join(f"{n!r}: {n}" for n in uniq) + "})"
+    reg = "        self._locus_track.update({" + ", ".join(f"{n!r}: {n}" for n in uniq) + "})"
     lines.insert(last_def + 1, reg)
     return "\n".join(lines)
 
@@ -104,7 +104,7 @@ def _snapshot(scene) -> dict:
         for sm in m.get_family():
             fam.add(id(sm))
     out = {}
-    for name, mob in scene._mas_track.items():
+    for name, mob in scene._locus_track.items():
         fill = stroke = 0.0
         in_scene = False
         for sm in mob.get_family():
@@ -149,13 +149,13 @@ def run_ir_scene(ir_scene: IRScene):
 
     ns: dict = {}
     exec(compile(src, "<generated_scene>", "exec"), ns)
-    base_cls = ns["MasScene"]
+    base_cls = ns["LocusScene"]
 
     samples: list[tuple[float, dict]] = []
 
     class Probe(base_cls):
         def setup(self):
-            self._mas_track = {}
+            self._locus_track = {}
 
         def is_current_animation_frozen_frame(self):
             return False  # sample during pure waits too (no frozen-frame shortcut)
@@ -423,7 +423,7 @@ def hidden_write_flash_then_group_fadeout():
 
 @scenario
 def intro_fusion_then_fadeout():
-    """Write fused with an overlapping move (MasIntro), then a fade_out."""
+    """Write fused with an overlapping move (LocusIntro), then a fade_out."""
     objs = [shape("c", -1)]
     kfs = [kf("c", "write", 0.0), kf("c", "move", 0.5, dur=1.0, params=MOVE_R2),
            kf("c", "fade_out", 3.0)]

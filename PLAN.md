@@ -1,4 +1,4 @@
-# Math Animation Studio — Build Plan & Phases
+# Locus — Build Plan & Phases
 
 A GUI-driven 2D math animation editor that wraps **Manim Community Edition**. The user
 authors scenes visually (canvas + timeline); a code generator emits Manim Python as a
@@ -26,7 +26,7 @@ put a fade and a write-on on a timeline → render an MP4 → download**. Everyt
 - Vite + React + TypeScript frontend; FastAPI backend; Python venv.
 - `scripts/setup.ps1` (bootstrap deps) and `scripts/start.ps1` (launch both servers).
 - `deps_check.py` + `GET /api/system/deps`; dependency gate in the UI.
-- Project file I/O: `GET/POST/PUT /api/projects` storing to `~/MathAnimStudio/projects/`.
+- Project file I/O: `GET/POST/PUT /api/projects` storing to `~/Locus/projects/`.
 - App shell layout + project open/create screen.
 - **Checkpoint:** dep check works, project JSON round-trips.
 

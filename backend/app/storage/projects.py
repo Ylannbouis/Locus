@@ -1,4 +1,4 @@
-"""File-based project storage under ~/MathAnimStudio/projects/."""
+"""File-based project storage under ~/Locus/projects/."""
 from __future__ import annotations
 
 import json
@@ -9,11 +9,33 @@ from pathlib import Path
 
 from app.models.ir import Project, ProjectKind, ProjectSummary, Scene
 
-PROJECTS_ROOT = Path.home() / "MathAnimStudio" / "projects"
+PROJECTS_ROOT = Path.home() / "Locus" / "projects"
+
+# Projects lived under ~/MathAnimStudio before the app was renamed to Locus.
+# Move that tree across once so an upgrade doesn't strand anyone's work.
+_LEGACY_ROOT = Path.home() / "MathAnimStudio" / "projects"
 
 # Ids come from `new_id()` (uuid slug); anything else is refused before it can be
 # turned into a path — deletion is the one operation where traversal would hurt.
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _migrate_legacy_root() -> None:
+    """One-time move of the pre-rename projects dir. Never merges or overwrites:
+    it only runs when the new root doesn't exist yet, and a failure is non-fatal
+    (the app starts with an empty list rather than refusing to boot)."""
+    if PROJECTS_ROOT.exists() or not _LEGACY_ROOT.is_dir():
+        return
+    try:
+        PROJECTS_ROOT.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(_LEGACY_ROOT), str(PROJECTS_ROOT))
+        print(f"[locus] moved projects from {_LEGACY_ROOT} to {PROJECTS_ROOT}")
+        _LEGACY_ROOT.parent.rmdir()  # only succeeds if nothing else was in there
+    except OSError:
+        pass
+
+
+_migrate_legacy_root()
 
 
 def _project_dir(project_id: str) -> Path:

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 // UI-only canvas preferences (not part of the project IR). Persisted to
 // localStorage so they survive reloads, like the timeline height.
-const SNAP_KEY = 'mas.snapToCenter';
+const SNAP_KEY = 'locus.snapToCenter';
 
 interface CanvasState {
   // Snap a dragged object to the horizontal/vertical center lines when close.

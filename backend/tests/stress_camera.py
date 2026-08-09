@@ -9,7 +9,7 @@ way to catch the class of bug this exists for:
     builder only becomes an Animation when the enclosing AnimationGroup /
     Succession is constructed — after every builder in the play has been built.
     So N camera moves in one play all animated to the *last* keyframe's framing
-    and only that one appeared to do anything. Camera moves emit `MasApply` now
+    and only that one appeared to do anything. Camera moves emit `LocusApply` now
     (target built at begin() from the live frame), like object transforms.
 
 Run with the backend venv python:
@@ -60,7 +60,7 @@ def run_camera_scene(ir_scene: IRScene):
 
     ns: dict = {}
     exec(compile(src, "<generated_scene>", "exec"), ns)
-    base_cls = ns["MasScene"]
+    base_cls = ns["LocusScene"]
 
     samples: list[tuple[float, tuple[float, float], float]] = []
 

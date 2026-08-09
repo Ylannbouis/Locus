@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Launch the Math Animation Studio dev servers (uvicorn --reload + vite).
+  Launch the Locus dev servers (uvicorn --reload + vite).
   Each server runs in its OWN window, wrapped in a Windows Job Object (see
   run-in-job.ps1) so Ctrl+C, closing the window, or Stop-Process cleanly stops
   it AND every child process it spawned (no orphaned reloader/worker/node).
@@ -18,7 +18,7 @@ if (-not (Test-Path $VenvPython)) {
     exit 1
 }
 
-Write-Host "Starting Math Animation Studio..." -ForegroundColor Cyan
+Write-Host "Starting Locus..." -ForegroundColor Cyan
 Write-Host "  Backend:  http://localhost:8000   (its own window)" -ForegroundColor Gray
 Write-Host "  Frontend: http://localhost:5173   (its own window)" -ForegroundColor Gray
 
@@ -30,23 +30,23 @@ Write-Host "  Frontend: http://localhost:5173   (its own window)" -ForegroundCol
 $Runner = Join-Path $PSScriptRoot "run-in-job.ps1"
 
 # --- Backend window: uvicorn with auto-reload (watches the app/ package only) ---
-$env:MAS_DIR   = $BackendDir
-$env:MAS_TITLE = "MAS Backend (Ctrl+C to stop)"
-$env:MAS_CMD   = "& '$VenvPython' -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --reload-dir app"
+$env:LOCUS_DIR   = $BackendDir
+$env:LOCUS_TITLE = "Locus Backend (Ctrl+C to stop)"
+$env:LOCUS_CMD   = "& '$VenvPython' -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --reload-dir app"
 $backend = Start-Process powershell `
     -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-File", "`"$Runner`"" `
     -PassThru
 
 # --- Frontend window: vite dev server (already hot-reloads) ---
-$env:MAS_DIR   = $FrontendDir
-$env:MAS_TITLE = "MAS Frontend (Ctrl+C to stop)"
-$env:MAS_CMD   = "npm run dev"
+$env:LOCUS_DIR   = $FrontendDir
+$env:LOCUS_TITLE = "Locus Frontend (Ctrl+C to stop)"
+$env:LOCUS_CMD   = "npm run dev"
 $frontend = Start-Process powershell `
     -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-File", "`"$Runner`"" `
     -PassThru
 
 # Don't leave these lingering in the launching shell's environment.
-Remove-Item Env:MAS_DIR, Env:MAS_TITLE, Env:MAS_CMD -ErrorAction SilentlyContinue
+Remove-Item Env:LOCUS_DIR, Env:LOCUS_TITLE, Env:LOCUS_CMD -ErrorAction SilentlyContinue
 
 Write-Host ""
 Write-Host "Two windows opened:" -ForegroundColor Green
@@ -70,7 +70,7 @@ if ($ready) {
     Start-Process "http://localhost:5173/"
 } else {
     Write-Host "Frontend did not respond on http://localhost:5173 within 30s." -ForegroundColor Yellow
-    Write-Host "Check the 'MAS Frontend' window for errors, then open http://localhost:5173/ manually." -ForegroundColor Yellow
+    Write-Host "Check the 'Locus Frontend' window for errors, then open http://localhost:5173/ manually." -ForegroundColor Yellow
 }
 
 Write-Host ""

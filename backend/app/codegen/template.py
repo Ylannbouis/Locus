@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from jinja2 import Template
 
-SCENE_CLASS_NAME = "MasScene"
+SCENE_CLASS_NAME = "LocusScene"
 
 # Helpers emitted into the script only when the body uses them.
 #
-# MasApply / MasFade replace `.animate`-style transforms and FadeIn/FadeOut:
+# LocusApply / LocusFade replace `.animate`-style transforms and FadeIn/FadeOut:
 #   - Their Transform target is built at begin() time (Succession begins its
 #     segments lazily), so each animation composes with everything that already
 #     played in the same self.play — a pre-built target (`.animate`, or
@@ -18,11 +18,11 @@ SCENE_CLASS_NAME = "MasScene"
 #     `Scene.remove` does not extract the removed mobject's family from *other*
 #     scene containers (every play wraps animated mobjects in helper Groups) —
 #     the combination made grouped objects reappear after a group fade-out.
-#     MasFade just drives opacity to `alpha` × the authored value and leaves
+#     LocusFade just drives opacity to `alpha` × the authored value and leaves
 #     scene membership alone.
-_MAS_FX_HELPER = '''
+_LOCUS_FX_HELPER = '''
 
-def _mas_authored_alphas(mobject):
+def _locus_authored_alphas(mobject):
     """Authored opacity (fill, stroke, background-stroke) per family member.
     Reads a member's `saved_state` when present (objects pre-hidden with
     set_opacity(0) call save_state() first), else the member itself — helpers
@@ -45,7 +45,7 @@ def _mas_authored_alphas(mobject):
     return alphas
 
 
-def _mas_apply_alpha(sm, authored, k):
+def _locus_apply_alpha(sm, authored, k):
     if isinstance(sm, VMobject):
         f, s, b = authored if isinstance(authored, tuple) else (1.0, 1.0, 1.0)
         sm.set_fill(opacity=k * f, family=False)
@@ -58,7 +58,7 @@ def _mas_apply_alpha(sm, authored, k):
             pass
 
 
-class MasApply(Transform):
+class LocusApply(Transform):
     """Transform to a target built at begin() from the mobject's *current*
     state: `func` (move/scale/rotate chain) is applied to a fresh copy, and
     `opacity` fades every family member toward `opacity` × its authored
@@ -66,25 +66,25 @@ class MasApply(Transform):
     slides into place)."""
 
     def __init__(self, mobject, func=None, opacity=None, intro_shift=None, **kwargs):
-        self._mas_func = func
-        self._mas_opacity = opacity
-        self._mas_intro_shift = intro_shift
-        self._mas_authored = _mas_authored_alphas(mobject) if opacity is not None else None
+        self._locus_func = func
+        self._locus_opacity = opacity
+        self._locus_intro_shift = intro_shift
+        self._locus_authored = _locus_authored_alphas(mobject) if opacity is not None else None
         super().__init__(mobject, **kwargs)
 
     def create_target(self):
         target = self.mobject.copy()
-        if self._mas_func is not None:
-            target = self._mas_func(target)
-        if self._mas_opacity is not None:
-            for sm, authored in zip(target.get_family(), self._mas_authored):
-                _mas_apply_alpha(sm, authored, self._mas_opacity)
+        if self._locus_func is not None:
+            target = self._locus_func(target)
+        if self._locus_opacity is not None:
+            for sm, authored in zip(target.get_family(), self._locus_authored):
+                _locus_apply_alpha(sm, authored, self._locus_opacity)
         return target
 
     def create_starting_mobject(self):
         start = super().create_starting_mobject()
-        if self._mas_intro_shift is not None:
-            start.shift(self._mas_intro_shift)
+        if self._locus_intro_shift is not None:
+            start.shift(self._locus_intro_shift)
         return start
 
     def interpolate_submobject(self, submobject, starting_submobject, target_copy, alpha):
@@ -95,9 +95,9 @@ class MasApply(Transform):
         # *geometry only* — concurrent family-overlapping animations then
         # compose instead of fighting. A fused fade+transform (or a shifted
         # fade) owns its object outright and interpolates everything.
-        pure_fade = (self._mas_func is None and self._mas_intro_shift is None
-                     and self._mas_opacity is not None)
-        pure_move = self._mas_opacity is None
+        pure_fade = (self._locus_func is None and self._locus_intro_shift is None
+                     and self._locus_opacity is not None)
+        pure_move = self._locus_opacity is None
         if pure_fade:
             submobject.interpolate_color(starting_submobject, target_copy, alpha)
             return self
@@ -109,7 +109,7 @@ class MasApply(Transform):
             submobject, starting_submobject, target_copy, alpha)
 
 
-def MasFade(mobject, alpha, shift=None, **kwargs):
+def LocusFade(mobject, alpha, shift=None, **kwargs):
     """Fade in place to `alpha` × the mobject's authored opacity (no scene
     add/remove). A shift drifts the mobject by that vector while fading out,
     or slides it into place from the opposite offset while fading in."""
@@ -122,7 +122,7 @@ def MasFade(mobject, alpha, shift=None, **kwargs):
         else:
             def func(m, _v=vec):
                 return m.shift(_v)
-    return MasApply(mobject, func=func, opacity=alpha, intro_shift=intro_shift, **kwargs)
+    return LocusApply(mobject, func=func, opacity=alpha, intro_shift=intro_shift, **kwargs)
 
 '''
 
@@ -132,9 +132,9 @@ def MasFade(mobject, alpha, shift=None, **kwargs):
 # the partial transform *after* each interpolation step composes cleanly —
 # running the introducer and a Transform as two animations on one mobject would
 # fight.
-_MAS_INTRO_HELPER = '''
+_LOCUS_INTRO_HELPER = '''
 
-def MasIntro(base_cls, mobject, shift=None, move_to=None, scale=None, rotate=None,
+def LocusIntro(base_cls, mobject, shift=None, move_to=None, scale=None, rotate=None,
              rotate_about=None, intro_span=(0.0, 1.0), xform_span=(0.0, 1.0),
              xform_rate=smooth, **kwargs):
     """A creation animation (Write/Create/DrawBorderThenFill) that also applies a
@@ -150,13 +150,13 @@ def MasIntro(base_cls, mobject, shift=None, move_to=None, scale=None, rotate=Non
 
     class _MasIntro(base_cls):
         def begin(self):
-            self._mas_about = self.mobject.get_center().copy()
+            self._locus_about = self.mobject.get_center().copy()
             delta = np.zeros(3)
             if move_to is not None:
-                delta = delta + (np.asarray(move_to, dtype=float) - self._mas_about)
+                delta = delta + (np.asarray(move_to, dtype=float) - self._locus_about)
             if shift is not None:
                 delta = delta + np.asarray(shift, dtype=float)
-            self._mas_delta = delta
+            self._locus_delta = delta
             super().begin()
 
         def interpolate_mobject(self, alpha):
@@ -164,10 +164,10 @@ def MasIntro(base_cls, mobject, shift=None, move_to=None, scale=None, rotate=Non
             t = xform_rate(sub_alpha(alpha, xform_span))
             m = self.mobject
             if scale is not None:
-                m.scale(1.0 + (float(scale) - 1.0) * t, about_point=self._mas_about)
+                m.scale(1.0 + (float(scale) - 1.0) * t, about_point=self._locus_about)
             if rotate and rotate_about is None:
-                m.rotate(rotate * t, about_point=self._mas_about)
-            m.shift(self._mas_delta * t)
+                m.rotate(rotate * t, about_point=self._locus_about)
+            m.shift(self._locus_delta * t)
             # A fixed-point pivot does not commute with the shift; the fused
             # chain's convention is move first, then orbit the anchor, so the
             # anchored rotate is applied after the shift.
@@ -182,7 +182,7 @@ def MasIntro(base_cls, mobject, shift=None, move_to=None, scale=None, rotate=Non
 # base_class is "Scene" normally, or "MovingCameraScene" when the scene animates
 # the camera (only that class exposes self.camera.frame).
 _TEMPLATE = Template(
-    '''# AUTO-GENERATED by Math Animation Studio. Do not edit by hand.
+    '''# AUTO-GENERATED by Locus. Do not edit by hand.
 from manim import *
 import numpy as np
 from numpy import sin, cos, tan, exp, log, sqrt, pi, e
@@ -200,10 +200,10 @@ class {{ class_name }}({{ base_class }}):
 def render_script(body: str, background_color: str = "#000000",
                   base_class: str = "Scene") -> str:
     helpers = ""
-    if "MasApply(" in body or "MasFade(" in body:
-        helpers += _MAS_FX_HELPER
-    if "MasIntro(" in body:
-        helpers += _MAS_INTRO_HELPER
+    if "LocusApply(" in body or "LocusFade(" in body:
+        helpers += _LOCUS_FX_HELPER
+    if "LocusIntro(" in body:
+        helpers += _LOCUS_INTRO_HELPER
     return _TEMPLATE.render(
         class_name=SCENE_CLASS_NAME,
         background_color_repr=repr(background_color),

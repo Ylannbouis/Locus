@@ -63,7 +63,7 @@ async def lifespan(_app: FastAPI):
         worker_task.cancel()
 
 
-app = FastAPI(title="Math Animation Studio", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Locus", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

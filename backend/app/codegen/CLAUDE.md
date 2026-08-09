@@ -1,16 +1,16 @@
 # Codegen — IR `Scene` → Manim Python script
 
 Transpiles a `Scene` (from `models/ir.py`) into a runnable Manim script via Jinja2. Pure string
-generation: no Manim import here, the output is *text*. The generated `MasScene(Scene)` class is
+generation: no Manim import here, the output is *text*. The generated `LocusScene(Scene)` class is
 run by the render worker.
 
 ## Files
 
 | File | Role |
 |------|------|
-| `template.py` | The Jinja2 scaffold + `SCENE_CLASS_NAME = "MasScene"`. `render_script(body, background_color, base_class="Scene")` — `base_class` becomes `MovingCameraScene` when the scene uses the camera. Construct body is pre-indented (8 spaces) and injected; imports numpy fns (`sin`, `cos`, …) so plot expressions can use them bare. Also holds the helper classes, each emitted into the script only when the body references it: `MasApply`/`MasFade` (all move/scale/rotate transforms and all fades — see "Fades & transforms" below) and `MasIntro` (a creation animation that applies a partial move/scale/rotate after each frame). |
+| `template.py` | The Jinja2 scaffold + `SCENE_CLASS_NAME = "LocusScene"`. `render_script(body, background_color, base_class="Scene")` — `base_class` becomes `MovingCameraScene` when the scene uses the camera. Construct body is pre-indented (8 spaces) and injected; imports numpy fns (`sin`, `cos`, …) so plot expressions can use them bare. Also holds the helper classes, each emitted into the script only when the body references it: `LocusApply`/`LocusFade` (all move/scale/rotate transforms and all fades — see "Fades & transforms" below) and `LocusIntro` (a creation animation that applies a partial move/scale/rotate after each frame). |
 | `objects.py` | `emit_object(obj) -> (var, lines)`: Mobject construction + styling + placement, per object type/subtype. |
-| `animations.py` | `emit_animation(verb, var, params, var_map) -> expr`: one **object** verb → the inner expression of a `self.play(...)`. Fades emit `MasFade(var, alpha)`; `emit_transform_chain(var, items, opacity)` fuses simultaneous move/scale/rotate (and an overlapping fade's target opacity) into one `MasApply(var, lambda _m: _m.shift(…)…, opacity=…)`; `emit_intro_transform(...)` fuses a creation verb with such a cluster into a `MasIntro(...)` call. (Camera verbs are handled in `scene.py`, not here.) |
+| `animations.py` | `emit_animation(verb, var, params, var_map) -> expr`: one **object** verb → the inner expression of a `self.play(...)`. Fades emit `LocusFade(var, alpha)`; `emit_transform_chain(var, items, opacity)` fuses simultaneous move/scale/rotate (and an overlapping fade's target opacity) into one `LocusApply(var, lambda _m: _m.shift(…)…, opacity=…)`; `emit_intro_transform(...)` fuses a creation verb with such a cluster into a `LocusIntro(...)` call. (Camera verbs are handled in `scene.py`, not here.) |
 | `scene.py` | Orchestrator: `build_body` / `generate_scene_script` / `generate_morph_preview_script`. Ties objects + relationships + timeline + camera together. |
 
 ## Key conventions
@@ -67,8 +67,8 @@ run by the render worker.
   that isn't a `text` object with a `font` prop (`_is_pango_text`) — the IR can carry a stale
   `type_on` after the user clears `font`. That pass runs *before* the image→FadeIn degrade, so an
   image inherits it. `type_on` is in `CREATION_VERBS` and `INTRO_VERBS` but deliberately **not in
-  `_SIMPLE`**, which is what gates MasIntro fusion: `AddTextLetterByLetter` swaps
-  `mobject.submobjects` each frame instead of rebuilding from a captured start state, so MasIntro's
+  `_SIMPLE`**, which is what gates LocusIntro fusion: `AddTextLetterByLetter` swaps
+  `mobject.submobjects` each frame instead of rebuilding from a captured start state, so LocusIntro's
   post-frame `m.shift(delta * t)` would accumulate every frame and fling the text off screen.
   `emit_intro_transform` returns None for it, so `_plan_intro_fusion`'s dry-run never marks it
   fused. An overlapping move/scale/rotate therefore stays a separate unit — and `_object_tracks`
@@ -85,7 +85,7 @@ run by the render worker.
   Axes/number_line pass `number_font_size` through to their `font_size` / `axis_config`.
 - **Rotation pivot:** a rotate keyframe may carry an `about_point` param (`{x,y}`, scene coords);
   it emits Manim's `about_point=np.array(…)` on every rotate path (`_rotate_call`: the `.animate`
-  branch and the fused `MasApply` chain) and flows into `MasIntro` as `rotate_about` — applied
+  branch and the fused `LocusApply` chain) and flows into `LocusIntro` as `rotate_about` — applied
   *after* the shift there, because a fixed-point pivot doesn't commute with a move (the chain's
   convention is move first, then orbit the anchor; `motion.ts` in the frontend mirrors this by
   orbiting the object's center about the anchor). `emit_intro_transform` refuses to fold a cluster
@@ -144,36 +144,36 @@ dependencies are missing/hidden:
      *between* plays, which a single play can't express. Here keyframes sharing a `group_id` *or* a
      `start_time` collapse into one parallel play; tracking emits **statement events** (`kind: "stmt"`).
    Both route each animation through `_kf_anim` (camera → `_camera_anim`, object → `emit_animation`), via
-   `_merge_units`, which **fuses same-object move/scale/rotate that overlap in time** into one `MasApply`
+   `_merge_units`, which **fuses same-object move/scale/rotate that overlap in time** into one `LocusApply`
    over the union window (`emit_transform_chain`) — two separate transforms on one mobject fight over its
    state. Applies to ungrouped tracks and parallel (`lag_ratio == 0`) groups; non-overlapping transforms
    stay separate. A **staggered group** (`lag_ratio > 0`) emits with the *same timing* as Manim's
    `AnimationGroup(…, lag_ratio=…)` (member *i* starts at Σ previous run_times × lag) but as parallel
    `Succession(Wait(start), member)` tracks inside a `lag_ratio=0` group, so each member *begins* — and
-   builds its MasApply/MasFade target — at its actual start, not eagerly at the group's start.
+   builds its LocusApply/LocusFade target — at its actual start, not eagerly at the group's start.
    A **fade** (fade_in/fade_out) that overlaps a same-object transform is fused into that transform's
-   `MasApply` as its `opacity` — a standalone fade alongside a transform is a second animation on the
+   `LocusApply` as its `opacity` — a standalone fade alongside a transform is a second animation on the
    same mobject and they cancel. `_plan_fade_fusion` picks the fade keyframes to fuse (`fused_fade_ids`,
    threaded into `_merge_units`); fusion is per play bucket (ungrouped / parallel group), same as the
    transform merge. Cross-family overlaps (fade on a *group* while a *child* transforms, or vice versa)
-   need no fusion: MasApply/MasFade split geometry from style per-member (see below).
+   need no fusion: LocusApply/LocusFade split geometry from style per-member (see below).
    A **drawing creation verb** (write/create/draw_border_then_fill) that overlaps a same-object transform
-   cluster likewise fuses — into one **`MasIntro`** (template helper): the creation animation subclassed to
+   cluster likewise fuses — into one **`LocusIntro`** (template helper): the creation animation subclassed to
    apply the partial move/scale/rotate *after* each frame's interpolation. That composes cleanly because
    creation animations rebuild the mobject from their captured start state every frame; running the
    introducer and a `Transform` as two animations on one mobject fights (or, chained into a `Succession`,
-   pops the object in fully visible, moves it, then wipes and redraws it — the original bug). `MasIntro`
+   pops the object in fully visible, moves it, then wipes and redraws it — the original bug). `LocusIntro`
    runs over the union window with `intro_span`/`xform_span` fractions locating each part; the intro's
    easing is its `rate_func` (drives the drawing), the cluster's easing is `xform_rate`. Planned by
    `_plan_intro_fusion` (same bucket rules; one intro per cluster; a cluster already fusing a *fade* keeps
-   the fade and the intro stays standalone — an Animation-class intro can't join a MasApply). If the
-   object was hidden (see 2b) `_object_tracks` emits a `MasFade(m, 1.0, run_time=0.001)` immediately
+   the fade and the intro stays standalone — an Animation-class intro can't join a LocusApply). If the
+   object was hidden (see 2b) `_object_tracks` emits a `LocusFade(m, 1.0, run_time=0.001)` immediately
    before the fused intro instead of the standalone reveal wrapping.
    **One track per mobject (`_object_tracks`).** Manim can't run two animations on one mobject in a
    single `self.play` — they fight each frame over its state. So after `_merge_units`, each mobject's
    several units are chained into **one** `Succession(seg, Wait(gap), seg, …)` track (an object that
    fades in + moves, then later fades out + moves, must run its two clusters *in sequence*). No target
-   copies are pre-built: each segment's MasApply/MasFade constructs its target at its own `begin()`
+   copies are pre-built: each segment's LocusApply/LocusFade constructs its target at its own `begin()`
    (`Succession` begins segments lazily), so segments compose on the live mobject. The sequential
    (camera-tracking) model is naturally safe here — it emits a separate `self.play` per time slot.
 5. `_bake(expr, run_time, rate_func)` inserts timing into an animation expression so it can live inside
@@ -182,10 +182,10 @@ dependencies are missing/hidden:
    slot; see the camera section for why that matters); an Animation-class call gets the kwargs
    inserted before the final `)`. Hold the final frame with a trailing `self.wait`.
 
-## Fades & transforms (MasFade / MasApply) — why not FadeIn/FadeOut/.animate
+## Fades & transforms (LocusFade / LocusApply) — why not FadeIn/FadeOut/.animate
 
-All object fades emit **`MasFade(m, alpha, shift=…)`** and all move/scale/rotate emit
-**`MasApply(m, lambda _m: _m.shift(…)…, opacity=…)`** (template helpers; MasFade is a MasApply
+All object fades emit **`LocusFade(m, alpha, shift=…)`** and all move/scale/rotate emit
+**`LocusApply(m, lambda _m: _m.shift(…)…, opacity=…)`** (template helpers; LocusFade is a LocusApply
 wrapper). Two Manim behaviours forced this — regressions here reintroduce **"group fades out, objects
 instantly reappear at the end"** and **"a later transform resurrects a faded object"**:
 
@@ -194,15 +194,15 @@ instantly reappear at the end"** and **"a later transform resurrects a faded obj
   extract the removed mobject's own family from *other* scene containers — and every play wraps its
   animated mobjects in helper `Group`s (each `Succession`/`AnimationGroup` has a `.group`), so any
   group child with its own keyframe stays reachable through one of those and pops back fully visible
-  when the play ends. MasFade never touches scene membership: it drives each family member's opacity
+  when the play ends. LocusFade never touches scene membership: it drives each family member's opacity
   toward `alpha` × its **authored** value and leaves the (invisible) mobject in place — which is also
   what lets a later fade_in bring it back.
 - **Pre-built targets snapshot stale state.** `.animate` (and any `Transform(m, m.copy()…)` target
   built before the play) copies the mobject at construction time — the timeline model plays the whole
   scene in *one* `self.play`, so such a target resurrects everything an earlier fade did (and bakes
-  opacity 0 into transforms of hidden objects). MasApply builds its target at `begin()` from the
+  opacity 0 into transforms of hidden objects). LocusApply builds its target at `begin()` from the
   *current* state, so every unit composes with whatever already played.
-- **Authored opacity**: MasFade/MasApply read per-member target opacities from `saved_state` when
+- **Authored opacity**: LocusFade/LocusApply read per-member target opacities from `saved_state` when
   present, else the member at construction time. `build_body` emits `save_state()` for every object a
   fade touches (and every hidden object) as a setup statement — required in the sequential model,
   where a play's animations are constructed mid-scene (after an earlier fade_out already zeroed the
@@ -215,8 +215,8 @@ instantly reappear at the end"** and **"a later transform resurrects a faded obj
 **Hide-until-creation (`build_body` step 2b).** Objects that must start at `set_opacity(0)`:
 
 - **Introduced by fade_in** (both models): the fade_in is the object's first keyframe (tie → creation
-  verbs first) — a MasFade on an already-visible object is a no-op, and the play's wrapper `Group`
-  exposes the mobject from t=0 (MasFade is not a Manim introducer). Exceptions: an **ancestor group's
+  verbs first) — a LocusFade on an already-visible object is a no-op, and the play's wrapper `Group`
+  exposes the mobject from t=0 (LocusFade is not a Manim introducer). Exceptions: an **ancestor group's
   earlier fade_out** implies the family started visible (`_ancestor_fadeout_before`, also excludes the
   object from `created_ids` so the pre-add works), and Transform/morph **targets** are never hidden
   (the transform interpolates toward them). No reveal wrapper needed — the fade_in *is* the reveal.
@@ -224,18 +224,18 @@ instantly reappear at the end"** and **"a later transform resurrects a faded obj
   exposed at t=0: any non-drawing keyframe on the object **or any ancestor group** pulls the mobject
   into the play's wrapper `Group` when the play starts (`_exposed_early` walks the `parent_id` chain),
   flashing it before its creation plays. The creation is preceded by
-  `MasFade(m, 1.0, run_time=0.001)` — an opacity-only reveal (geometry stays wherever earlier hidden
+  `LocusFade(m, 1.0, run_time=0.001)` — an opacity-only reveal (geometry stays wherever earlier hidden
   transforms put it) the instant the introducer starts. `reveal_kf_id` records which keyframe
   reveals; on a start-time tie the creation verb sorts first. Not needed in the sequential model
   (adds are per-play).
   **The reveal is emitted inside `_object_tracks`**, as the first segment of the object's own track,
-  for *both* a fused MasIntro and a standalone introducer (the unit's `reveal` flag; `_merge_units`
+  for *both* a fused LocusIntro and a standalone introducer (the unit's `reveal` flag; `_merge_units`
   takes `reveal_kf_ids` to set it). Don't hoist reveals back out into their own tracks: an object
   whose introducer does *not* fuse with an overlapping transform (i.e. `type_on`, which never fuses)
   would then get two parallel tracks on one mobject in one play — the exact thing `_object_tracks`
   exists to prevent.
 
-Hidden objects need no special transform handling: a MasApply target built at `begin()` simply carries
+Hidden objects need no special transform handling: a LocusApply target built at `begin()` simply carries
 the current 0 opacity, so a pre-creation move keeps the object hidden (the old `.animate`
 restore-target machinery is gone).
 
@@ -248,14 +248,14 @@ change** — it's all in the free-form `params` dict.
 
 - `_uses_camera(scene)` → any camera keyframe or a non-default `camera_track`. Drives the
   `base_class` choice in `generate_scene_script` and the initial-framing emission in `build_body`.
-- `_camera_anim(kf, var_map)` → a one-shot **`MasApply(self.camera.frame, lambda _m: _m.move_to(…).set(width=config.frame_width / zoom))`**
+- `_camera_anim(kf, var_map)` → a one-shot **`LocusApply(self.camera.frame, lambda _m: _m.move_to(…).set(width=config.frame_width / zoom))`**
   (focus → `<objvar>.get_center()`). Width is only emitted when `zoom` is present, so a pure pan
   keeps the current zoom. `_zoom()` clamps non-positive/garbage zoom to 1.0 (guards `/ 0`).
   **Never emit `.animate` here** — `m.animate` parks its target in the mobject's single `m.target`
   slot, and a builder only becomes an Animation when the enclosing `AnimationGroup`/`Succession` is
   constructed, i.e. *after* every builder in the play exists. So N camera moves in one play all read
   the same (last) `frame.target`: every move animated to the last keyframe's framing and only that
-  one appeared to work. MasApply builds its target at `begin()` from the live frame, which is also
+  one appeared to work. LocusApply builds its target at `begin()` from the live frame, which is also
   what makes a pan-only keyframe keep the previous zoom (the old target was a copy of the *pre-play*
   frame, so it silently restored the initial zoom) and a focus keyframe read the object's position
   when the move starts — matching the editor's ghost preview (`effectivePosition` at the keyframe's
@@ -278,8 +278,8 @@ change** — it's all in the free-form `params` dict.
   `emit_animation` (object verbs) or `_camera_anim`/`_kf_anim` (camera verbs), and add to
   `CREATION_VERBS` if it introduces the object to the scene. A new transform verb (like
   move/scale/rotate) should also be added to `_XFORM_ANIM` + `transform_chain_suffix` (and folded
-  in `emit_intro_transform`/`MasIntro` if it can overlap a creation) so it fuses when simultaneous
-  and emits through `MasApply`; a new *drawing* introducer verb belongs in `INTRO_VERBS` + `_SIMPLE`
+  in `emit_intro_transform`/`LocusIntro` if it can overlap a creation) so it fuses when simultaneous
+  and emits through `LocusApply`; a new *drawing* introducer verb belongs in `INTRO_VERBS` + `_SIMPLE`
   so it fuses with overlapping transforms, and interacts with the hide-until-creation pass above.
 - **Regression harness**: `backend/tests/stress_groups.py` (run with the venv python, no pytest
   needed) builds IR scenes for ~23 group/fade scenarios, executes the generated scripts in-process

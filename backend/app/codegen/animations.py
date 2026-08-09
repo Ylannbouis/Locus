@@ -31,12 +31,12 @@ _SIMPLE = {
 }
 
 # Creation verbs that draw the mobject in (fade_in is excluded: a fade fuses into
-# an `.animate` chain as `.set_opacity`, these need the MasIntro wrapper instead).
+# an `.animate` chain as `.set_opacity`, these need the LocusIntro wrapper instead).
 # `type_on` counts as a drawing introducer for the *hide-until-creation* pass —
 # it must not flash before its turn — but it is deliberately absent from _SIMPLE,
-# which is what gates MasIntro fusion. AddTextLetterByLetter is a
+# which is what gates LocusIntro fusion. AddTextLetterByLetter is a
 # ShowIncreasingSubsets: it swaps `mobject.submobjects` per frame instead of
-# rebuilding the mobject from a captured start state, so MasIntro's post-frame
+# rebuilding the mobject from a captured start state, so LocusIntro's post-frame
 # `m.shift(delta * t)` would accumulate every frame and fling the text off screen.
 # `emit_intro_transform` returns None for it, and `_plan_intro_fusion`'s dry-run
 # therefore never marks it fused — it falls back to standalone emission.
@@ -94,7 +94,7 @@ def emit_animation(verb: str, var: str, params: dict[str, Any] | None = None,
         return f"AddTextLetterByLetter({var})"
 
     if verb in ("fade_in", "fade_out"):
-        # MasFade (template helper), not FadeIn/FadeOut: it fades in place to
+        # LocusFade (template helper), not FadeIn/FadeOut: it fades in place to
         # the authored opacity without ever removing the mobject from the scene
         # (FadeOut's remover clean-up resets its mobject to full visibility and
         # leaves grouped children reachable through play-internal Groups — the
@@ -104,8 +104,8 @@ def emit_animation(verb: str, var: str, params: dict[str, Any] | None = None,
         alpha = 1.0 if verb == "fade_in" else 0.0
         shift = _vec(params.get("shift"))
         if shift:
-            return f"MasFade({var}, {alpha}, shift={shift})"
-        return f"MasFade({var}, {alpha})"
+            return f"LocusFade({var}, {alpha}, shift={shift})"
+        return f"LocusFade({var}, {alpha})"
 
     if verb in ("transform", "replacement_transform", "morph_equation"):
         cls = {
@@ -201,11 +201,11 @@ def transform_chain_suffix(items: list[tuple[str, dict]]) -> str | None:
 
 def emit_transform_chain(var: str, items: list[tuple[str, dict]],
                          opacity: float | None = None) -> str | None:
-    """Chain simultaneous move/scale/rotate into one `MasApply` (template
+    """Chain simultaneous move/scale/rotate into one `LocusApply` (template
     helper). `items` is a list of (verb, params). Returns e.g.
-    `MasApply(m, lambda _m: _m.shift(v).scale(2))`, or None if nothing emits.
+    `LocusApply(m, lambda _m: _m.shift(v).scale(2))`, or None if nothing emits.
 
-    MasApply builds its Transform target at begin() time from the mobject's
+    LocusApply builds its Transform target at begin() time from the mobject's
     *current* state, so it composes with everything played earlier in the same
     self.play — unlike `.animate` or a pre-built `Transform(m, m.copy()...)`
     target, which snapshot pre-play state (and would e.g. bake a hidden
@@ -215,7 +215,7 @@ def emit_transform_chain(var: str, items: list[tuple[str, dict]],
     When `opacity` is given, a fade (fade_in → 1.0 / fade_out → 0.0) runs *at
     the same time* as this transform on the same mobject. Two separate
     animations on one mobject fight over its state, so the fade folds into the
-    same MasApply: the target's family fades to `opacity` × the authored
+    same LocusApply: the target's family fades to `opacity` × the authored
     opacity (for a fade_in the object was pre-hidden at opacity 0, so the
     fused target actually reads as a fade-in while it moves)."""
     chain = transform_chain_suffix(items)
@@ -226,7 +226,7 @@ def emit_transform_chain(var: str, items: list[tuple[str, dict]],
         parts.append(f"lambda _m: _m{chain}")
     if opacity is not None:
         parts.append(f"opacity={float(opacity)}")
-    return f"MasApply({', '.join(parts)})"
+    return f"LocusApply({', '.join(parts)})"
 
 
 def emit_intro_transform(intro_verb: str, var: str, items: list[tuple[str, dict]],
@@ -234,7 +234,7 @@ def emit_intro_transform(intro_verb: str, var: str, items: list[tuple[str, dict]
                          xform_span: tuple[float, float],
                          xform_rate: str) -> str | None:
     """A creation verb (write/create/draw_border_then_fill) fused with the
-    simultaneous move/scale/rotate `items` on the same object, as a `MasIntro(...)`
+    simultaneous move/scale/rotate `items` on the same object, as a `LocusIntro(...)`
     call (a template helper: the creation animation applying the partial transform
     after each frame). A creation animation and a Transform on one mobject in the
     same play otherwise fight over its state — or, run in sequence, pop the object
@@ -294,7 +294,7 @@ def emit_intro_transform(intro_verb: str, var: str, items: list[tuple[str, dict]
     parts.append(f"intro_span=({intro_span[0]}, {intro_span[1]})")
     parts.append(f"xform_span=({xform_span[0]}, {xform_span[1]})")
     parts.append(f"xform_rate={xform_rate}")
-    return f"MasIntro({cls}, {var}, {', '.join(parts)})"
+    return f"LocusIntro({cls}, {var}, {', '.join(parts)})"
 
 
 def easing_func(easing: str) -> str:

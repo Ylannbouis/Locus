@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Bootstrap Math Animation Studio on Windows 10.
+  Bootstrap Locus on Windows 10.
   Installs missing system dependencies (MiKTeX, ffmpeg) and Python packages.
   Does NOT require elevated (admin) permissions.
 #>

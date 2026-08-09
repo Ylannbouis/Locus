@@ -1,4 +1,4 @@
-# Math Animation Studio (A Manim Wrapper)
+# Locus (A Manim Wrapper)
 
 **IMPORTANT DISCLAIMER**: This project was created almost entirely using AI. However, the tool itself does not use AI; any content you create is completely human-made.
 
@@ -62,7 +62,7 @@ Everything else — objects, timeline, camera, voiceover — works the same in b
 ## Project Structure
 
 ```
-mas/
+locus/
 ├── frontend/          # Vite + React + TypeScript
 │   └── src/
 │       ├── types/ir.ts          # TypeScript IR schema
@@ -100,5 +100,5 @@ mas/
 
 ## Save File Format
 
-Projects are stored at `~/MathAnimStudio/projects/<id>/project.json`.
+Projects are stored at `~/Locus/projects/<id>/project.json`.
 The JSON format is human-readable and diffable. See `backend/app/models/ir.py` for the full schema.

@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Package Math Animation Studio for distribution (post-v1 skeleton).
+  Package Locus for distribution (post-v1 skeleton).
 
   Step 1 (works today): build the frontend to frontend/dist. The backend then
   serves it at http://localhost:8000 (main.py mounts frontend/dist if present),
@@ -26,7 +26,7 @@ $FrontendDir = Join-Path $ProjectRoot "frontend"
 $BackendDir  = Join-Path $ProjectRoot "backend"
 $VenvPython  = Join-Path $BackendDir ".venv\Scripts\python.exe"
 
-Write-Host "== Math Animation Studio — package ==" -ForegroundColor Cyan
+Write-Host "== Locus — package ==" -ForegroundColor Cyan
 
 # --- Step 1: build the frontend ------------------------------------------------
 Write-Host "Building frontend (vite build)..." -ForegroundColor Gray
@@ -53,11 +53,11 @@ if ($PyInstaller) {
     & $VenvPython -m pip install pyinstaller
     # --collect-all manim is required so Manim's data files / plugins are bundled.
     & $VenvPython -m PyInstaller `
-        --name MathAnimStudio `
+        --name Locus `
         --collect-all manim `
         --add-data "$Dist;frontend/dist" `
         (Join-Path $BackendDir "app\main.py")
-    Write-Host "PyInstaller output in .\dist\MathAnimStudio (if it succeeded)." -ForegroundColor Gray
+    Write-Host "PyInstaller output in .\dist\Locus (if it succeeded)." -ForegroundColor Gray
 }
 
 Write-Host ""

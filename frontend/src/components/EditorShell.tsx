@@ -24,7 +24,7 @@ export function EditorShell() {
 
   // Resizable timeline height (persisted so it survives reloads).
   const [timelineH, setTimelineH] = useState(() => {
-    const saved = Number(localStorage.getItem('mas.timelineH'));
+    const saved = Number(localStorage.getItem('locus.timelineH'));
     return saved && saved >= MIN_TL ? Math.min(saved, maxTL()) : 220;
   });
   const dragRef = useRef<{ startY: number; startH: number } | null>(null);
@@ -42,7 +42,7 @@ export function EditorShell() {
       if (dragRef.current) {
         dragRef.current = null;
         document.body.style.cursor = '';
-        localStorage.setItem('mas.timelineH', String(timelineHRef.current));
+        localStorage.setItem('locus.timelineH', String(timelineHRef.current));
       }
     }
     function onResize() {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Launch the Math Animation Studio dev servers on macOS/Linux (the Unix
+# Launch the Locus dev servers on macOS/Linux (the Unix
 # counterpart of start.ps1). Runs uvicorn --reload and the Vite dev server as
 # background jobs of THIS script and installs a trap that kills the whole
 # process group on Ctrl+C / exit — so uvicorn's reloader + render worker and
@@ -22,7 +22,7 @@ if [[ ! -x "$VENV_PY" ]]; then
     exit 1
 fi
 
-printf 'Starting Math Animation Studio...\n'
+printf 'Starting Locus...\n'
 printf '  Backend:  http://localhost:8000\n'
 printf '  Frontend: http://localhost:5173\n\n'
 

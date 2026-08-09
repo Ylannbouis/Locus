@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Bootstrap Math Animation Studio on macOS (the Unix counterpart of setup.ps1).
+# Bootstrap Locus on macOS (the Unix counterpart of setup.ps1).
 # Installs missing system dependencies (ffmpeg, LaTeX) via Homebrew and sets up
 # the Python venv + Manim + frontend npm packages. Does NOT need root; the LaTeX
 # cask install may prompt for your password.

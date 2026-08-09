@@ -9,7 +9,7 @@ storage is JSON files on disk and the render queue is an in-process `asyncio.Que
 |--------|----------------|
 | `main.py` | FastAPI app: all routes + the WebSocket progress stream. Launches the render worker in the lifespan. |
 | `models/ir.py` | **Canonical IR schema.** Every other module imports from here. Mirror of `frontend/src/types/ir.ts`. |
-| `storage/projects.py` | Load/save/delete `Project` JSON under `~/MathAnimStudio/projects/`. `delete_project` rmtrees the whole project dir, and is the one place that validates the id against a regex + asserts the target is a direct child of the root (traversal would be destructive here). |
+| `storage/projects.py` | Load/save/delete `Project` JSON under `~/Locus/projects/`. `delete_project` rmtrees the whole project dir, and is the one place that validates the id against a regex + asserts the target is a direct child of the root (traversal would be destructive here). |
 | `deps_check.py` | Verifies manim/ffmpeg/latex are available; cached in-memory per process. |
 | `codegen/` | IR `Scene` → Manim Python script. See `codegen/CLAUDE.md`. |
 | `render/queue.py` | In-process job registry + pub/sub for progress events. |
@@ -59,7 +59,7 @@ pushed to subscribers; the client watches via `WS /ws/render/{job_id}` and downl
 `/api/render/{job_id}/download` (media type inferred from the file suffix).
 
 - The Manim subprocess has a **per-scene** wall-clock cap (`_render_timeout`), default 6 h — a
-  runaway guard, not a deadline. Override with the `MAS_RENDER_TIMEOUT` env var (seconds; `0`
+  runaway guard, not a deadline. Override with the `LOCUS_RENDER_TIMEOUT` env var (seconds; `0`
   disables it entirely). The ffmpeg helpers in `render/stitch.py` (30 min) and `render/audio.py`
   (10 min) keep their own separate, fixed timeouts.
 

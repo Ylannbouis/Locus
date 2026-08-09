@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Package Math Animation Studio for single-process running on macOS/Linux
+# Package Locus for single-process running on macOS/Linux
 # (the Unix counterpart of package.ps1).
 #
 # Step 1 (works today): build the frontend to frontend/dist. The backend serves
@@ -17,7 +17,7 @@ FRONTEND_DIR="$PROJECT_ROOT/frontend"
 BACKEND_DIR="$PROJECT_ROOT/backend"
 VENV_PY="$BACKEND_DIR/.venv/bin/python"
 
-printf '== Math Animation Studio — package ==\n'
+printf '== Locus — package ==\n'
 
 printf 'Building frontend (vite build)...\n'
 ( cd "$FRONTEND_DIR" && npm run build ) || { printf 'frontend build failed\n' >&2; exit 1; }

@@ -1,4 +1,4 @@
-# Math Animation Studio (MAS)
+# Locus
 
 A localhost GUI editor that wraps **Manim Community Edition**. Users compose 2D math
 animation scenes visually; the app generates a Manim Python script and renders it to MP4.
@@ -64,7 +64,7 @@ hand): `scripts/CLAUDE.md`.
 Vite proxies `/api/*` and `/ws/*` to `http://localhost:8000` (see `frontend/vite.config.ts`),
 so the frontend talks to same-origin paths and CORS is configured for `localhost:5173`.
 
-Projects are stored as human-readable JSON at `~/MathAnimStudio/projects/<id>/project.json`;
+Projects are stored as human-readable JSON at `~/Locus/projects/<id>/project.json`;
 renders land under `.../<id>/renders/<job_id>/`.
 
 ## Platform constraints (important)
@@ -107,7 +107,7 @@ animation look into a static scene); timeline **sub-rows** for simultaneous same
 which the codegen **fuses** into one chained `.animate` (move+scale+rotate that overlap in time); a
 codegen fix so objects created part-way through don't pop in before their creation animation; and
 **creation+transform fusion** — a Write/Create/DrawBorderThenFill overlapping a move/scale/rotate on
-the same object emits one `MasIntro` composite (the object draws in *while* it moves), instead of two
+the same object emits one `LocusIntro` composite (the object draws in *while* it moves), instead of two
 animations fighting over one mobject. Newer still: a plain **`text` object type** ("Text & Math" in the
 Add panel — LaTeX-escaped prose via `Tex`, bold/italic, KaTeX-mirrored preview); **multi-line equation
 alignment** (l/c/r via an `array` wrap, since MathTex's `align*` default right-aligns unmarked lines);

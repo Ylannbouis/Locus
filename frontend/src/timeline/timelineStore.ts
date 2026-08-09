@@ -4,7 +4,7 @@ import type { AnimationVerb, SceneObject } from '../types/ir';
 // Sentinel object id for keyframes that drive the camera (mirrors the backend).
 export const CAMERA_ID = '__camera__';
 
-const SNAP_KEY = 'mas.tlSnap';
+const SNAP_KEY = 'locus.tlSnap';
 
 // UI-only state for the timeline editor (not persisted with the project).
 interface TimelineUIState {

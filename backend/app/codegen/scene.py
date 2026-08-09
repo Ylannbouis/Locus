@@ -131,7 +131,7 @@ def _uses_camera(scene: Scene) -> bool:
 
 
 def _camera_anim(kf, var_map: dict[str, str]) -> str | None:
-    """A camera_move keyframe -> a `MasApply(self.camera.frame, …)` expression.
+    """A camera_move keyframe -> a `LocusApply(self.camera.frame, …)` expression.
 
     params: pan {x,y} (or focus_object_id to track an object's center) and an
     absolute zoom level (frame width = config.frame_width / zoom).
@@ -141,12 +141,12 @@ def _camera_anim(kf, var_map: dict[str, str]) -> str | None:
     enclosing AnimationGroup/Succession is constructed — which happens *after*
     every builder in the play has been built. Several camera moves in one play
     would therefore all read the same (last) `frame.target` and animate to the
-    last keyframe's framing, so only that one appeared to do anything. MasApply
+    last keyframe's framing, so only that one appeared to do anything. LocusApply
     builds its target at `begin()` from the live frame instead, which also means
     a pan-only keyframe keeps whatever zoom the previous one left (and a focus
     keyframe reads the object's position *when the move starts*, matching the
     editor's ghost preview) — same reasoning as object transforms, see
-    `template.MasApply`.
+    `template.LocusApply`.
     """
     p = kf.params or {}
     parts: list[str] = []
@@ -160,7 +160,7 @@ def _camera_anim(kf, var_map: dict[str, str]) -> str | None:
         parts.append(f"set(width=config.frame_width / {_zoom(p.get('zoom'))})")
     if not parts:
         return None
-    return "MasApply(self.camera.frame, lambda _m: _m." + ".".join(parts) + ")"
+    return "LocusApply(self.camera.frame, lambda _m: _m." + ".".join(parts) + ")"
 
 
 def _is_track_kf(kf, var_map: dict[str, str]) -> bool:
@@ -227,10 +227,10 @@ def _plan_fade_fusion(keyframes, var_map: dict[str, str],
     """Decide which fade keyframes fuse into a simultaneous same-object
     transform: fades that overlap a move/scale/rotate on the same object
     (within the same play bucket) become the `opacity` of that transform's
-    `MasApply` instead of a standalone MasFade — two separate animations on
+    `LocusApply` instead of a standalone LocusFade — two separate animations on
     one mobject in the same play fight over its state.
 
-    Fades only fuse with transforms that end up merged into one MasApply, i.e.
+    Fades only fuse with transforms that end up merged into one LocusApply, i.e.
     inside the same bucket: ungrouped (`group_id is None`) or a parallel group
     (lag_ratio ~ 0). Staggered groups play sequentially and are left alone."""
     buckets: dict[object, list] = {}
@@ -262,7 +262,7 @@ def _plan_intro_fusion(keyframes, var_map: dict[str, str],
                        lag_by_group: dict[str, float],
                        fused_fade_ids: set[str]) -> set[str]:
     """Decide which drawing-creation keyframes (write/create/draw_border_then_fill)
-    fuse with a simultaneous same-object move/scale/rotate into one `MasIntro`
+    fuse with a simultaneous same-object move/scale/rotate into one `LocusIntro`
     animation (the creation applying the partial transform after each frame).
 
     A creation animation and a Transform on one mobject in the same play fight
@@ -322,7 +322,7 @@ def _merge_units(members, var_map: dict[str, str],
                  fused_intro_ids: set[str] | None = None,
                  reveal_kf_ids: set[str] | None = None) -> list[tuple]:
     """Turn a set of keyframes into units, chaining move/scale/rotate on the *same
-    object* that **overlap in time** into a single `MasApply` over the union
+    object* that **overlap in time** into a single `LocusApply` over the union
     window (two animations on one mobject in one play fight over its state).
     Non-overlapping transforms and every other verb stay one unit each. Order of
     first appearance is preserved.
@@ -331,17 +331,17 @@ def _merge_units(members, var_map: dict[str, str],
       - `obj_id` — its target mobject (camera keyframes → `CAMERA_ID`), so the
         caller can chain a mobject's several units into one sequential track (Manim
         can't run two animations on one mobject in the same play — `_object_tracks`).
-      - `intro` — a fused creation+transform (`MasIntro(...)` expression).
+      - `intro` — a fused creation+transform (`LocusIntro(...)` expression).
       - `reveal` — the object is hidden until its creation animation and this
         fused intro *is* that creation: `_object_tracks` restores the authored
-        opacity (`MasFade(…, 1.0)`) immediately before it so the creation draws
+        opacity (`LocusFade(…, 1.0)`) immediately before it so the creation draws
         the object visible.
 
     `hidden_ids` holds objects hidden (set_opacity(0)) until a drawing creation
     verb reveals them. `fused_fade_ids` (from `_plan_fade_fusion`) holds fade
     keyframes to fold into the overlapping same-object transform as the
-    MasApply's `opacity`; `fused_intro_ids` (from `_plan_intro_fusion`) creation
-    keyframes to fuse with their overlapping transform cluster as one `MasIntro`
+    LocusApply's `opacity`; `fused_intro_ids` (from `_plan_intro_fusion`) creation
+    keyframes to fuse with their overlapping transform cluster as one `LocusIntro`
     — both are consumed here instead of emitting their own standalone unit. A
     fused keyframe whose cluster is not in this call's member set (the
     sequential model splits plays by start time) falls back to a standalone
@@ -364,7 +364,7 @@ def _merge_units(members, var_map: dict[str, str],
             # Consumed by the object's transform cluster below (not its own unit).
             fade_by_obj.setdefault(kf.object_id, []).append(kf)
         elif verb in INTRO_VERBS and kf.id in fused_intro_ids and var_map.get(kf.object_id):
-            # Fuses with the object's transform cluster below (MasIntro).
+            # Fuses with the object's transform cluster below (LocusIntro).
             intro_by_obj.setdefault(kf.object_id, []).append(kf)
         else:
             a = _kf_anim(kf, var_map)
@@ -389,7 +389,7 @@ def _merge_units(members, var_map: dict[str, str],
             continue
         seen.add(obj_id)
         # Cluster this object's transforms by time overlap (transitively); each
-        # cluster of >1 collapses to one chained MasApply over the union window,
+        # cluster of >1 collapses to one chained LocusApply over the union window,
         # so overlapping move+scale+rotate combine even with slightly different
         # start times / durations.
         clusters = _time_clusters(xform_by_obj[obj_id])
@@ -405,7 +405,7 @@ def _merge_units(members, var_map: dict[str, str],
             cl_intros = [k for k in intros
                          if _kf_window(k)[0] < end - 1e-6 and _kf_window(k)[1] > start + 1e-6]
             if cl_intros and not cl_fades:
-                # A creation verb overlapping this cluster: fuse into one MasIntro
+                # A creation verb overlapping this cluster: fuse into one LocusIntro
                 # (the creation drawing the object while the partial transform is
                 # applied each frame) over the union window. The intro's easing
                 # drives the drawing; the cluster's easing drives the transform.
@@ -423,7 +423,7 @@ def _merge_units(members, var_map: dict[str, str],
                                   u0, obj_id in hidden_ids, True))
                     continue
             # Fold in any fused fade that overlaps this cluster: its final opacity
-            # becomes the MasApply's `opacity`, and it widens the union window.
+            # becomes the LocusApply's `opacity`, and it widens the union window.
             opacity: float | None = None
             if cl_fades:
                 consumed.update(f.id for f in cl_fades)
@@ -460,7 +460,7 @@ def _object_tracks(units, var_map: dict[str, str]) -> list[tuple[float, str]]:
     sequence: a mobject's several units become one
     `Succession(seg, Wait(gap), seg, …)`.
 
-    Segments need no pre-built target copies: every MasApply/MasFade builds its
+    Segments need no pre-built target copies: every LocusApply/LocusFade builds its
     target at its own begin() time (Succession begins segments lazily), so each
     segment composes with whatever state the previous ones left on the live
     mobject — including fades, whose opacity would otherwise be clobbered by a
@@ -484,10 +484,10 @@ def _object_tracks(units, var_map: dict[str, str]) -> list[tuple[float, str]]:
                 segs.append(f"Wait({round(start - prev_end, 4)})")
             if reveal and var is not None:
                 # Hidden-until-creation object, at the unit that introduces it
-                # (a fused MasIntro, or a standalone Write/Create/…/type_on):
+                # (a fused LocusIntro, or a standalone Write/Create/…/type_on):
                 # restore the authored opacity the instant before the creation
                 # draws it in (opacity only — geometry stays put).
-                segs.append(f"MasFade({var}, 1.0, run_time=0.001)")
+                segs.append(f"LocusFade({var}, 1.0, run_time=0.001)")
             segs.append(_bake(expr, rt, rf))
             prev_end = start + rt
         tracks.append((us[0][4],
@@ -662,32 +662,32 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
 
     # 2b. Hide-until-creation. Two kinds of objects must start at opacity 0:
     #   - Objects introduced by a **fade_in** (their earliest creation verb), in
-    #     *both* emission models: fades emit `MasFade`, which drives opacity
+    #     *both* emission models: fades emit `LocusFade`, which drives opacity
     #     toward the authored value — on an already-visible mobject a fade_in
     #     would be a no-op, and the play's wrapper Group exposes the mobject
-    #     from t=0 anyway (MasFade is not a Manim introducer).
+    #     from t=0 anyway (LocusFade is not a Manim introducer).
     #   - Objects introduced by a *delayed* drawing verb (Write/Create/…) that
     #     are otherwise exposed at t=0 — Manim adds the play's wrapper Group
     #     (all non-introducer animations' mobjects) when the play starts, so an
     #     object that also has a fade/move/… (or whose ancestor group has one)
     #     pops into view before its creation plays. Timeline model only; the
     #     sequential model adds objects per-play.
-    # Hidden objects `save_state()` first: MasFade reads the authored opacity
-    # from `saved_state`, and the reveal (`MasFade(m, 1.0, run_time=0.001)`
+    # Hidden objects `save_state()` first: LocusFade reads the authored opacity
+    # from `saved_state`, and the reveal (`LocusFade(m, 1.0, run_time=0.001)`
     # right before the introducer) restores opacity without touching geometry.
     ordered = sorted(keyframes, key=lambda k: k.start_time)
     uses_tracking = any(_is_track_kf(kf, var_map) for kf in keyframes)
 
     # A fade (in/out) overlapping a transform on the same object is fused into
-    # that transform's MasApply as its `opacity` — two animations on one mobject
+    # that transform's LocusApply as its `opacity` — two animations on one mobject
     # would otherwise fight.
     fused_fade_ids = _plan_fade_fusion(keyframes, var_map, lag_by_group)
     # Likewise a write/create/draw_border_then_fill overlapping a transform on the
-    # same object fuses into one MasIntro (creation + partial transform per frame).
+    # same object fuses into one LocusIntro (creation + partial transform per frame).
     fused_intro_ids = _plan_intro_fusion(keyframes, var_map, lag_by_group, fused_fade_ids)
 
     # Objects introduced by a fade_in (per `created_ids` above): pre-hidden so
-    # the MasFade has something to reveal. Transform/morph targets are skipped:
+    # the LocusFade has something to reveal. Transform/morph targets are skipped:
     # the transform interpolates *toward* them, and hiding would bake opacity 0
     # into that target.
     fade_intro_ids = [oid for oid, oks in kfs_by_obj.items()
@@ -699,7 +699,7 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
     if not uses_tracking:
         def _has_exposing_kf(oid: str) -> bool:
             # Every verb except the drawing introducers (Write/Create/…) emits a
-            # non-introducer Manim animation (MasFade/MasApply/Indicate/…) whose
+            # non-introducer Manim animation (LocusFade/LocusApply/Indicate/…) whose
             # mobject joins the play's wrapper Group at t=0.
             return any(_enum(k.verb) not in INTRO_VERBS for k in kfs_by_obj.get(oid, []))
 
@@ -723,7 +723,7 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
                 continue
             # On a start-time tie, the creation verb counts as first: a write and
             # a move starting at the same instant introduce the object via the
-            # write (fused into a MasIntro), so it must still hide until then.
+            # write (fused into a LocusIntro), so it must still hide until then.
             oks = sorted(oks, key=lambda k: (float(k.start_time),
                                              0 if _enum(k.verb) in CREATION_VERBS else 1))
             first = oks[0]
@@ -738,7 +738,7 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
     hide_ids = fade_intro_ids + [oid for oid in reveal_kf_id if oid not in fade_intro_ids]
 
     # Snapshot the authored look of every object a fade touches (plus the
-    # hidden ones): MasFade / MasApply(opacity=…) restore opacity from
+    # hidden ones): LocusFade / LocusApply(opacity=…) restore opacity from
     # `saved_state`. The snapshot must be a scene-setup statement — in the
     # sequential model each play's animations are constructed mid-scene, after
     # an earlier fade_out may already have zeroed the live opacity.
@@ -885,7 +885,7 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
         ungrouped: list = []
         # Reveal keyframes (a hidden-until-creation object's introducer) stay in
         # the normal flow: `_object_tracks` prepends the opacity restore, whether
-        # the introducer fused into a MasIntro or stands alone. Emitting them as
+        # the introducer fused into a LocusIntro or stands alone. Emitting them as
         # their own tracks would put two animations on one mobject in this play
         # whenever the object also has an overlapping transform that did *not*
         # fuse — which `type_on` never does.
@@ -893,7 +893,7 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
         for kf in ordered:
             (grouped.setdefault(kf.group_id, []) if kf.group_id else ungrouped).append(kf)
         # Ungrouped: simultaneous move/scale/rotate on one object collapse to a
-        # single MasApply track; a mobject's several (non-overlapping) clusters
+        # single LocusApply track; a mobject's several (non-overlapping) clusters
         # chain into one sequential track (Manim can't run two animations on one
         # mobject as parallel tracks — see `_object_tracks`).
         tracks.extend(_object_tracks(
@@ -913,7 +913,7 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
                 # Staggered group. Same timing as AnimationGroup(..., lag_ratio):
                 # member i starts at Σ(prev run_times) × lag — but emitted as
                 # parallel Succession(Wait(start), …) tracks so each member
-                # *begins* (and builds its MasApply/MasFade target) at its actual
+                # *begins* (and builds its LocusApply/LocusFade target) at its actual
                 # start instead of eagerly at the group's start, composing with
                 # earlier members' effects on shared objects.
                 exprs = []

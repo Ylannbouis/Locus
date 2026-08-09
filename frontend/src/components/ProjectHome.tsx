@@ -85,7 +85,7 @@ export function ProjectHome() {
   return (
     <div className="project-home">
       <header className="project-home__header">
-        <h1>Math Animation Studio</h1>
+        <h1>Locus</h1>
         <button className="btn btn--primary" onClick={() => setShowForm(true)}>
           + New Project
         </button>

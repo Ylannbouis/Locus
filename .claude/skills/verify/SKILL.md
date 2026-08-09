@@ -1,9 +1,9 @@
 ---
 name: verify
-description: Build, launch and drive Math Animation Studio end-to-end to verify a change — starts backend + frontend dev servers, drives the editor GUI with Playwright, and inspects the saved IR / generated Manim script via the REST API.
+description: Build, launch and drive Locus end-to-end to verify a change — starts backend + frontend dev servers, drives the editor GUI with Playwright, and inspects the saved IR / generated Manim script via the REST API.
 ---
 
-# Verifying MAS changes end-to-end
+# Verifying Locus changes end-to-end
 
 ## Launch (headless-friendly; don't use scripts/start.ps1 — it opens windows)
 
@@ -44,6 +44,6 @@ npm run dev                                                       # background, 
 ## Cleanup
 
 - Delete the scratch project: `DELETE /api/projects/{id}` (removes the whole dir), or remove
-  `~\MathAnimStudio\projects\<id>` by hand.
+  `~\Locus\projects\<id>` by hand.
 - Kill both servers (they were started in background; match on
-  `uvicorn app.main` / `mas\frontend` command lines).
+  `uvicorn app.main` / `locus\frontend` command lines).

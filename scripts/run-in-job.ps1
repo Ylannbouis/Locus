@@ -3,7 +3,7 @@
 .SYNOPSIS
   Internal launcher used by start.ps1. Assigns THIS PowerShell process to a
   Windows Job Object configured with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, then
-  runs the command in $env:MAS_CMD (from directory $env:MAS_DIR).
+  runs the command in $env:LOCUS_CMD (from directory $env:LOCUS_DIR).
 
   Because child processes inherit the job, closing this window — by Ctrl+C, by
   the X button, or by Stop-Process — terminates the whole process tree. This is
@@ -11,7 +11,7 @@
   reloader/worker/node processes.
 #>
 
-if ($env:MAS_TITLE) { $host.UI.RawUI.WindowTitle = $env:MAS_TITLE }
+if ($env:LOCUS_TITLE) { $host.UI.RawUI.WindowTitle = $env:LOCUS_TITLE }
 
 Add-Type @'
 using System;
@@ -82,6 +82,6 @@ try {
     Write-Warning "Process-tree guard unavailable ($($_.Exception.Message)). Closing this window with the X button may leave child processes; press Ctrl+C to stop cleanly."
 }
 
-if (-not $env:MAS_CMD) { Write-Host "Nothing to run (MAS_CMD not set)."; return }
-Set-Location $env:MAS_DIR
-Invoke-Expression $env:MAS_CMD
+if (-not $env:LOCUS_CMD) { Write-Host "Nothing to run (LOCUS_CMD not set)."; return }
+Set-Location $env:LOCUS_DIR
+Invoke-Expression $env:LOCUS_CMD
