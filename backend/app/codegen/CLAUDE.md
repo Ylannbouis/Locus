@@ -48,6 +48,16 @@ run by the render worker.
   path (`MANIM_TEXT_EM_UNITS_PER_PT` / `MANIM_EM_UNITS_PER_PT`) and previews a `font` object as
   plain styled HTML rather than KaTeX. The picker only offers fonts `GET /api/fonts` reports, i.e.
   what this machine's Pango can actually resolve; an unknown name would silently fall back.
+- **Pango text is always built at `PANGO_REF_FONT_SIZE` (48) and `.scale()`d** to the authored
+  `font_size` — never pass a small size straight to `Text(font_size=…)`. Pango hints and grid-fits
+  glyph *advances* at whatever size it rasterizes, and below roughly 24pt that quantization is a
+  large fraction of an advance. The errors don't cancel: adjacent letters land too far apart or
+  overlap outright (measurably negative inter-glyph gaps), which reads as shattered word spacing —
+  `font_size=8` Chalkduster rendered "pending" as "pen d in g", and a zoomed-in camera magnifies it.
+  At 48 the intra-word gap spread drops ~6× and no gap goes negative. The scale is exact, so the
+  mobject's **height is bit-identical** to the direct build and no vertical centering shifts; only
+  the (previously compressed) width changes. `font_size == 48` emits no `.scale()` at all, so the
+  common case is byte-for-byte what it was. Same `/48` convention as the Matrix path below.
 - **`type_on` (typewriter reveal) — Pango text only.** Emits `AddTextLetterByLetter`: whole glyphs
   appear one at a time, each already filled. It exists because Write/Create *stroke-trace* the glyph
   outline before filling, and a textured font (Chalkduster & co. — 213 subpaths for one 9-character

@@ -28,6 +28,11 @@ POINT_SHAPES = {"line", "arrow", "double_arrow", "dashed_line", "polygon"}
 LINE_LIKE = {"line", "arrow", "double_arrow", "dashed_line"}
 # Graph subtypes that are anchored to an Axes (need a valid axes_ref).
 AXES_BOUND_GRAPHS = {"function_plot", "parametric", "implicit"}
+# Size at which Pango `Text` is always built, then scaled to the authored
+# font_size. Large enough that Pango's glyph-advance hinting is stable (its
+# quantization is ruinous in the single digits); matches the /48 convention the
+# Matrix path already uses.
+PANGO_REF_FONT_SIZE = 48
 
 _DIR_CONST = {
     "UP": "UP", "DOWN": "DOWN", "LEFT": "LEFT", "RIGHT": "RIGHT",
@@ -177,7 +182,23 @@ def _emit_construct(obj: SceneObject, assets_root: str | None = None) -> str:
                 extra += ', slant="ITALIC"'
             # Pango breaks on a literal newline, so the raw string carries the
             # editor's line breaks through as-is.
-            return f"Text({raw!r}, font={font!r}, font_size={font_size}{extra})"
+            #
+            # Always build at PANGO_REF_FONT_SIZE and scale to the authored size
+            # rather than passing a small font_size straight through: Pango hints
+            # and grid-fits glyph advances at the size it rasterizes, and below
+            # ~24pt that quantization is a large fraction of an advance. The
+            # errors don't cancel — adjacent letters land too far apart or
+            # outright overlap (negative gaps), which reads as broken word
+            # spacing ("pen d in g") once a zoomed-in camera magnifies it. A
+            # textured face like Chalkduster is worst hit, but the wobble is
+            # there for any font. Building at 48 puts Pango in its stable
+            # metrics regime and the scale is exact, so the mobject's height —
+            # and hence every object's vertical centering — is unchanged.
+            body = f"Text({raw!r}, font={font!r}, font_size={PANGO_REF_FONT_SIZE}{extra})"
+            k = font_size / float(PANGO_REF_FONT_SIZE)
+            if abs(k - 1.0) > 1e-6:
+                body = f"{body}.scale({round(k, 6)})"
+            return body
         # Plain prose via Tex (LaTeX text mode). Escape LaTeX specials so the user
         # types literally; bold/italic wrap the escaped content.
         def _cell(s: str) -> str:
