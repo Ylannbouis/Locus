@@ -38,6 +38,10 @@ interface Props {
   // and the Konva shapes follow it too.
   groupDrag?: { anchorId: string; dx: number; dy: number } | null;
   onGroupDrag?: (v: { anchorId: string; dx: number; dy: number } | null) => void;
+  // Selection goes through the stage so equations share one click-through stack
+  // with the Konva shapes (CanvasStage.handleSelect): a press only makes sure
+  // something is selected to drag, the click that follows walks down the stack.
+  onSelect: (id: string, additive: boolean, client?: { x: number; y: number }, kind?: 'press' | 'click') => void;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -233,10 +237,8 @@ function latexFontPx(o: SceneObject): number {
   return Number((o.props as any).font_size ?? 48) * em * PX_PER_UNIT;
 }
 
-export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [], moveHandle = null, anchorHandle = null, groupDrag = null, onGroupDrag }: Props) {
+export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [], moveHandle = null, anchorHandle = null, groupDrag = null, onGroupDrag, onSelect }: Props) {
   const selectedIds = useProjectStore(s => s.selectedObjectIds);
-  const selectObject = useProjectStore(s => s.selectObject);
-  const toggleSelect = useProjectStore(s => s.toggleSelect);
   const moveObject = useProjectStore(s => s.moveObject);
   const frozen = new Set(nonInteractiveIds);
 
@@ -436,9 +438,15 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
 
           const onDown = isFrozen ? undefined : (e: React.PointerEvent) => {
             e.stopPropagation();
-            if (e.shiftKey) toggleSelect(o.id);
-            else if (!selectedIds.includes(o.id)) selectObject(o.id);
+            onSelect(o.id, e.shiftKey, { x: e.clientX, y: e.clientY }, 'press');
             dragRef.current = { id: o.id, startSX: e.clientX, startSY: e.clientY, startX: o.position.x, startY: o.position.y };
+          };
+
+          // Selection proper happens on the click (shift already toggled on the
+          // press), so clicking this equation again reaches whatever is under it.
+          const onClick = isFrozen ? undefined : (e: React.MouseEvent) => {
+            e.stopPropagation();
+            if (!e.shiftKey) onSelect(o.id, false, { x: e.clientX, y: e.clientY }, 'click');
           };
 
           // Rotate handle only for a lone selection (same rule as the Konva rotate
@@ -449,7 +457,7 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
           const showRotate = isSel && selectedIds.length === 1 && !isFrozen;
 
           return (
-            <div key={o.id} onPointerDown={onDown} style={wrapperBase}>
+            <div key={o.id} onPointerDown={onDown} onClick={onClick} style={wrapperBase}>
               {latexInner(o, fontSize, color)}
               {showRotate && (
                 <div

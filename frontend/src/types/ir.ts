@@ -91,6 +91,9 @@ export interface TextProps {
   // switches the codegen to Manim's Pango-backed `Text`, which takes any installed
   // font; bold/italic then map to Pango weight/slant instead of \textbf/\textit.
   font?: string | null;
+  // Editor-only: the object's `name` follows its content until the user types a
+  // name of their own, which sets this. Clearing the Name field unsets it again.
+  name_custom?: boolean;
 }
 
 // Props of an `image` SceneObject (stored in the free-form `props` dict).

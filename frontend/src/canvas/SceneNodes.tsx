@@ -197,7 +197,9 @@ function Rotatable({ show, viewScale, onEnd, children }: {
 interface Props {
   objects: SceneObject[];
   selectedIds: string[];
-  onSelect: (id: string, additive: boolean) => void;
+  // `client` is where the click landed (viewport px) — the stage uses it to walk
+  // down the stack when the same spot is clicked again.
+  onSelect: (id: string, additive: boolean, client?: { x: number; y: number }) => void;
   onCommitDrag: (o: SceneObject, node: Konva.Node) => void;
   // Objects being edited via a move/scale/rotate keyframe preview must not steal
   // pointer events from the destination drag handle.
@@ -369,7 +371,7 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
       dragBoundFunc: snapDragBound,
       ...hover,
       onMouseDown: (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; },
-      onClick: (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey); },
+      onClick: (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey, { x: e.evt.clientX, y: e.evt.clientY }); },
       onDragStart: (e: Konva.KonvaEventObject<DragEvent>) => { if (!isSel) onSelect(o.id, false); void e; },
       onDragMove: (e: Konva.KonvaEventObject<DragEvent>) => onNodeDragMove?.(o, e.target),
       onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => onCommitDrag(o, e.target),
@@ -478,7 +480,7 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
 
     if (o.type === 'graph') {
       const st = p.subtype ?? 'function_plot';
-      const pick = isFrozen ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey); };
+      const pick = isFrozen ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey, { x: e.evt.clientX, y: e.evt.clientY }); };
 
       if (st === 'vector_field') {
         const arrows = sampleVectorField(o);
@@ -514,7 +516,7 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
     }
 
     if (o.type === 'geometry') {
-      const pick = isFrozen ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey); };
+      const pick = isFrozen ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey, { x: e.evt.clientX, y: e.evt.clientY }); };
 
       if (p.subtype === 'vector') {
         const dir = (p.direction as { x: number; y: number }) ?? { x: 1, y: 0 };

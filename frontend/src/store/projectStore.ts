@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { produce } from 'immer';
 import type { Project, Scene, SceneObject, Keyframe, Relationship, AnimationGroup, CameraTrack, AudioClip } from '../types/ir';
 import { saveProject } from '../api/client';
-import { newId, uniqueName } from './objectFactory';
+import { newId, uniqueName, copyName } from './objectFactory';
 import { computeFinalState } from './finalState';
 import { useTimelineStore } from '../timeline/timelineStore';
 
@@ -47,6 +47,7 @@ interface ProjectState {
   removeSelected: () => void;
   moveObject: (id: string, x: number, y: number) => void;
   moveObjectsBy: (ids: string[], dx: number, dy: number) => void;
+  reorderObject: (id: string, toIndex: number) => void;
 
   // Clipboard / duplicate / group
   copySelection: () => void;
@@ -110,6 +111,27 @@ function cloneObjects(objs: SceneObject[], offset = 0.3): SceneObject[] {
     c.position = { x: o.position.x + offset, y: o.position.y - offset };
     return c;
   });
+}
+
+// A plain `text` object is named after what it says: the first non-empty line of
+// its content (capped, and numbered if another object already has that name).
+// Empty content falls back to "Text N". Overridden once the user types a name of
+// their own (`props.name_custom`, set by the Inspector's Name field).
+function autoTextName(scene: Scene, obj: SceneObject): string {
+  const raw = String((obj.props as Record<string, unknown>).text ?? '');
+  const line = raw.split('\n').map(l => l.trim()).find(l => l) ?? '';
+  const others = scene.objects.filter(o => o.id !== obj.id).map(o => o.name);
+  return uniqueName(others, (line || 'Text').slice(0, 60));
+}
+
+// Auto-number copies against the names already in the target scene (and against
+// each other), the same way `addObject` numbers a repeated default name.
+function renameCopies(scene: Scene, copies: SceneObject[]): void {
+  const taken = new Set(scene.objects.map(o => o.name));
+  for (const c of copies) {
+    c.name = copyName(taken, c.name);
+    taken.add(c.name);
+  }
 }
 
 // Expand a selection to include the children of any selected groups.
@@ -253,7 +275,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   updateObject: (id, patch) => _mutate(set, get, draft => {
     const scene = activeScene(draft, get().selectedSceneId);
     const obj = scene?.objects.find(o => o.id === id);
-    if (obj) Object.assign(obj, patch);
+    if (!obj || !scene) return;
+    Object.assign(obj, patch);
+    // Keep an un-overridden `text` object's name in step with its content.
+    if (obj.type === 'text' && !(obj.props as Record<string, unknown>).name_custom) {
+      obj.name = autoTextName(scene, obj);
+    }
   }),
 
   removeObject: (id) => {
@@ -299,6 +326,20 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   }),
 
+  // Move one object to another slot in `scene.objects` — the order the timeline
+  // stacks its lanes in (and the order the codegen emits them, which decides
+  // stacking for objects sharing a z_index).
+  reorderObject: (id, toIndex) => _mutate(set, get, draft => {
+    const scene = activeScene(draft, get().selectedSceneId);
+    if (!scene) return;
+    const from = scene.objects.findIndex(o => o.id === id);
+    if (from < 0) return;
+    const j = Math.max(0, Math.min(scene.objects.length - 1, toIndex));
+    if (j === from) return;
+    const [o] = scene.objects.splice(from, 1);
+    scene.objects.splice(j, 0, o);
+  }),
+
   copySelection: () => {
     const { project, selectedSceneId, selectedObjectIds } = get();
     const scene = activeScene(project, selectedSceneId);
@@ -315,7 +356,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const copies = cloneObjects(clipboard);
     _mutate(set, get, draft => {
       const scene = activeScene(draft, get().selectedSceneId);
-      scene?.objects.push(...copies);
+      if (!scene) return;
+      renameCopies(scene, copies);
+      scene.objects.push(...copies);
     }, copies.filter(c => c.type === 'group' || !c.parent_id).map(c => c.id));
   },
 
@@ -326,7 +369,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const copies = cloneObjects(withGroupChildren(scene, selectedObjectIds));
     _mutate(set, get, draft => {
       const d = activeScene(draft, get().selectedSceneId);
-      d?.objects.push(...copies);
+      if (!d) return;
+      renameCopies(d, copies);
+      d.objects.push(...copies);
     }, copies.filter(c => c.type === 'group' || !c.parent_id).map(c => c.id));
   },
 

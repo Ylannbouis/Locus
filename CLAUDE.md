@@ -122,6 +122,13 @@ shorter side) and **system fonts for `text` objects** (a `font` prop switches co
 filled glyphs one at a time, since Write stroke-traces the outline and turns a textured font like
 Chalkduster into grey scribble for the length of the animation).
 
+Editor ergonomics added since: timeline lanes **reorder by dragging their object label** (which is
+also the object's slot in `scene.objects`), the timeline's label column now really stays pinned while
+scrolling (it was a `position: sticky` grid item, which CSS clamps to its own grid area — lanes are
+flex rows now), **copies are auto-numbered** like new objects ("Rectangle" → "Rectangle 2"), a `text`
+object is **named after its content** until you type a name over it, and clicking the same spot twice
+**selects down the stack** so a covered object can be picked without moving the one on top.
+
 **Images**: an `image` object type places an uploaded raster file (png/jpg/webp/bmp) on the
 canvas — uploaded to the project's `assets/` dir like audio, rendered via `ImageMobject` with the
 absolute asset path baked into the script. Vector-only verbs (Write/Create/Draw+Fill) degrade to

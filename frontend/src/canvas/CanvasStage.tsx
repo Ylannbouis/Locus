@@ -11,14 +11,19 @@ import { SceneNodes } from './SceneNodes';
 import { effectivePosition, transformAfter, type Ghost } from './motion';
 import {
   PX_PER_UNIT, FRAME_WIDTH, FRAME_HEIGHT, SNAP_PX,
-  MIN_SCALE, MAX_SCALE, manimX, manimY, worldX, worldY, type View,
+  MIN_SCALE, MAX_SCALE, manimX, manimY, worldX, worldY, screenToWorld, type View,
 } from './coords';
+import { objectBounds } from './geometry';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 // Wheel/trackpad tuning. A discrete mouse-wheel notch reports |deltaY| ≈ 100 px in
 // every browser that uses pixel deltaMode; trackpads report a stream of much
 // smaller (often fractional) deltas on both axes.
+// How far (screen px) two clicks may be apart and still count as "the same spot"
+// for click-through selection (see pickCycle).
+const CYCLE_PX = 4;
+
 const WHEEL_NOTCH = 50;   // px: at or above this, a pixel-mode delta looks like a wheel notch
 const NOTCH_ZOOM = 1.1;   // zoom step per wheel notch
 const PINCH_RATE = 0.01;  // zoom exponent per px of pinch delta
@@ -94,6 +99,8 @@ export function CanvasStage() {
   const centered = useRef(false);
   const viewRef = useRef(view); viewRef.current = view;
   const pan = useRef({ active: false, sx: 0, sy: 0, ox: 0, oy: 0 });
+  // Where the last click-through click landed and what it selected (see pickCycle).
+  const cycleRef = useRef<{ sx: number; sy: number; id: string } | null>(null);
   // Latches once this session's pointing device looks like a trackpad (see onWheel).
   const trackpadSeen = useRef(false);
   const bandRef = useRef<{ active: boolean; sx: number; sy: number; x1: number; y1: number; moved: boolean }>(
@@ -393,9 +400,63 @@ export function CanvasStage() {
     }
   }
 
-  function handleSelect(id: string, additive: boolean) {
-    if (additive) toggleSelect(id);
-    else if (!selectedIds.includes(id)) selectObject(id);
+  // ---- selection & click-through -----------------------------------------
+  // Clicking again in the same spot walks *down* the stack, so an object covered
+  // by another can be selected without moving anything: click 1 takes the object
+  // the event landed on, each further click the next one below it, wrapping at
+  // the bottom. Hit-testing uses the canvas' own approximate bounds
+  // (geometry.objectBounds) rather than Konva's hit graph, so equations in the
+  // HTML overlay are part of the same stack as Konva shapes.
+  function pickCycle(id: string, client: { x: number; y: number }): string {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return id;
+    const sx = client.x - rect.left, sy = client.y - rect.top;
+    const w = screenToWorld(sx, sy, viewRef.current);
+    const mx = manimX(w.x), my = manimY(w.y);
+    const frozen = new Set(previewFrozenIds);
+    const hits = objects
+      .filter(o => o.visible && o.type !== 'group' && !frozen.has(o.id))
+      .filter(o => {
+        const b = objectBounds(o);
+        return Math.abs(mx - b.cx) <= b.hw && Math.abs(my - b.cy) <= b.hh;
+      })
+      // Topmost first — the order Manim stacks them: z_index, then scene order.
+      .sort((a, b) => (b.z_index ?? 0) - (a.z_index ?? 0) || objects.indexOf(b) - objects.indexOf(a));
+    if (hits.length < 2) return id;
+    const c = cycleRef.current;
+    const from = hits.findIndex(h => h.id === (cycleContinues(c, sx, sy) ? c!.id : id));
+    if (from < 0) return id; // the clicked object isn't in the hit set — trust the event
+    const next = cycleContinues(c, sx, sy) ? hits[(from + 1) % hits.length] : hits[from];
+    cycleRef.current = { sx, sy, id: next.id };
+    return next.id;
+  }
+
+  // The walk continues only while the clicks land on the same spot and the
+  // selection is still what the last one made it; anything else restarts on top.
+  function cycleContinues(c: { sx: number; sy: number; id: string } | null, sx: number, sy: number): boolean {
+    return !!c && Math.abs(sx - c.sx) <= CYCLE_PX && Math.abs(sy - c.sy) <= CYCLE_PX
+      && selectedIds.length === 1 && selectedIds[0] === c.id;
+  }
+
+  // Is a click-through walk currently parked on this spot? (A press there must
+  // not reset the selection to the topmost object, or the walk can't continue.)
+  function cycleHolds(client?: { x: number; y: number }): boolean {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!client || !rect) return false;
+    return cycleContinues(cycleRef.current, client.x - rect.left, client.y - rect.top);
+  }
+
+  // `kind` distinguishes a press (which only makes sure something is selected so
+  // it can be dragged) from a click (which does the stack-walking above).
+  function handleSelect(id: string, additive: boolean, client?: { x: number; y: number }, kind: 'press' | 'click' = 'click') {
+    if (additive) { toggleSelect(id); return; }
+    if (selectedIds.length > 1 && selectedIds.includes(id)) return; // keep a multi-selection draggable
+    if (kind === 'press') {
+      if (!selectedIds.includes(id) && !cycleHolds(client)) selectObject(id);
+      return;
+    }
+    const next = client ? pickCycle(id, client) : id;
+    if (!selectedIds.includes(next) || selectedIds.length > 1) selectObject(next);
   }
 
   // While dragging one member of a multi-selection, publish the live delta so the
@@ -626,6 +687,7 @@ export function CanvasStage() {
       )}
 
       <LatexOverlay
+        onSelect={handleSelect}
         objects={objects}
         view={view}
         ghosts={ghostLatex}

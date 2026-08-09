@@ -40,7 +40,15 @@ Stack: React 19 + react-konva + zustand + immer + katex + axios. Dev server on *
   shows the `Inspector` or the `KeyframeInspector` depending on what's selected.
 - Selection is multi (`selectedObjectIds`). Group children are pulled in automatically for
   copy/duplicate (`withGroupChildren`); `cloneObjects` deep-clones with fresh ids and rewires
-  intra-set `parent_id`.
+  intra-set `parent_id`, and `renameCopies` auto-numbers the copies against the target scene the
+  same way `addObject` does for new objects (`copyName` — a name that's free is kept as-is, so
+  pasting into another scene doesn't renumber; otherwise it numbers off the *base* name, making a
+  copy of "Rectangle 2" into "Rectangle 3" rather than "Rectangle 2 2").
+- A **`text` object's name follows its content** — the first non-empty line, capped at 60 chars,
+  numbered on collision — recomputed by `updateObject` on every edit. Typing in the Inspector's Name
+  field sets `props.name_custom` and freezes it (the field un-greys, `.field__input--auto`); clearing
+  the field drops the override and hands the name back to the content. Empty content falls back to
+  "Text N" (`autoTextName`).
 - Keyboard shortcuts (registered once at module load): Ctrl+Z/Y undo/redo, Ctrl+C/V/D copy/
   paste/duplicate, Ctrl+G group, Delete/Backspace remove. They no-op while typing in an input.
 
@@ -127,6 +135,16 @@ looks identical to the render. Keep these props in sync with the codegen (`objec
   never carry the prop — mirroring `finalState.ts`/codegen. Lines/arrows have no rotate handle
   (their endpoint handles already set orientation); circles (no-op), graphs (follow axes) and
   angle/brace (anchored) are excluded.
+- **Click-through selection:** clicking the same spot again selects the next object *below* the one
+  the click landed on, wrapping at the bottom — the way to reach something covered by another object
+  without moving anything. `CanvasStage.pickCycle` does its own hit test with `objectBounds` (not
+  Konva's hit graph), so overlay equations and Konva shapes form one stack, ordered topmost-first by
+  `z_index` then scene order. The walk continues only while the clicks stay within `CYCLE_PX` and the
+  selection is still what the last click made it; anything else restarts at the top. Both layers route
+  selection through `handleSelect`, whose `kind` separates a **press** (only ensures something is
+  selected so it can be dragged — and must not reset a parked walk, `cycleHolds`) from a **click**
+  (which does the walking). A drag always ends with the dragged object selected, since the click that
+  follows lands away from the parked spot and restarts the walk.
 - **Snap to center:** dragging an object snaps onto the horizontal/vertical center lines within
   `SNAP_PX` (screen px) of the Manim origin. Konva drags use a shared `dragBoundFunc` (the origin
   sits at the stage's own `x`/`y` in absolute coords); the LaTeX overlay converts `SNAP_PX` to units.
@@ -182,6 +200,16 @@ codegen is the source of truth for the actual animation).
   (`edgeTargets`, same object / camera); a group drag snaps the anchor against every keyframe *not*
   being dragged (`edgeTargetsExcluding`), so members don't snap to each other. Same 🧲 toggle /
   Alt-bypass as audio clips (see below).
+- **Lane order:** an object label (⠿ grip) is a drag handle — dragging it up/down moves that object's
+  slot in `scene.objects` (`reorderObject`), which is the order the lanes stack in *and* the order
+  the codegen emits (so it also breaks z_index ties). Row geometry is measured once at drag start
+  (`ObjDragState.rows`, from the `data-obj-row` labels) and the insertion point follows the pointer's
+  Y against each row's midpoint; the drop lands as an inset line on the row it would go before.
+- **The label column is pinned with `position: sticky`, and each lane is a flex row** (`.tl__row` =
+  label + lane) rather than a cell pair in one grid. A sticky box is clamped to its containing block,
+  which for a grid item is its grid area — so as a grid cell the 150px label could never slide right
+  and simply scrolled away once the timeline was wider than the viewport. Keep the row structure (and
+  `--tl-label-w`, which feeds the flex basis from `LABEL_W`) if you touch this layout.
 
 ## Images
 

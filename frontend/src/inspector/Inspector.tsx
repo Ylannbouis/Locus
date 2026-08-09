@@ -62,13 +62,16 @@ function ColorField({ label, value, onChange }: {
   );
 }
 
-function TextField({ label, value, onChange, mono }: {
+function TextField({ label, value, onChange, mono, dim, title }: {
   label: string; value: string; onChange: (v: string) => void; mono?: boolean;
+  // `dim` greys the value to show it's derived, not typed (see the Name field).
+  dim?: boolean; title?: string;
 }) {
   return (
-    <label className="field">
+    <label className="field" title={title}>
       <span className="field__label">{label}</span>
-      <input className="field__input" style={mono ? { fontFamily: 'ui-monospace, Consolas, monospace' } : undefined}
+      <input className={`field__input${dim ? ' field__input--auto' : ''}`}
+        style={mono ? { fontFamily: 'ui-monospace, Consolas, monospace' } : undefined}
         type="text" value={value} onChange={e => onChange(e.target.value)} />
     </label>
   );
@@ -140,7 +143,21 @@ export function Inspector() {
     <div className="inspector">
       <h3 className="panel-title">Properties</h3>
 
-      <TextField label="Name" value={obj.name} onChange={v => updateObject(obj.id, { name: v })} />
+      {/* A `text` object's name tracks its content (greyed out, since it isn't
+          typed) until you name it yourself; clearing the field hands it back. */}
+      <TextField label="Name" value={obj.name}
+        dim={obj.type === 'text' && !props.name_custom}
+        title={obj.type === 'text'
+          ? (props.name_custom
+            ? 'Custom name — clear the field to name it after its text again'
+            : 'Named after its text — type a name here to override')
+          : undefined}
+        onChange={v => {
+          if (obj.type !== 'text') { updateObject(obj.id, { name: v }); return; }
+          // An empty field means "no override": the store re-derives the name.
+          const custom = v.trim().length > 0;
+          updateObject(obj.id, { name: custom ? v : '', props: { ...props, name_custom: custom } });
+        }} />
 
       <div className="field-row">
         <NumberField label="X" value={obj.position.x} onChange={v => setPos({ x: v })} />

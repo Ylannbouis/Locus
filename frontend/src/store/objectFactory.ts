@@ -15,6 +15,15 @@ export function uniqueName(existing: Iterable<string>, desired: string): string 
   return `${desired} ${n}`;
 }
 
+// Name for a copy of an object called `name`. Keeps the name when it's free
+// (pasting into another scene), otherwise numbers it off the *base* name so a
+// copy of "Rectangle 2" becomes "Rectangle 3" rather than "Rectangle 2 2".
+export function copyName(existing: Iterable<string>, name: string): string {
+  const taken = new Set(existing);
+  if (!name || !taken.has(name)) return name;
+  return uniqueName(taken, name.replace(/\s+\d+$/, '') || name);
+}
+
 function base(partial: Partial<SceneObject>): SceneObject {
   return {
     id: newId(),

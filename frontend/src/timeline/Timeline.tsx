@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import { newId } from '../store/objectFactory';
 import { useTimelineStore, VERB_META, timelineVerbsFor, defaultParams, CAMERA_ID } from './timelineStore';
@@ -113,6 +113,18 @@ interface AudioDragState {
   targets: number[];
 }
 
+// Object-row reorder: dragging a lane's *label* up or down moves that object's
+// slot in `scene.objects` (the order the lanes are stacked in). Row geometry is
+// captured at drag start so the insertion point follows from the pointer's Y.
+interface ObjDragState {
+  id: string;
+  fromIndex: number;
+  startClientY: number;
+  moved: boolean; // a click that never moved just selects
+  insertAt: number; // insertion index in the *pre-move* list (0 … objects.length)
+  rows: { top: number; bottom: number }[]; // viewport Y of every object label, in order
+}
+
 // Slide-break drag: a break is a single point in time, so there's nothing to
 // trim — only its position moves. Moving it is a ripple edit (see the store's
 // `moveBreak`), so the whole tail of the scene previews the shift live.
@@ -149,6 +161,7 @@ export function Timeline() {
   const selectedSceneId = useProjectStore(s => s.selectedSceneId);
   const selectedObjIds = useProjectStore(s => s.selectedObjectIds);
   const selectObject = useProjectStore(s => s.selectObject);
+  const reorderObject = useProjectStore(s => s.reorderObject);
   const addKeyframe = useProjectStore(s => s.addKeyframe);
   const updateKeyframe = useProjectStore(s => s.updateKeyframe);
   const moveKeyframesBy = useProjectStore(s => s.moveKeyframesBy);
@@ -187,10 +200,12 @@ export function Timeline() {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [aDrag, setADrag] = useState<AudioDragState | null>(null);
   const [bDrag, setBDrag] = useState<BreakDragState | null>(null);
+  const [oDrag, setODrag] = useState<ObjDragState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const scrubRef = useRef<{ wasPlaying: boolean } | null>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
 
   // Close the context menu on any click outside it (the menu div stops its own
   // clicks from bubbling, and its buttons close it explicitly).
@@ -249,7 +264,16 @@ export function Timeline() {
   // button; hold Alt to bypass it for one drag.
   const onPointerMove = (e: React.PointerEvent) => {
     const snapOn = snapEnabled && !e.altKey;
-    if (drag) {
+    if (oDrag) {
+      // Insert before the first row whose midpoint is below the pointer;
+      // past every midpoint means "drop at the end".
+      const moved = oDrag.moved || Math.abs(e.clientY - oDrag.startClientY) > 3;
+      let insertAt = oDrag.rows.length;
+      for (let i = 0; i < oDrag.rows.length; i++) {
+        if (e.clientY < (oDrag.rows[i].top + oDrag.rows[i].bottom) / 2) { insertAt = i; break; }
+      }
+      if (moved !== oDrag.moved || insertAt !== oDrag.insertAt) setODrag({ ...oDrag, moved, insertAt });
+    } else if (drag) {
       const dx = (e.clientX - drag.startClientX) / pxPerSec;
       if (drag.mode === 'move') {
         let start = Math.max(0, drag.origStart + dx);
@@ -305,7 +329,15 @@ export function Timeline() {
   };
 
   const onPointerUp = () => {
-    if (drag) {
+    if (oDrag) {
+      // insertAt indexes the pre-move list, so dropping *after* the dragged row
+      // shifts one slot back once it's pulled out.
+      if (oDrag.moved) {
+        const to = oDrag.insertAt > oDrag.fromIndex ? oDrag.insertAt - 1 : oDrag.insertAt;
+        if (to !== oDrag.fromIndex) reorderObject(oDrag.id, to);
+      }
+      setODrag(null);
+    } else if (drag) {
       if (drag.mode === 'move' && drag.curStart !== drag.origStart) {
         moveKeyframesBy(drag.members.map(m => m.id), drag.curStart - drag.origStart);
       } else if (drag.mode === 'resize' && drag.curDur !== drag.origDur) {
@@ -394,6 +426,19 @@ export function Timeline() {
       targets: breakTargets(b.id, b.time), moved: false,
       lowerBound: Math.max(0, b.time - earliest, prev.length ? Math.max(...prev) + 0.01 : 0),
     });
+  };
+
+  const startObjDrag = (e: React.PointerEvent, o: SceneObject, index: number) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    setMenu(null);
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+    selectObject(o.id);
+    const rows = Array.from(gridRef.current?.querySelectorAll('[data-obj-row]') ?? []).map(el => {
+      const r = el.getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom };
+    });
+    setODrag({ id: o.id, fromIndex: index, startClientY: e.clientY, moved: false, insertAt: index, rows });
   };
 
   const startAudioDrag = (e: React.PointerEvent, clip: AudioClip, mode: AudioDragState['mode']) => {
@@ -565,102 +610,124 @@ export function Timeline() {
       </div>
 
       <div className="tl__scroll">
-        <div className="tl__grid" style={{ gridTemplateColumns: `${LABEL_W}px ${contentW}px` }}
+        {/* One flex row per lane (label + lane), NOT a 2-column grid: the label
+            column pins with position:sticky, which a grid item can't do (see
+            .tl__label in App.css). --tl-label-w keeps the CSS in step with LABEL_W. */}
+        <div className="tl__grid" ref={gridRef}
+          style={{ width: LABEL_W + contentW, ['--tl-label-w' as string]: `${LABEL_W}px` } as React.CSSProperties}
           onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
-          <div className="tl__corner" style={{ height: 22 }} />
-          <div className="tl__ruler" style={{ width: contentW, height: 22 }}
-            onPointerDown={e => {
-              if (e.button !== 0) return;
-              (e.target as Element).setPointerCapture?.(e.pointerId);
-              scrubRef.current = { wasPlaying: playing };
-              if (playing) stopPlayback();
-              rulerSeek(e);
-            }}
-            onPointerMoveCapture={e => { if (scrubRef.current) rulerSeek(e); }}
-            onPointerUpCapture={() => {
-              const s = scrubRef.current;
-              scrubRef.current = null;
-              if (s?.wasPlaying && project) {
-                void playFrom(project.id, audioClips, useTimelineStore.getState().playhead, contentEnd);
-              }
-            }}
-            onDoubleClick={e => { if (isSlideshow) { e.stopPropagation(); addBreak(laneTime(e)); } }}>
-            {Array.from({ length: ticks + 1 }, (_, i) => (
-              <div key={i} className="tl__tick" style={{ left: i * pxPerSec }}>
-                <span className="tl__tick-label">{i}s</span>
-              </div>
-            ))}
-            {/* Break flags live in the (sticky) ruler so they stay grabbable while
-                the lanes scroll; the line itself is drawn across the grid below. */}
-            {breaks.map(b => {
-              const t = bDrag?.id === b.id ? bDrag.curTime : withRipple(b.time);
-              return (
-                <span key={b.id}
-                  className={`tl__break-flag ${selectedBreakId === b.id ? 'is-sel' : ''}`}
-                  style={{ left: t * pxPerSec }}
-                  title={`Break @ ${t.toFixed(2)}s — the slide pauses here until the next click (drag to re-time this segment: everything after the break moves with it; right-click to delete)`}
-                  onPointerDown={e => startBreakDrag(e, b)}
-                  onClick={e => e.stopPropagation()}
-                  onDoubleClick={e => e.stopPropagation()}
-                  onContextMenu={e => {
-                    e.preventDefault(); e.stopPropagation();
-                    selectBreak(b.id);
-                    setMenu({ kind: 'break', x: e.clientX, y: e.clientY, id: b.id });
-                  }}>
-                  ⏸
-                </span>
-              );
-            })}
+          <div className="tl__row tl__row--head">
+            <div className="tl__corner" style={{ height: 22 }} />
+            <div className="tl__ruler" style={{ height: 22 }}
+              onPointerDown={e => {
+                if (e.button !== 0) return;
+                (e.target as Element).setPointerCapture?.(e.pointerId);
+                scrubRef.current = { wasPlaying: playing };
+                if (playing) stopPlayback();
+                rulerSeek(e);
+              }}
+              onPointerMoveCapture={e => { if (scrubRef.current) rulerSeek(e); }}
+              onPointerUpCapture={() => {
+                const s = scrubRef.current;
+                scrubRef.current = null;
+                if (s?.wasPlaying && project) {
+                  void playFrom(project.id, audioClips, useTimelineStore.getState().playhead, contentEnd);
+                }
+              }}
+              onDoubleClick={e => { if (isSlideshow) { e.stopPropagation(); addBreak(laneTime(e)); } }}>
+              {Array.from({ length: ticks + 1 }, (_, i) => (
+                <div key={i} className="tl__tick" style={{ left: i * pxPerSec }}>
+                  <span className="tl__tick-label">{i}s</span>
+                </div>
+              ))}
+              {/* Break flags live in the (sticky) ruler so they stay grabbable while
+                  the lanes scroll; the line itself is drawn across the grid below. */}
+              {breaks.map(b => {
+                const t = bDrag?.id === b.id ? bDrag.curTime : withRipple(b.time);
+                return (
+                  <span key={b.id}
+                    className={`tl__break-flag ${selectedBreakId === b.id ? 'is-sel' : ''}`}
+                    style={{ left: t * pxPerSec }}
+                    title={`Break @ ${t.toFixed(2)}s — the slide pauses here until the next click (drag to re-time this segment: everything after the break moves with it; right-click to delete)`}
+                    onPointerDown={e => startBreakDrag(e, b)}
+                    onClick={e => e.stopPropagation()}
+                    onDoubleClick={e => e.stopPropagation()}
+                    onContextMenu={e => {
+                      e.preventDefault(); e.stopPropagation();
+                      selectBreak(b.id);
+                      setMenu({ kind: 'break', x: e.clientX, y: e.clientY, id: b.id });
+                    }}>
+                    ⏸
+                  </span>
+                );
+              })}
+            </div>
           </div>
 
           {/* Dedicated camera track (pan / zoom / focus keyframes). */}
-          <div className="tl__label tl__label--camera" style={{ height: ROW_H, paddingLeft: 8 }}
-            title="Camera track — double-click to add a camera move">
-            📷 Camera
-          </div>
-          <div className="tl__lane tl__lane--camera" style={{ height: ROW_H }}
-            onDoubleClick={e => { e.stopPropagation(); addCameraKfAt(e); }}>
-            {cameraKfs.map(kf => renderKfBlock(kf))}
+          <div className="tl__row">
+            <div className="tl__label tl__label--camera" style={{ height: ROW_H, paddingLeft: 8 }}
+              title="Camera track — double-click to add a camera move">
+              📷 Camera
+            </div>
+            <div className="tl__lane tl__lane--camera" style={{ height: ROW_H }}
+              onDoubleClick={e => { e.stopPropagation(); addCameraKfAt(e); }}>
+              {cameraKfs.map(kf => renderKfBlock(kf))}
+            </div>
           </div>
 
           {/* Audio track (voiceover clips). */}
-          <div className="tl__label tl__label--audio" style={{ height: audioLaneH, paddingLeft: 8 }}
-            title="Audio track — upload a voiceover, then drag/trim/split clips">
-            🔊 Audio
-            <button className="btn btn--ghost tl__audio-add" disabled={uploading}
-              title="Upload an audio file (mp3, wav, ogg, m4a, aac, flac)"
-              onClick={e => { e.stopPropagation(); fileRef.current?.click(); }}>
-              {uploading ? '…' : '＋'}
-            </button>
-            <input ref={fileRef} type="file" accept=".mp3,.wav,.ogg,.m4a,.aac,.flac,audio/*"
-              style={{ display: 'none' }} onChange={onAudioFile} />
-          </div>
-          <div className="tl__lane tl__lane--audio" style={{ height: audioLaneH }}
-            onDoubleClick={e => { e.stopPropagation(); fileRef.current?.click(); }}
-            onContextMenu={e => {
-              e.preventDefault(); e.stopPropagation();
-              setMenu({ kind: 'lane', x: e.clientX, y: e.clientY, time: laneTime(e) });
-            }}>
-            {audioClips.map(c => renderClipBlock(c, clipRow.get(c.id) ?? 0))}
+          <div className="tl__row">
+            <div className="tl__label tl__label--audio" style={{ height: audioLaneH, paddingLeft: 8 }}
+              title="Audio track — upload a voiceover, then drag/trim/split clips">
+              🔊 Audio
+              <button className="btn btn--ghost tl__audio-add" disabled={uploading}
+                title="Upload an audio file (mp3, wav, ogg, m4a, aac, flac)"
+                onClick={e => { e.stopPropagation(); fileRef.current?.click(); }}>
+                {uploading ? '…' : '＋'}
+              </button>
+              <input ref={fileRef} type="file" accept=".mp3,.wav,.ogg,.m4a,.aac,.flac,audio/*"
+                style={{ display: 'none' }} onChange={onAudioFile} />
+            </div>
+            <div className="tl__lane tl__lane--audio" style={{ height: audioLaneH }}
+              onDoubleClick={e => { e.stopPropagation(); fileRef.current?.click(); }}
+              onContextMenu={e => {
+                e.preventDefault(); e.stopPropagation();
+                setMenu({ kind: 'lane', x: e.clientX, y: e.clientY, time: laneTime(e) });
+              }}>
+              {audioClips.map(c => renderClipBlock(c, clipRow.get(c.id) ?? 0))}
+            </div>
           </div>
 
-          {objects.map(o => {
+          {objects.map((o, i) => {
             const rowKfs = keyframes.filter(k => k.object_id === o.id);
             // Simultaneous animations get their own sub-row; the lane grows to fit.
             const { row, count } = packLanes(rowKfs);
             const laneH = count * ROW_H;
+            // Drop indicator while another label is being dragged over this one.
+            const dropping = oDrag?.moved ? oDrag : null;
+            const cls = [
+              'tl__label', 'tl__label--obj',
+              selectedObjIds.includes(o.id) ? 'tl__label--sel' : '',
+              oDrag?.id === o.id && oDrag.moved ? 'is-dragging' : '',
+              dropping?.insertAt === i ? 'is-drop-before' : '',
+              dropping?.insertAt === objects.length && i === objects.length - 1 ? 'is-drop-after' : '',
+            ].filter(Boolean).join(' ');
             return (
-              <Fragment key={o.id}>
-                <div className={`tl__label ${selectedObjIds.includes(o.id) ? 'tl__label--sel' : ''}`}
+              <div className="tl__row" key={o.id}>
+                <div className={cls} data-obj-row=""
                   style={{ height: laneH, paddingLeft: o.parent_id ? 22 : 8 }}
-                  onClick={e => { e.stopPropagation(); selectObject(o.id); }}>
-                  {o.name || o.type}
+                  title={`${o.name || o.type} — drag up or down to reorder the lanes`}
+                  onPointerDown={e => startObjDrag(e, o, i)}
+                  onClick={e => e.stopPropagation()}>
+                  <span className="tl__label-grip">⠿</span>
+                  <span className="tl__label-name">{o.name || o.type}</span>
                 </div>
                 <div className="tl__lane" style={{ height: laneH }}
                   onDoubleClick={e => { e.stopPropagation(); addKfAt(o, e); }}>
                   {rowKfs.map(kf => renderKfBlock(kf, row.get(kf.id) ?? 0))}
                 </div>
-              </Fragment>
+              </div>
             );
           })}
 
