@@ -1,4 +1,4 @@
-import type { SceneObject } from '../types/ir';
+import type { ObjectDefault, Project, SceneObject } from '../types/ir';
 
 export function newId(prefix = 'obj'): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -22,6 +22,26 @@ export function copyName(existing: Iterable<string>, name: string): string {
   const taken = new Set(existing);
   if (!name || !taken.has(name)) return name;
   return uniqueName(taken, name.replace(/\s+\d+$/, '') || name);
+}
+
+// --- Project object defaults ------------------------------------------------
+// `settings.object_defaults[key]` is a sparse override of one Add-panel entry
+// (see ObjectDefault in ir.ts). Shallow-merging it over the factory output is
+// what makes "set it once in Settings, get it on every new object" work, while
+// leaving untouched properties following the built-ins. Only the properties the
+// Object Defaults tab exposes ever appear here, so this can't rewrite a subtype
+// or any other structural field.
+export function objectDefaultFor(project: Project | null, key: string): ObjectDefault | undefined {
+  return project?.settings.object_defaults?.[key];
+}
+
+export function withDefaults(obj: SceneObject, d: ObjectDefault | undefined): SceneObject {
+  if (!d) return obj;
+  return {
+    ...obj,
+    style: { ...obj.style, ...d.style },
+    props: { ...obj.props, ...d.props },
+  };
 }
 
 function base(partial: Partial<SceneObject>): SceneObject {
@@ -134,9 +154,12 @@ export function createDashedLine(): SceneObject {
 
 // --- Image (uploaded raster asset) ------------------------------------------
 // `aspect` = naturalWidth / naturalHeight of the uploaded file, so the default
-// size keeps the image's own proportions (4 units wide).
-export function createImage(asset: string, displayName: string, aspect: number): SceneObject {
-  const width = 4;
+// size keeps the image's own proportions. `width` takes the project default when
+// there is one — the height is *derived* from it, which is why this factory takes
+// the override as an argument instead of letting `withDefaults` merge it after
+// the fact (that would stretch the image).
+export function createImage(asset: string, displayName: string, aspect: number, defaultWidth = 4): SceneObject {
+  const width = defaultWidth > 0 ? defaultWidth : 4;
   const height = aspect > 0 && Number.isFinite(aspect) ? Math.round((width / aspect) * 1000) / 1000 : 3;
   return base({
     type: 'image', name: displayName || 'Image',

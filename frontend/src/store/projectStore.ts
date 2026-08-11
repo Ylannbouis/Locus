@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { produce } from 'immer';
-import type { Project, Scene, SceneObject, Keyframe, Relationship, AnimationGroup, CameraTrack, AudioClip } from '../types/ir';
+import type { Project, ProjectSettings, Scene, SceneObject, Keyframe, Relationship, AnimationGroup, CameraTrack, AudioClip } from '../types/ir';
 import { saveProject } from '../api/client';
 import { newId, uniqueName, copyName } from './objectFactory';
 import { computeFinalState } from './finalState';
@@ -24,6 +24,15 @@ interface ProjectState {
   setProject: (p: Project) => void;
   clearProject: () => void;
   selectScene: (id: string) => void;
+
+  // Project-level settings (the "Project Settings" dialog)
+  updateMetadata: (patch: Record<string, string>) => void;
+  updateSettings: (patch: Partial<ProjectSettings>) => void;
+  setSceneBackground: (id: string, color: string | null) => void;
+  clearSceneBackgrounds: () => void;
+  setObjectDefault: (key: string, scope: 'style' | 'props', prop: string, value: unknown) => void;
+  resetObjectDefault: (key: string) => void;
+  resetAllObjectDefaults: () => void;
 
   // Scenes
   addScene: () => void;
@@ -155,6 +164,62 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   clearProject: () => set({ project: null, selectedSceneId: null, selectedObjectIds: [], history: [], future: [], isDirty: false }),
 
   selectScene: (id) => { useTimelineStore.getState().clearKf(); set({ selectedSceneId: id, selectedObjectIds: [] }); },
+
+  // --- Project settings ---------------------------------------------------
+  // These all coalesce (see `_mutate`): typing a name or dragging a colour
+  // picker fires per keystroke / per pixel, and each one would otherwise be its
+  // own undo step — enough to flush the whole 50-entry history.
+
+  updateMetadata: (patch) => _mutate(set, get, draft => {
+    draft.metadata = { ...draft.metadata, ...patch };
+  }, undefined, `metadata:${Object.keys(patch).join(',')}`),
+
+  updateSettings: (patch) => _mutate(set, get, draft => {
+    draft.settings = { ...draft.settings, ...patch };
+  }, undefined, `settings:${Object.keys(patch).join(',')}`),
+
+  // A scene may override the project background; both the canvas and the codegen
+  // read `scene.background_color || settings.background_color`. null = inherit.
+  setSceneBackground: (id, color) => _mutate(set, get, draft => {
+    const s = draft.scenes.find(sc => sc.id === id);
+    if (s) s.background_color = color;
+  }, undefined, `scene-bg:${id}`),
+
+  // Hand every scene back to the project background — the one action that makes
+  // the project colour truly apply everywhere.
+  clearSceneBackgrounds: () => _mutate(set, get, draft => {
+    draft.scenes.forEach(s => { s.background_color = null; });
+  }),
+
+  // --- Object defaults ----------------------------------------------------
+  // Defaults for newly added objects, keyed by Add-panel entry. Stored sparsely:
+  // one property per call, so anything the user never touches keeps following
+  // the factory built-in (see `withDefaults` in objectFactory.ts). Existing
+  // objects are deliberately left alone — this only shapes what gets created.
+  // `value === undefined` *clears* this one property's override, handing it back
+  // to the factory built-in — and drops the entry entirely once nothing is left,
+  // so "customised" dots and the Reset-all count stay truthful.
+  setObjectDefault: (key, scope, prop, value) => _mutate(set, get, draft => {
+    const all = draft.settings.object_defaults ?? (draft.settings.object_defaults = {});
+    const entry = all[key] ?? (all[key] = { style: {}, props: {} });
+    // Older entries may predate one of the halves.
+    if (!entry.style) entry.style = {};
+    if (!entry.props) entry.props = {};
+    if (value === undefined) {
+      delete entry[scope][prop];
+      if (!Object.keys(entry.style).length && !Object.keys(entry.props).length) delete all[key];
+    } else {
+      entry[scope][prop] = value;
+    }
+  }, undefined, `objdefault:${key}:${scope}:${prop}`),
+
+  resetObjectDefault: (key) => _mutate(set, get, draft => {
+    if (draft.settings.object_defaults) delete draft.settings.object_defaults[key];
+  }),
+
+  resetAllObjectDefaults: () => _mutate(set, get, draft => {
+    draft.settings.object_defaults = {};
+  }),
 
   addScene: () => {
     const id = newId('scene');
@@ -616,6 +681,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   undo: () => {
     const { history, project } = get();
     if (!history.length || !project) return;
+    _coalesce = null; // the entry a coalescing gesture would merge into is gone
     const prev = history[history.length - 1];
     set(s => ({ project: prev, history: s.history.slice(0, -1), future: [project, ...s.future], isDirty: true }));
     _scheduleSave(get);
@@ -624,6 +690,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   redo: () => {
     const { future, project } = get();
     if (!future.length || !project) return;
+    _coalesce = null;
     const next = future[0];
     set(s => ({ project: next, history: [...s.history, project!], future: s.future.slice(1), isDirty: true }));
     _scheduleSave(get);
@@ -640,17 +707,33 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 // ---------------------------------------------------------------------------
 // Helper: snapshot → immer mutation → store update.
 // `selectIds` optionally replaces the selection after the mutation.
+//
+// `coalesceKey` is for edits that fire continuously from one gesture — a colour
+// picker emits a change per pixel dragged, a text field one per keystroke. While
+// the same key keeps arriving within COALESCE_MS, the mutation *replaces* the
+// previous history entry instead of pushing a new one, so the gesture costs a
+// single undo step rather than flooding (and evicting) the 50-entry stack. Any
+// mutation without that key breaks the chain, so an unrelated edit in between
+// still lands as its own step.
 // ---------------------------------------------------------------------------
+const COALESCE_MS = 1500;
+let _coalesce: { key: string; at: number } | null = null;
+
 function _mutate(
   set: (partial: Partial<ProjectState>) => void,
   get: () => ProjectState,
   recipe: (draft: Project) => void,
   selectIds?: string[],
+  coalesceKey?: string,
 ): void {
   const { project, history } = get();
   if (!project) return;
   const next = produce(project, recipe);
-  const newHistory = [...history, project].slice(-HISTORY_LIMIT);
+  const now = Date.now();
+  const merge = !!coalesceKey && _coalesce?.key === coalesceKey
+    && now - _coalesce.at < COALESCE_MS && history.length > 0;
+  _coalesce = coalesceKey ? { key: coalesceKey, at: now } : null;
+  const newHistory = merge ? history : [...history, project].slice(-HISTORY_LIMIT);
   const patch: Partial<ProjectState> = { project: next, history: newHistory, future: [], isDirty: true };
   if (selectIds) { patch.selectedObjectIds = selectIds; useTimelineStore.getState().clearKf(); }
   set(patch);

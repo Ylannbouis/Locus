@@ -14,6 +14,7 @@ import {
   MIN_SCALE, MAX_SCALE, manimX, manimY, worldX, worldY, screenToWorld, type View,
 } from './coords';
 import { objectBounds } from './geometry';
+import { isLightColor } from '../util/color';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -108,7 +109,10 @@ export function CanvasStage() {
 
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
   const objects = scene?.objects ?? [];
+  // A scene may override the project-wide background (Project Settings sets the
+  // latter); the codegen resolves it the same way.
   const bgColor = scene?.background_color || project?.settings.background_color || '#000000';
+  const lightBg = isLightColor(bgColor);
 
   // The keyframe shown in the inspector (drives the on-canvas previews below).
   const selKf = scene?.timeline.keyframes.find(k => k.id === selectedKfIds[0]);
@@ -580,7 +584,9 @@ export function CanvasStage() {
             y={-(FRAME_HEIGHT / 2) * PX_PER_UNIT}
             width={FRAME_WIDTH * PX_PER_UNIT}
             height={FRAME_HEIGHT * PX_PER_UNIT}
-            stroke="rgba(255,255,255,0.28)"
+            // The camera-frame guide is drawn over the scene background, so it
+            // flips to a dark dash on light backgrounds to stay visible.
+            stroke={lightBg ? 'rgba(0,0,0,0.32)' : 'rgba(255,255,255,0.28)'}
             strokeWidth={1}
             dash={[8, 8]}
           />

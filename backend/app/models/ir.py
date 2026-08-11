@@ -374,12 +374,31 @@ class Scene(BaseModel):
 # Project settings
 # ---------------------------------------------------------------------------
 
+class ObjectDefault(BaseModel):
+    """A *sparse* override of one Add-panel entry's built-in factory output.
+
+    Keyed in `ProjectSettings.object_defaults` by the entry's key ("rectangle",
+    "latex_text", …). Only the keys the user actually changed are stored, and
+    they're shallow-merged over the factory's output when the object is created,
+    so an untouched property keeps following the built-in default rather than
+    being frozen at whatever it happened to be. Both halves are free-form dicts
+    (like `SceneObject.props`) so an empty one means "inherit everything".
+
+    This is applied entirely in the editor at creation time — objects reach the
+    backend fully materialised, so nothing here is read by codegen.
+    """
+    style: dict[str, Any] = Field(default_factory=dict)
+    props: dict[str, Any] = Field(default_factory=dict)
+
+
 class ProjectSettings(BaseModel):
     default_resolution: ResolutionPreset = ResolutionPreset.P1080
     default_fps: int = 30
     background_color: str = "#000000"
     transparent_background: bool = False
     output_dir: Optional[str] = None
+    # Per-Add-panel-entry defaults for newly created objects (see ObjectDefault).
+    object_defaults: dict[str, ObjectDefault] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

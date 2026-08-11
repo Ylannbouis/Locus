@@ -10,6 +10,7 @@ import { KeyframeInspector } from '../timeline/KeyframeInspector';
 import { AudioClipInspector } from '../timeline/AudioClipInspector';
 import { useTimelineStore } from '../timeline/timelineStore';
 import { RenderPanel } from './RenderPanel';
+import { ProjectSettings } from './ProjectSettings';
 
 const MIN_TL = 90;
 const maxTL = () => Math.round(window.innerHeight * 0.7);
@@ -27,6 +28,7 @@ export function EditorShell() {
     const saved = Number(localStorage.getItem('locus.timelineH'));
     return saved && saved >= MIN_TL ? Math.min(saved, maxTL()) : 220;
   });
+  const [showSettings, setShowSettings] = useState(false);
   const dragRef = useRef<{ startY: number; startH: number } | null>(null);
   const timelineHRef = useRef(timelineH);
   timelineHRef.current = timelineH;
@@ -68,8 +70,11 @@ export function EditorShell() {
           {project.metadata.name}
           {isDirty && <span className="editor-shell__dirty"> •</span>}
         </span>
+        <button className="btn btn--ghost" onClick={() => setShowSettings(true)} title="Project settings">⚙ Settings</button>
         <button className="btn btn--ghost" onClick={save} disabled={!isDirty}>Save</button>
       </header>
+
+      {showSettings && <ProjectSettings onClose={() => setShowSettings(false)} />}
 
       <div className="editor-shell__scenebar">
         <ScenePanel />

@@ -7,7 +7,7 @@ import {
   createParametric, createImplicit, createVectorField,
   createVector, createAngle, createBrace, createImage,
 } from '../store/objectFactory';
-import { newId } from '../store/objectFactory';
+import { newId, objectDefaultFor, withDefaults } from '../store/objectFactory';
 import { uploadImageAsset } from '../api/client';
 import type { SceneObject } from '../types/ir';
 
@@ -32,8 +32,14 @@ export function AddPanel() {
   const selectedSceneId = useProjectStore(s => s.selectedSceneId);
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
 
-  const add = (factory: () => SceneObject) => {
-    const obj = factory();
+  // Every creation path goes through `mk` so the project's Object Defaults
+  // (Settings → Object Defaults) land on the object — including the ones the
+  // user didn't click for directly, like the Axes an Implicit plot needs.
+  const mk = (key: string, obj: SceneObject): SceneObject =>
+    withDefaults(obj, objectDefaultFor(project, key));
+
+  const add = (key: string, factory: () => SceneObject) => {
+    const obj = mk(key, factory());
     addObject(obj);
     selectObject(obj.id);
   };
@@ -42,13 +48,13 @@ export function AddPanel() {
   const ensureAxes = (): string => {
     const existing = scene?.objects.find(o => o.type === 'coordinate_system' && (o.props as any).subtype === 'axes');
     if (existing) return existing.id;
-    const axes = createAxes();
+    const axes = mk('axes', createAxes());
     addObject(axes);
     return axes.id;
   };
 
-  const addOnAxes = (factory: (axesId: string) => SceneObject) => {
-    const obj = factory(ensureAxes());
+  const addOnAxes = (key: string, factory: (axesId: string) => SceneObject) => {
+    const obj = mk(key, factory(ensureAxes()));
     addObject(obj);
     selectObject(obj.id);
   };
@@ -59,18 +65,20 @@ export function AddPanel() {
     const lines = (scene?.objects ?? []).filter(o => o.type === 'shape' && LINE_SUBTYPES.includes((o.props as any).subtype));
     let id1 = lines[0]?.id, id2 = lines[1]?.id;
     if (!id1 || !id2) {
-      const l1 = createLine(); l1.id = newId(); (l1.props as any).start_point = { x: 0, y: 0 }; (l1.props as any).end_point = { x: 2.5, y: 0 }; l1.name = 'Angle line 1';
-      const l2 = createLine(); l2.id = newId(); (l2.props as any).start_point = { x: 0, y: 0 }; (l2.props as any).end_point = { x: 1.8, y: 1.8 }; l2.name = 'Angle line 2';
+      // The angle's own arms are Lines, so they take the Line defaults — but not
+      // the endpoints, which have to form the angle.
+      const l1 = mk('line', createLine()); l1.id = newId(); (l1.props as any).start_point = { x: 0, y: 0 }; (l1.props as any).end_point = { x: 2.5, y: 0 }; l1.name = 'Angle line 1';
+      const l2 = mk('line', createLine()); l2.id = newId(); (l2.props as any).start_point = { x: 0, y: 0 }; (l2.props as any).end_point = { x: 1.8, y: 1.8 }; l2.name = 'Angle line 2';
       addObject(l1); addObject(l2);
       id1 = l1.id; id2 = l2.id;
     }
-    const ang = createAngle(id1, id2);
+    const ang = mk('angle', createAngle(id1, id2));
     addObject(ang);
     selectObject(ang.id);
   };
   const addBrace = () => {
     const target = (scene?.objects ?? []).find(o => o.id === useProjectStore.getState().selectedObjectIds[0]) ?? scene?.objects.find(o => o.type !== 'geometry');
-    add(() => createBrace(target?.id ?? ''));
+    add('brace', () => createBrace(target?.id ?? ''));
   };
 
   // Image: pick a file → upload it to the project's assets → add the object.
@@ -84,7 +92,10 @@ export function AddPanel() {
     try {
       const aspect = await measureAspect(file);
       const info = await uploadImageAsset(project.id, file);
-      add(() => createImage(info.filename, info.name, aspect));
+      // Width is passed in rather than merged after, so the height stays derived
+      // from it and the image isn't stretched (see createImage).
+      const w = objectDefaultFor(project, 'image')?.props?.width;
+      add('image', () => createImage(info.filename, info.name, aspect, typeof w === 'number' ? w : 4));
     } catch (err) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       alert(`Image upload failed: ${detail ?? (err instanceof Error ? err.message : String(err))}`);
@@ -99,41 +110,41 @@ export function AddPanel() {
 
       <div className="add-panel__group">
         <span className="add-panel__cat">Text &amp; Math</span>
-        <button className="btn add-panel__btn" onClick={() => add(createLatex)}>∑ Expression</button>
-        <button className="btn add-panel__btn" onClick={() => add(createText)}>T Text</button>
-        <button className="btn add-panel__btn" onClick={() => add(createMatrix)}>⊞ Matrix</button>
+        <button className="btn add-panel__btn" onClick={() => add('latex_text', createLatex)}>∑ Expression</button>
+        <button className="btn add-panel__btn" onClick={() => add('text', createText)}>T Text</button>
+        <button className="btn add-panel__btn" onClick={() => add('matrix', createMatrix)}>⊞ Matrix</button>
       </div>
 
       <div className="add-panel__group">
         <span className="add-panel__cat">Shapes</span>
-        <button className="btn add-panel__btn" onClick={() => add(createRectangle)}>▭ Rectangle</button>
-        <button className="btn add-panel__btn" onClick={() => add(createCircle)}>◯ Circle</button>
-        <button className="btn add-panel__btn" onClick={() => add(createEllipse)}>⬭ Ellipse</button>
-        <button className="btn add-panel__btn" onClick={() => add(createPolygon)}>△ Polygon</button>
-        <button className="btn add-panel__btn" onClick={() => add(createLine)}>╱ Line</button>
-        <button className="btn add-panel__btn" onClick={() => add(createArrow)}>→ Arrow</button>
-        <button className="btn add-panel__btn" onClick={() => add(createDoubleArrow)}>↔ Double Arrow</button>
-        <button className="btn add-panel__btn" onClick={() => add(createDashedLine)}>┄ Dashed Line</button>
+        <button className="btn add-panel__btn" onClick={() => add('rectangle', createRectangle)}>▭ Rectangle</button>
+        <button className="btn add-panel__btn" onClick={() => add('circle', createCircle)}>◯ Circle</button>
+        <button className="btn add-panel__btn" onClick={() => add('ellipse', createEllipse)}>⬭ Ellipse</button>
+        <button className="btn add-panel__btn" onClick={() => add('polygon', createPolygon)}>△ Polygon</button>
+        <button className="btn add-panel__btn" onClick={() => add('line', createLine)}>╱ Line</button>
+        <button className="btn add-panel__btn" onClick={() => add('arrow', createArrow)}>→ Arrow</button>
+        <button className="btn add-panel__btn" onClick={() => add('double_arrow', createDoubleArrow)}>↔ Double Arrow</button>
+        <button className="btn add-panel__btn" onClick={() => add('dashed_line', createDashedLine)}>┄ Dashed Line</button>
       </div>
 
       <div className="add-panel__group">
         <span className="add-panel__cat">Coordinates</span>
-        <button className="btn add-panel__btn" onClick={() => add(createAxes)}>✛ Axes</button>
-        <button className="btn add-panel__btn" onClick={() => add(createNumberLine)}>⊢ Number Line</button>
-        <button className="btn add-panel__btn" onClick={() => add(createNumberPlane)}>▦ Number Plane</button>
+        <button className="btn add-panel__btn" onClick={() => add('axes', createAxes)}>✛ Axes</button>
+        <button className="btn add-panel__btn" onClick={() => add('number_line', createNumberLine)}>⊢ Number Line</button>
+        <button className="btn add-panel__btn" onClick={() => add('number_plane', createNumberPlane)}>▦ Number Plane</button>
       </div>
 
       <div className="add-panel__group">
         <span className="add-panel__cat">Graph</span>
-        <button className="btn add-panel__btn" onClick={() => addOnAxes(createFunctionPlot)}>∿ Function Plot</button>
-        <button className="btn add-panel__btn" onClick={() => addOnAxes(createParametric)}>⟳ Parametric</button>
-        <button className="btn add-panel__btn" onClick={() => addOnAxes(createImplicit)}>◔ Implicit</button>
-        <button className="btn add-panel__btn" onClick={() => add(createVectorField)}>⇶ Vector Field</button>
+        <button className="btn add-panel__btn" onClick={() => addOnAxes('function_plot', createFunctionPlot)}>∿ Function Plot</button>
+        <button className="btn add-panel__btn" onClick={() => addOnAxes('parametric', createParametric)}>⟳ Parametric</button>
+        <button className="btn add-panel__btn" onClick={() => addOnAxes('implicit', createImplicit)}>◔ Implicit</button>
+        <button className="btn add-panel__btn" onClick={() => add('vector_field', createVectorField)}>⇶ Vector Field</button>
       </div>
 
       <div className="add-panel__group">
         <span className="add-panel__cat">Geometry</span>
-        <button className="btn add-panel__btn" onClick={() => add(createVector)}>↗ Vector</button>
+        <button className="btn add-panel__btn" onClick={() => add('vector', createVector)}>↗ Vector</button>
         <button className="btn add-panel__btn" onClick={addAngle}>∠ Angle</button>
         <button className="btn add-panel__btn" onClick={addBrace}>⏟ Brace</button>
       </div>

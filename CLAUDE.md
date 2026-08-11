@@ -152,6 +152,17 @@ length is set by dragging its end (see `frontend/CLAUDE.md`).
 The in-app presenter and the exported player deliberately mirror each other's controls —
 **change both together**.
 
+**Project settings**: a ⚙ modal off the editor topbar (`frontend/src/components/ProjectSettings.tsx`)
+for what belongs to the project rather than a scene. Two tabs. **Project** — name/author/description,
+the project-wide **background colour** (live on the canvas and in the render; scene-level overrides
+beat it, so the dialog lists and can clear them), and the render defaults that seed the Export panel.
+**Object Defaults** — what each Add-panel button starts from, per project, stored *sparsely* in
+`settings.object_defaults` and shallow-merged over the factory output at creation time, so untouched
+properties keep tracking the built-ins (`frontend/src/store/objectDefaults.ts` is the registry of
+which properties are exposed). No Save button anywhere: fields write through to the IR and ride the
+normal undo/autosave path, with `_mutate`'s `coalesceKey` collapsing a colour drag or a typed name
+into one undo step.
+
 **Voiceover / audio track**: each scene has an `audio: AudioClip[]` track — upload an audio file
 (stored under the project's `assets/` dir), place clips on a dedicated timeline lane with waveforms,
 drag/trim/split (non-destructive: clips window into the source via `offset`+`duration`), per-clip

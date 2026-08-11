@@ -28,13 +28,23 @@ export function RenderPanel() {
 
   const isSlideshow = project?.kind === 'slideshow';
   const [format, setFormat] = useState<RenderFormat>(isSlideshow ? 'slideshow' : 'mp4');
-  const [resolution, setResolution] = useState<ResolutionPreset>(project?.settings.default_resolution ?? '1080p');
-  const [fps, setFps] = useState<number>(project?.settings.default_fps ?? 30);
   const [scope, setScope] = useState<'scene' | 'all'>('scene');
-  const [transparent, setTransparent] = useState(false);
   const [crossfade, setCrossfade] = useState(true);
   const [showCode, setShowCode] = useState(false);
   const [presenting, setPresenting] = useState(false);
+
+  // Resolution/FPS/transparency follow the project defaults (Project Settings)
+  // until this panel is touched, then the ad-hoc choice wins for the session.
+  // Holding them as `null = follow the default` rather than seeding useState is
+  // what lets a default edited mid-session show up here — this panel stays
+  // mounted for as long as the project is open, so it never re-seeds.
+  const [resOverride, setResOverride] = useState<ResolutionPreset | null>(null);
+  const [fpsOverride, setFpsOverride] = useState<number | null>(null);
+  const [transparentOverride, setTransparentOverride] = useState<boolean | null>(null);
+
+  const resolution = resOverride ?? project?.settings.default_resolution ?? '1080p';
+  const fps = fpsOverride ?? project?.settings.default_fps ?? 30;
+  const transparent = transparentOverride ?? project?.settings.transparent_background ?? false;
 
   if (!project) return null;
 
@@ -106,7 +116,7 @@ export function RenderPanel() {
         </label>
         <label className="field">
           <span className="field__label">Resolution</span>
-          <select className="field__input" value={resolution} onChange={e => setResolution(e.target.value as ResolutionPreset)}>
+          <select className="field__input" value={resolution} onChange={e => setResOverride(e.target.value as ResolutionPreset)}>
             {RESOLUTIONS.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
         </label>
@@ -116,11 +126,11 @@ export function RenderPanel() {
         <label className="field">
           <span className="field__label">FPS</span>
           <input className="field__input" type="number" min={1} max={120} value={fps}
-            onChange={e => { const v = parseInt(e.target.value, 10); if (!Number.isNaN(v)) setFps(v); }} />
+            onChange={e => { const v = parseInt(e.target.value, 10); if (!Number.isNaN(v)) setFpsOverride(v); }} />
         </label>
         {allowTransparent && (
           <label className="field field--check" style={{ alignSelf: 'flex-end' }}>
-            <input type="checkbox" checked={transparent} onChange={e => setTransparent(e.target.checked)} />
+            <input type="checkbox" checked={transparent} onChange={e => setTransparentOverride(e.target.checked)} />
             <span className="field__label" style={{ margin: 0 }}>Transparent</span>
           </label>
         )}

@@ -14,7 +14,8 @@ Stack: React 19 + react-konva + zustand + immer + katex + axios. Dev server on *
 | `types/ir.ts` | **TS mirror of `backend/app/models/ir.py`.** Keep in sync by hand — no codegen between them. (`SlideManifest`/`SlideInfo` mirror the slideshow manifest, not the IR.) |
 | `store/projectStore.ts` | Main Zustand store: the `Project`, selection, undo/redo, autosave, clipboard, grouping, all IR mutations. Plus global keyboard shortcuts. |
 | `store/renderStore.ts` | Render/morph-preview job state + WebSocket progress subscription. |
-| `store/objectFactory.ts` | `newId()` + `uniqueName()` (auto-numbers a repeated default name → "Expression 2") + factories that build default `SceneObject`s per type. |
+| `store/objectFactory.ts` | `newId()` + `uniqueName()` (auto-numbers a repeated default name → "Expression 2") + factories that build default `SceneObject`s per type, plus `withDefaults`/`objectDefaultFor` which layer the project's Object Defaults over them. |
+| `store/objectDefaults.ts` | Registry behind Settings → Object Defaults: one entry per Add-panel button (key, label, category, factory, editable-field list). Adding an Add-panel button means adding an entry here too. |
 | `store/finalState.ts` | `computeFinalState(scene)` — bakes a scene's end-of-animation look (final position/size/rotation, drops faded-out objects, swaps transform sources→targets, final camera framing) into a static, timeline-less scene for "Duplicate final state". |
 | `store/canvasStore.ts` | UI-only canvas prefs (snap-to-center), persisted to `localStorage`. |
 | `api/client.ts` | Thin axios wrappers over the REST API + the WS URL helper. Calls same-origin `/api`, `/ws` (proxied). |
@@ -22,7 +23,9 @@ Stack: React 19 + react-konva + zustand + immer + katex + axios. Dev server on *
 | `inspector/` | Per-type property editors (right sidebar). |
 | `outliner/` | Object tree: select, z-order, show/hide, delete, group/ungroup. |
 | `timeline/` | Keyframe timeline UI (incl. dedicated camera + audio tracks) + per-keyframe / per-audio-clip inspectors + its own UI-only store. Overlapping items auto-stack into sub-rows (`packLanes`). `audioPlayback.ts` is the Web Audio preview engine (buffer cache, transport, playhead rAF); `Waveform.tsx` draws clip waveforms from cached per-block peaks. |
-| `components/` | `DepGate` (blocks until deps OK), `ProjectHome` (open/create/delete — incl. the animation-vs-slideshow kind picker; the per-row 🗑 opens a `.confirm-dialog` modal that must be confirmed before `DELETE /api/projects/{id}`, since deletion takes the scenes, assets and renders with it and there is no undo), `EditorShell` (layout), `AddPanel`, `ScenePanel` (multi-scene list), `RenderPanel` (export options), `Presenter` (fullscreen slideshow playback), `CodeView` (eject-to-code / JSON modal). |
+| `components/` | `DepGate` (blocks until deps OK), `ProjectHome` (open/create/delete — incl. the animation-vs-slideshow kind picker; the per-row 🗑 opens a `.confirm-dialog` modal that must be confirmed before `DELETE /api/projects/{id}`, since deletion takes the scenes, assets and renders with it and there is no undo), `EditorShell` (layout), `AddPanel`, `ScenePanel` (multi-scene list), `RenderPanel` (export options), `ProjectSettings` (project-wide settings modal), `Presenter` (fullscreen slideshow playback), `CodeView` (eject-to-code / JSON modal). |
+| `util/color.ts` | `parseHex` / `luminance` / `isLightColor` — shared by the canvas and the settings UI so overlays can flip on a light background. |
+| `components/FontField.tsx` | The system-font `<select>` + its session-wide font cache, shared by the Inspector and Object Defaults. |
 
 `App.tsx`: `DepGate` → (`EditorShell` if a project is loaded, else `ProjectHome`).
 
@@ -33,6 +36,12 @@ Stack: React 19 + react-konva + zustand + immer + katex + axios. Dev server on *
 - **All mutations go through `_mutate`** (snapshot → immer `produce` → push to history → mark
   dirty → schedule autosave). Don't mutate `project` outside it, or you break undo/redo and
   autosave. History is capped at 50 entries (`HISTORY_LIMIT`); any mutation clears the redo future.
+- **`_mutate`'s optional `coalesceKey`** is for edits that fire continuously from one gesture — a
+  `<input type="color">` emits a change per pixel dragged, a text field one per keystroke. While the
+  same key keeps arriving within `COALESCE_MS` (1.5s) the mutation *replaces* the last history entry
+  instead of pushing a new one, so the gesture is one undo step rather than 100 that evict the whole
+  stack. Any keyless mutation breaks the chain, and undo/redo reset it (the entry a gesture would
+  have merged into is gone). Pass it from anything driven by a drag or by typing.
 - **Autosave** is debounced 2s and PUTs the whole project; failures are swallowed (it retries on
   the next change). Manual Save is also available.
 - **Two stores, one selection concept:** selecting a scene *object* clears the timeline keyframe
@@ -86,8 +95,10 @@ there, so the overlay previews it as plain styled HTML in that same system font 
 both the renderer and the em constant — `MANIM_TEXT_EM_UNITS_PER_PT` = `1/72` units per point for
 Pango vs `MANIM_EM_UNITS_PER_PT` for LaTeX; `line-height: 1.3` mirrors Manim's line spacing). Since
 the browser and Pango lay out the *same* font file, matching the em is enough to match glyph
-advances. The Inspector's picker (`FontField`) lists only fonts `GET /api/fonts` reports, cached
-once per session; the empty option means "LaTeX", which is the default.
+advances. The picker (`components/FontField.tsx`) lists only fonts `GET /api/fonts` reports, cached
+once per session in module state; the empty option means "LaTeX", which is the default. It's shared
+by the Inspector (this object's font) and Settings → Object Defaults (what new ones start as), so
+both draw on the one cached scan — keep it that way rather than re-fetching per picker.
 
 Such an object is also the **only** one offered the **Type On** verb (`timelineVerbsFor` takes the
 `SceneObject`, not just its type, so it can read the `font` prop): it emits
@@ -205,6 +216,14 @@ codegen is the source of truth for the actual animation).
   the codegen emits (so it also breaks z_index ties). Row geometry is measured once at drag start
   (`ObjDragState.rows`, from the `data-obj-row` labels) and the insertion point follows the pointer's
   Y against each row's midpoint; the drop lands as an inset line on the row it would go before.
+- **Two coordinate origins, and it matters which one you're in.** Things drawn across the whole grid
+  (`.tl__playhead`, `.tl__break`) are children of `.tl__grid` and must offset by `LABEL_W` by hand;
+  things drawn inside one lane or the ruler (`.tl__kf`, `.tl__tick`, `.tl__break-flag`) are placed at
+  a bare `time * pxPerSec` and get the offset from their parent's position in the flex row. That only
+  works while the parent is a containing block — hence `position: relative` on **both** `.tl__lane`
+  and `.tl__ruler`. Drop it from the ruler and its ticks and break flags escape to `.tl__row--head`
+  (sticky *is* positioned) and paint exactly one label column too far left, which is how the break
+  flags once drifted off the amber lines they're supposed to sit on.
 - **The label column is pinned with `position: sticky`, and each lane is a flex row** (`.tl__row` =
   label + lane) rather than a cell pair in one grid. A sticky box is clamped to its containing block,
   which for a grid item is its grid area — so as a grid cell the 150px label could never slide right
@@ -266,6 +285,50 @@ codegen is the source of truth for the actual animation).
 - `CodeView` shows the ejected Manim Python (`getSceneScript`, saved first so the backend sees the
   latest IR) and the project JSON, read-only — the JSON is the source of truth, code export is one-way.
 
+## Project settings (`components/ProjectSettings.tsx`)
+
+A modal off the topbar's **⚙ Settings**, editing everything that belongs to the project rather than
+to one scene: `metadata` (name / author / description), the **background colour**, the render
+defaults, and a read-only About block. There is no Save button — every field writes straight through
+`updateMetadata` / `updateSettings`, so edits are live, undoable and autosaved like any other
+mutation (all of them pass a `coalesceKey`, above, since they're typed or dragged).
+
+- **Background** is `settings.background_color`, and it is genuinely project-wide: `CanvasStage` and
+  the codegen (`scene.py`) both resolve `scene.background_color || settings.background_color ||
+  '#000000'`. A scene-level override therefore *beats* the project colour, so the dialog lists any
+  scene that has one with a per-scene Reset and a "Clear all overrides" — without that the setting
+  would silently do nothing on those scenes. (Nothing in the editor sets a scene override today;
+  they arrive via hand-edited JSON or `duplicateSceneFinal`, which copies its source's.)
+- **Light backgrounds** flip editor chrome that's drawn *over* the scene: `isLightColor` (`util/color.ts`)
+  switches the camera-frame guide to a dark dash, and the dialog warns that objects left at the
+  default white stroke/fill will be invisible. Keep new canvas overlays on that helper.
+- **Object Defaults** (second tab, `components/ObjectDefaultsTab.tsx`) sets what each Add-panel
+  button starts from, stored per project in `settings.object_defaults` keyed by Add-panel entry
+  (`"rectangle"`, `"latex_text"`, …). Two rules make it behave:
+  - **Overrides are sparse.** Only the properties the user actually changed are stored, and
+    `withDefaults` shallow-merges them over the factory output at creation time. An untouched
+    property keeps tracking the built-in instead of freezing at today's value, "Reset to built-in"
+    is just `delete` on the key, and the JSON stays small. Never store a whole snapshot here.
+  - **Only registry-listed fields are reachable**, so a default can't rewrite a `subtype`, point
+    geometry or anything else structural. Widening what's editable means adding a field to
+    `objectDefaults.ts`, not loosening the merge.
+  Field kinds are `color` / `number` / `check` / `font` (the last reuses the shared `FontField`, so
+  Text can default to a Pango system font — which also means new Text objects arrive eligible for the
+  **Type On** verb). Setting a field to `undefined` *clears* that one override and drops the entry
+  once it's empty; the font picker uses this so choosing "LaTeX (default)" returns to the built-in
+  instead of pinning a redundant override that would show a misleading "customised" dot.
+  Every creation path in `AddPanel` goes through its `mk(key, obj)` helper — including objects the
+  user didn't click for (the Axes `ensureAxes` conjures for a plot, the two Lines behind an Angle),
+  which is the difference between a default that mostly works and one that does. `createImage` is
+  the one factory that takes its default *as an argument*: an image's height is derived from its
+  width and the file's aspect ratio, so merging a width afterwards would stretch it.
+  Defaults deliberately don't touch objects already in a scene.
+- **Render defaults** (`default_resolution` / `default_fps` / `transparent_background`) seed the
+  `RenderPanel`. That panel stays mounted for as long as the project is open, so it can't read them
+  in `useState` initialisers — it holds each as `null = follow the default` and only stores a value
+  once the user picks one there. So editing a default shows up immediately, while an ad-hoc choice
+  made in the Export panel still wins for the rest of the session.
+
 ## Slideshow projects
 
 `project.kind` (`'animation' | 'slideshow'`, picked in `ProjectHome`, immutable afterwards) only
@@ -318,3 +381,9 @@ targets drop the riders — their edges move with the break, so they'd be snappi
 Edit **both** `types/ir.ts` and `backend/app/models/ir.py`, then update the relevant
 factory (`objectFactory.ts`), inspector editor, and canvas node. New props need no backend
 schema change (props is a free-form dict end-to-end) but still need a TS type + UI to be editable.
+A new *prop* worth defaulting also wants a field in `store/objectDefaults.ts`; a new *Add-panel
+button* wants a whole entry there, or it silently opts out of Object Defaults.
+
+Note the backend drops unknown top-level fields on load (Pydantic ignores extras), so adding one to
+`ProjectSettings` in TS **without** adding it to `ir.py` means it round-trips to nothing — the editor
+looks right until the next reload, then the setting is gone.

@@ -192,12 +192,25 @@ export interface Scene {
   breaks?: SceneBreak[];
 }
 
+// A *sparse* override of one Add-panel entry's built-in factory output, keyed in
+// `ProjectSettings.object_defaults` by the entry's key ("rectangle", …). Only the
+// properties the user changed are stored; they're shallow-merged over the factory
+// output at creation time, so untouched ones keep following the built-in default.
+// Applied entirely in the editor — objects reach the backend fully materialised.
+// Mirrors `ObjectDefault` in ir.py.
+export interface ObjectDefault {
+  style: Record<string, unknown>;
+  props: Record<string, unknown>;
+}
+
 export interface ProjectSettings {
   default_resolution: ResolutionPreset;
   default_fps: number;
   background_color: string;
   transparent_background: boolean;
   output_dir?: string | null;
+  // Absent on projects saved before this existed — always read it defensively.
+  object_defaults?: Record<string, ObjectDefault>;
 }
 
 export interface Project {
