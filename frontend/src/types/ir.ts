@@ -273,6 +273,8 @@ export interface RenderJob {
   status: 'queued' | 'running' | 'done' | 'error';
   progress: number;
   message: string;
+  /** Seconds left in the Manim phase; null while unknown or during ffmpeg. */
+  eta_seconds?: number | null;
   output_path?: string | null;
 }
 

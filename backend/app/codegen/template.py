@@ -178,6 +178,81 @@ def LocusIntro(base_cls, mobject, shift=None, move_to=None, scale=None, rotate=N
 
 '''
 
+# Emitted only for worker renders (`render_script(progress_total=…)`), never for
+# the ejected script the user downloads. It gives the render worker a *real*
+# progress signal: Manim's own per-frame counter.
+#
+# `Scene.play_internal` drives every play AND every wait by iterating the
+# tqdm returned from `get_time_progression` — one item per rendered frame, with
+# the animation-time offset as its value. Wrapping that iterator is therefore the
+# one hook that sees every frame, without touching how anything renders. The
+# wrapper only counts; it forwards the frame time untouched.
+#
+# `_locus_total` is the scene's expected animation seconds, baked in by codegen,
+# so the worker gets a fraction it can trust rather than a guess. A cached play
+# yields a single item (Manim sets `skip_animations`), so it jumps straight to
+# its end time — which is accurate: that play really is done.
+_LOCUS_PROGRESS_HELPER = '''
+import time as _time
+
+
+class _LocusFrameCounter:
+    """Proxies Manim's frame iterator, reporting elapsed animation time."""
+
+    def __init__(self, scene, inner, run_time):
+        self._scene = scene
+        self._inner = inner
+        self._run_time = run_time
+
+    def __iter__(self):
+        base = self._scene._locus_elapsed
+        self._scene._locus_counted = True
+        for t in self._inner:
+            self._scene._locus_report(base + min(float(t), self._run_time))
+            yield t
+        self._scene._locus_elapsed = base + self._run_time
+        self._scene._locus_report(self._scene._locus_elapsed, force=True)
+
+    def __getattr__(self, name):  # .close(), .n, … stay Manim's
+        return getattr(self._inner, name)
+
+
+class _LocusProgress:
+    """Mixin: prints `LOCUS_PROGRESS <done_s> <total_s>` as frames render."""
+
+    _locus_total = 1.0
+    _locus_elapsed = 0.0
+    _locus_last_emit = 0.0
+    _locus_counted = False
+
+    def play(self, *args, **kwargs):
+        self._locus_counted = False
+        super().play(*args, **kwargs)
+        if not self._locus_counted:
+            # A static wait renders as a frozen frame: the renderer duplicates
+            # one image for the whole duration and never runs the frame loop, so
+            # the counter above never sees it. Settling up here keeps elapsed
+            # aligned with the timeline — and a frozen wait really is that fast.
+            self._locus_elapsed += float(getattr(self, "duration", 0.0) or 0.0)
+            self._locus_report(self._locus_elapsed, force=True)
+
+    def _locus_report(self, done, force=False):
+        now = _time.monotonic()
+        if not force and now - self._locus_last_emit < 0.2:
+            return  # a 60fps render would otherwise flood the pipe
+        self._locus_last_emit = now
+        print("LOCUS_PROGRESS %.3f %.3f" % (done, self._locus_total), flush=True)
+
+    def get_time_progression(self, run_time, description, n_iterations=None,
+                             override_skip_animations=False):
+        inner = super().get_time_progression(
+            run_time, description, n_iterations, override_skip_animations)
+        if n_iterations is not None and n_iterations < 0:
+            return inner  # open-ended (stop_condition) wait: no known length
+        return _LocusFrameCounter(self, inner, float(run_time))
+
+'''
+
 # The construct body is pre-rendered (already indented 8 spaces) and injected.
 # base_class is "Scene" normally, or "MovingCameraScene" when the scene animates
 # the camera (only that class exposes self.camera.frame).
@@ -188,8 +263,8 @@ import numpy as np
 from numpy import sin, cos, tan, exp, log, sqrt, pi, e
 
 {{ helpers }}
-class {{ class_name }}({{ base_class }}):
-    def construct(self):
+class {{ class_name }}({{ bases }}):
+{{ class_prefix }}    def construct(self):
         self.camera.background_color = {{ background_color_repr }}
 {{ body }}
 ''',
@@ -198,16 +273,27 @@ class {{ class_name }}({{ base_class }}):
 
 
 def render_script(body: str, background_color: str = "#000000",
-                  base_class: str = "Scene") -> str:
+                  base_class: str = "Scene",
+                  progress_total: float | None = None) -> str:
+    """Render the scene script. `progress_total` (the scene's expected animation
+    seconds) adds the frame-progress instrumentation the render worker reads;
+    leave it None — as the eject/`/script` endpoint does — for a clean script."""
     helpers = ""
     if "LocusApply(" in body or "LocusFade(" in body:
         helpers += _LOCUS_FX_HELPER
     if "LocusIntro(" in body:
         helpers += _LOCUS_INTRO_HELPER
+    bases = base_class
+    class_prefix = ""
+    if progress_total is not None:
+        helpers += _LOCUS_PROGRESS_HELPER
+        bases = f"_LocusProgress, {base_class}"
+        class_prefix = f"    _locus_total = {max(0.01, float(progress_total)):.3f}\n\n"
     return _TEMPLATE.render(
         class_name=SCENE_CLASS_NAME,
         background_color_repr=repr(background_color),
-        base_class=base_class,
+        bases=bases,
+        class_prefix=class_prefix,
         body=body,
         helpers=helpers or "\n",
     )

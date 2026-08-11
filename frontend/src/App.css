@@ -346,6 +346,7 @@ body {
 }
 
 .render-panel__message { font-size: 12px; color: var(--text-dim); }
+.render-panel__eta { font-variant-numeric: tabular-nums; opacity: 0.8; }
 
 .render-panel__badge {
   font-size: 11px;

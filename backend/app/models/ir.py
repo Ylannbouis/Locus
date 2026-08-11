@@ -468,4 +468,8 @@ class RenderJob(BaseModel):
     status: Literal["queued", "running", "done", "error"] = "queued"
     progress: int = 0
     message: str = ""
+    # Estimated seconds left in the Manim phase, derived from the rate its frame
+    # counter reports. None while unknown (too few frames yet) or once the job
+    # moves on to ffmpeg, which the estimate never covered.
+    eta_seconds: Optional[int] = None
     output_path: Optional[str] = None

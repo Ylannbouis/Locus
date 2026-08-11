@@ -451,7 +451,7 @@ def _merge_units(members, var_map: dict[str, str],
     return units
 
 
-def _object_tracks(units, var_map: dict[str, str]) -> list[tuple[float, str]]:
+def _object_tracks(units, var_map: dict[str, str]) -> list[tuple[float, str, float]]:
     """Combine `_merge_units` units into per-mobject tracks, giving each mobject
     exactly **one** track so we never run two animations on one mobject as
     separate parallel tracks in a single `self.play` — Manim clobbers those (two
@@ -459,6 +459,10 @@ def _object_tracks(units, var_map: dict[str, str]) -> list[tuple[float, str]]:
     fades in + moves, then later fades out + moves, must run its clusters in
     sequence: a mobject's several units become one
     `Succession(seg, Wait(gap), seg, …)`.
+
+    Each track is `(start, expr, end)` in scene-timeline seconds; `end` is what
+    tells the caller how long the emitted play actually runs (see
+    `_emitted_seconds`) and never affects the expression.
 
     Segments need no pre-built target copies: every LocusApply/LocusFade builds its
     target at its own begin() time (Succession begins segments lazily), so each
@@ -473,7 +477,7 @@ def _object_tracks(units, var_map: dict[str, str]) -> list[tuple[float, str]]:
             order.append(oid)
         by_obj.setdefault(oid, []).append(u)
 
-    tracks: list[tuple[float, str]] = []
+    tracks: list[tuple[float, str, float]] = []
     for oid in order:
         us = sorted(by_obj[oid], key=lambda u: u[4])
         var = var_map.get(oid)
@@ -491,11 +495,24 @@ def _object_tracks(units, var_map: dict[str, str]) -> list[tuple[float, str]]:
             segs.append(_bake(expr, rt, rf))
             prev_end = start + rt
         tracks.append((us[0][4],
-                       segs[0] if len(segs) == 1 else f"Succession({', '.join(segs)})"))
+                       segs[0] if len(segs) == 1 else f"Succession({', '.join(segs)})",
+                       prev_end if prev_end is not None else us[0][4]))
     return tracks
 
 
 def build_body(scene: Scene, assets_root: str | None = None) -> str:
+    """The construct body for `scene`. See `build_body_timed` for the variant
+    that also reports how many seconds of animation the body renders."""
+    return build_body_timed(scene, assets_root)[0]
+
+
+def build_body_timed(scene: Scene, assets_root: str | None = None) -> tuple[str, float]:
+    """`(body, seconds)` — `seconds` is exactly how long the emitted statements
+    run, which is *not* the timeline's extent: keyframes that emit no animation
+    drop out, and the sequential model serializes events that overlap. It is the
+    denominator the render worker's progress bar divides by, so it has to come
+    from the emission itself rather than from the IR.
+    """
     # Emit in dependency order: plain objects, then graphs (need their axes),
     # then groups (need their children defined first).
     objects = sorted(scene.objects, key=_emit_order)
@@ -791,6 +808,7 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
     # 4. Lay out the timeline. Two emission models (`ordered` / `uses_tracking`
     #    were computed above for the hide pass).
     played_any = False
+    emitted = 0.0  # seconds of animation the emitted statements will render
 
     if uses_tracking:
         # --- Sequential model -------------------------------------------------
@@ -874,13 +892,16 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
                 lines.append(f"self.play({', '.join(ev['anims'])}, run_time={ev['run_time']}, rate_func={ev['easing']})")
             current += ev["run_time"]
             played_any = True
+        # This model serializes overlapping events, so `current` — not the
+        # timeline's extent — is how long the scene actually runs.
+        emitted = current
     else:
         # --- Timeline model ---------------------------------------------------
         # Every animation becomes a track inside one AnimationGroup; each carries
         # its own run_time + easing and a Succession(Wait(delay), …) offsets its
         # start, so animations overlap exactly as laid out — different start/end
         # times included.
-        tracks: list[tuple[float, str]] = []
+        tracks: list[tuple[float, str, float]] = []  # (start, expr, end)
         grouped: dict[str, list] = {}
         ungrouped: list = []
         # Reveal keyframes (a hidden-until-creation object's introducer) stay in
@@ -908,7 +929,10 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
                 gtracks = _object_tracks(
                     _merge_units(members, var_map, set(reveal_kf_id),
                                  fused_fade_ids, fused_intro_ids), var_map)
-                exprs = [e for _, e in gtracks]
+                exprs = [e for _, e, _ in gtracks]
+                # Members all start at the group's start (their own starts are
+                # dropped above), so the group runs as long as its longest member.
+                span = max((end - start for start, _, end in gtracks), default=0.0)
             else:
                 # Staggered group. Same timing as AnimationGroup(..., lag_ratio):
                 # member i starts at Σ(prev run_times) × lag — but emitted as
@@ -918,6 +942,7 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
                 # earlier members' effects on shared objects.
                 exprs = []
                 offset = 0.0
+                span = 0.0
                 for kf in members:
                     a = _kf_anim(kf, var_map)
                     if a is None:
@@ -926,11 +951,13 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
                     baked = _bake(a, dur, easing_func(_enum(kf.easing)))
                     exprs.append(f"Succession(Wait({round(offset, 4)}), {baked})"
                                  if offset > 1e-6 else baked)
+                    span = max(span, offset + dur)
                     offset += dur * lag
             if not exprs:
                 continue
             inner = exprs[0] if len(exprs) == 1 else f"AnimationGroup({', '.join(exprs)}, lag_ratio=0.0)"
-            tracks.append((min(float(k.start_time) for k in members), inner))
+            gstart = min(float(k.start_time) for k in members)
+            tracks.append((gstart, inner, gstart + span))
         for obj in objects:  # parameter sweeps
             if obj.id not in var_map:
                 continue
@@ -938,9 +965,11 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
             if not sw:
                 continue
             expr = f"{tracker_name(obj.id)}.animate.set_value({_num(sw.get('to'), 1.0)})"
-            tracks.append((max(0.0, _num(sw.get("start_time"), 0.0)),
-                           _bake(expr, max(0.01, _num(sw.get("duration"), 3.0)),
-                                 easing_func(str(sw.get("easing", "linear"))))))
+            sw_start = max(0.0, _num(sw.get("start_time"), 0.0))
+            sw_dur = max(0.01, _num(sw.get("duration"), 3.0))
+            tracks.append((sw_start,
+                           _bake(expr, sw_dur, easing_func(str(sw.get("easing", "linear")))),
+                           sw_start + sw_dur))
 
         if tracks:
             tracks.sort(key=lambda t: t[0])
@@ -948,7 +977,7 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
             if t0 > 1e-6:
                 lines.append(f"self.wait({round(t0, 4)})")
             parts = []
-            for start, expr in tracks:
+            for start, expr, _end in tracks:
                 delay = round(start - t0, 4)
                 parts.append(f"Succession(Wait({delay}), {expr})" if delay > 1e-6 else expr)
             if len(parts) == 1:
@@ -956,11 +985,14 @@ def build_body(scene: Scene, assets_root: str | None = None) -> str:
             else:
                 lines.append(f"self.play(AnimationGroup({', '.join(parts)}, lag_ratio=0.0))")
             played_any = True
+            # The play runs until its last track ends; the leading wait covers t0.
+            emitted = max(end for _, _, end in tracks)
 
     # 6. Hold the final frame so the export isn't truncated.
-    lines.append("self.wait(0.5)" if played_any or pre_added else "self.wait(1.0)")
+    tail = 0.5 if played_any or pre_added else 1.0
+    lines.append(f"self.wait({tail})")
 
-    return "\n".join(_INDENT + ln if ln else "" for ln in lines)
+    return "\n".join(_INDENT + ln if ln else "" for ln in lines), emitted + tail
 
 
 def _assets_root(project: Project) -> str:
@@ -970,11 +1002,33 @@ def _assets_root(project: Project) -> str:
     return str(assets_dir(project.id))
 
 
-def generate_scene_script(project: Project, scene: Scene) -> str:
+def scene_runtime_seconds(scene: Scene) -> float:
+    """Rough animation length of a scene — the timeline's extent plus the trailing
+    hold — read straight off the IR, without running codegen.
+
+    Only used to weight scenes against each other in a whole-project render, where
+    being proportional is enough. The progress denominator inside a scene comes
+    from `build_body_timed`, which is exact.
+    """
+    end = 0.0
+    for kf in scene.timeline.keyframes:
+        end = max(end, float(kf.start_time) + max(0.01, float(kf.duration)))
+    for obj in scene.objects:
+        sw = _sweep(obj)
+        if sw:
+            end = max(end, max(0.0, _num(sw.get("start_time"), 0.0))
+                      + max(0.01, _num(sw.get("duration"), 3.0)))
+    return end + 0.5 if end > 0 else 1.0
+
+
+def generate_scene_script(project: Project, scene: Scene, *, progress: bool = False) -> str:
+    """`progress=True` adds the worker's frame-progress instrumentation. The
+    eject / `/script` path leaves it off so the user gets a plain Manim script."""
     bg = scene.background_color or project.settings.background_color or "#000000"
-    body = build_body(scene, assets_root=_assets_root(project))
+    body, seconds = build_body_timed(scene, assets_root=_assets_root(project))
     base = "MovingCameraScene" if _uses_camera(scene) else "Scene"
-    return render_script(body=body, background_color=bg, base_class=base)
+    return render_script(body=body, background_color=bg, base_class=base,
+                         progress_total=seconds if progress else None)
 
 
 def generate_morph_preview_script(project: Project, scene: Scene, keyframe_id: str) -> str:

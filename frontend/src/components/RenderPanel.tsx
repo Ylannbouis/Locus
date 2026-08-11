@@ -17,6 +17,18 @@ const SLIDESHOW_FORMAT: { value: RenderFormat; label: string } =
   { value: 'slideshow', label: 'Slideshow (HTML deck)' };
 
 const RESOLUTIONS: ResolutionPreset[] = ['480p', '720p', '1080p', '4k'];
+
+/** "~2m 30s left" — the backend already rounds, so don't add precision here. */
+function formatEta(seconds: number): string {
+  if (seconds < 60) return `~${seconds}s left`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m < 60) return s ? `~${m}m ${s}s left` : `~${m}m left`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm ? `~${h}h ${rm}m left` : `~${h}h left`;
+}
+
 const EXT: Record<RenderFormat, string> = { mp4: 'mp4', gif: 'gif', png: 'zip', still: 'png', slideshow: 'zip' };
 
 export function RenderPanel() {
@@ -162,6 +174,9 @@ export function RenderPanel() {
           <p className="render-panel__message">
             <span className={`render-panel__badge render-panel__badge--${job.status}`}>{job.status}</span>
             {' '}{job.message}
+            {job.status === 'running' && job.eta_seconds != null && (
+              <span className="render-panel__eta"> · {formatEta(job.eta_seconds)}</span>
+            )}
           </p>
         </div>
       )}

@@ -11,22 +11,19 @@ storage is JSON files on disk and the render queue is an in-process `asyncio.Que
 | `models/ir.py` | **Canonical IR schema.** Every other module imports from here. Mirror of `frontend/src/types/ir.ts`. |
 | `storage/projects.py` | Load/save/delete `Project` JSON under `~/Locus/projects/`. `delete_project` rmtrees the whole project dir, and is the one place that validates the id against a regex + asserts the target is a direct child of the root (traversal would be destructive here). |
 | `deps_check.py` | Verifies manim/ffmpeg/latex are available; cached in-memory per process. |
-| `codegen/` | IR `Scene` → Manim Python script. See `codegen/CLAUDE.md`. |
-| `render/queue.py` | In-process job registry + pub/sub for progress events. |
-| `render/worker.py` | Pulls jobs, runs Manim as a subprocess, locates the output MP4. |
-| `render/slideshow.py` | Slideshow packaging: copies the per-scene mp4s into a player folder and generates the single-file `index.html` (+ `manifest.json`), then zips it. The player holds between slides by *pausing* a `<video>`, so there is no ffmpeg work here — and a scene's `breaks` are the same trick *inside* a slide (`_slide_breaks` clamps them to the probed duration; the player's rAF loop pauses on each until the next click). |
-| `render/stitch.py` | ffmpeg `concat_scenes` / `crossfade_scenes` (xfade) for multi-scene export, `zip_dir` for PNG sequences, `probe_duration` (ffprobe). All via blocking `subprocess.run` (see rule 1). |
-| `render/audio.py` | ffmpeg voiceover mixing: trims/gains/fades/delays each `AudioClip` and muxes the mix under a scene mp4 (video copied, AAC 44.1kHz stereo — fixed params so concat can stream-copy). When a clip runs past the video, the last frame is held (`tpad`, forcing a video re-encode) so the scene ends on the later of last-animation / last-audio instead of truncating the voiceover. |
+| `codegen/` | IR `Scene` → Manim Python script — the subtle core. See `app/codegen/CLAUDE.md`. |
+| `render/` | Job queue, the Manim subprocess, and all ffmpeg post-processing (voiceover mixing, multi-scene stitching, slideshow packaging). See `app/render/CLAUDE.md`. |
+| `tests/` | Standalone codegen regression harnesses (not pytest). See `tests/CLAUDE.md`. |
 
 ## Run / develop
 
 ```
-backend/.venv/Scripts/python.exe -m uvicorn app.main:app --reload --reload-dir app --port 8000
+# from backend/ — Windows:      .venv\Scripts\python.exe -m uvicorn app.main:app --reload --reload-dir app --port 8000
+#                macOS/Linux:   .venv/bin/python        -m uvicorn app.main:app --reload --reload-dir app --port 8000
 ```
 
-(Normally via `../scripts/start.ps1`.) The venv python at `.venv/Scripts/python.exe` is what
-must run Manim. Note `sys.executable` there is backed by the Anaconda base binary but
-`site-packages` is the venv, so `sys.executable -m manim` resolves correctly.
+(Normally via `../scripts/start.ps1` / `start.sh`.) **The venv python is what must run Manim** — the
+interpreter path is the one thing that differs by OS, since the venv is never "activated".
 
 `sympy` is an **optional** dep (needed for implicit plots); it is not in the venv by default —
 `pip install sympy` in the venv to enable. Its absence shows a banner, not a hard gate.
@@ -48,42 +45,24 @@ These come from running on the Windows asyncio **SelectorEventLoop** under uvico
    `update_job` from the loop thread. If you add code that updates a job *from* a worker
    thread, marshal it back with `loop.call_soon_threadsafe`.
 
-## Render pipeline
+## Render (routes in, job out)
 
 `POST /api/render` (or `/api/render/morph-preview`) → `queue.enqueue(RenderJob)` → the single
-background worker (`run_worker`, started in `main.lifespan`) processes one job at a time. For each
-scene to render: generate script → write `scene.py` under the job dir → run Manim (`_build_cmd`:
-`-ql`/`-qh` + optional `--resolution`/`--fps`/`--format`/`-s`/`-t`) → locate the output
-(`_find_output` is format-aware). Progress is nudged by a ticker (Manim's stdout is sparse) and
-pushed to subscribers; the client watches via `WS /ws/render/{job_id}` and downloads from
-`/api/render/{job_id}/download` (media type inferred from the file suffix).
+background worker (`run_worker`, started in `main.lifespan`) processes **one job at a time**. The client
+watches `WS /ws/render/{job_id}` and downloads from `/api/render/{job_id}/download` (media type inferred
+from the file suffix). `RenderJob.scene_id` is a specific scene or **`None` = every scene**;
+`RenderJob.format` ∈ `mp4 | gif | png | still | slideshow`; `RenderJob.mode` is `"scene"` or `"morph"`
+(a 1s standalone `morph_equation` preview). Jobs live in a module dict, so a restart loses them.
 
-- The Manim subprocess has a **per-scene** wall-clock cap (`_render_timeout`), default 6 h — a
-  runaway guard, not a deadline. Override with the `LOCUS_RENDER_TIMEOUT` env var (seconds; `0`
-  disables it entirely). The ffmpeg helpers in `render/stitch.py` (30 min) and `render/audio.py`
-  (10 min) keep their own separate, fixed timeouts.
+**Everything the worker then does — Manim flags, timeouts, audio mixing, stitching, slideshow
+packaging — is in `app/render/CLAUDE.md`.** Audio never reaches codegen: it is mixed under the rendered
+mp4 afterwards, so the ejected script has no trace of it.
 
-- `RenderJob.scene_id` is a specific scene, or **`None` = every scene**. Multi-scene **mp4** jobs
-  render each scene then stitch (`crossfade_scenes` when `transition`, else `concat_scenes`); other
-  formats / morph render a single scene.
-- `RenderJob.format` ∈ `mp4 | gif | png | still | slideshow`. `png` returns the frame *directory*,
-  which the worker zips for download; `still` uses `-s` (last frame); `transparent` adds `-t`
-  (non-mp4 only).
-- **`slideshow`** (for `Project.kind == "slideshow"`) renders every scene as an ordinary mp4 —
-  same Manim flags as `mp4`, no `--format` — and then packages them instead of stitching:
-  `job_dir/slideshow/` (player folder, kept for Present mode) + `job_dir/slideshow.zip` (the
-  download). Audio is mixed per slide, with no silent-track padding: nothing is concatenated, so
-  stream parity doesn't matter.
-- `RenderJob.mode` is `"scene"` (normal) or `"morph"` (a 1s standalone `morph_equation` preview).
-
-**Assets**: `POST /api/projects/{id}/assets/audio` and `.../assets/image` upload a file (raw bytes
-body + `?filename=` query param — deliberately no multipart, so no `python-multipart` dep) into the
-project's `assets/` dir; audio returns `{filename, duration, name}` (ffprobe), image `{filename, name}`.
-`GET .../assets/{filename}` serves either kind. Image assets are referenced by `image` objects and
-baked into the generated script as absolute `ImageMobject` paths (see `codegen/CLAUDE.md`). After Manim renders an mp4, the worker mixes each scene's `Scene.audio` clips under the
-video (`render/audio.py`) — codegen and the ejected script never see audio. When stitching, scenes
-without clips get a *silent* AAC track so the concat demuxer sees uniform streams, and
-`crossfade_scenes` delays+amixes the per-scene tracks to match the video offsets.
+**Assets**: `POST /api/projects/{id}/assets/audio` and `.../assets/image` upload a file (raw bytes body
++ `?filename=` query param — deliberately no multipart, so no `python-multipart` dep) into the project's
+`assets/` dir; audio returns `{filename, duration, name}` (ffprobe), image `{filename, name}`.
+`GET .../assets/{filename}` serves either kind. Image assets are referenced by `image` objects and baked
+into the generated script as absolute `ImageMobject` paths (see `app/codegen/CLAUDE.md`).
 
 **Fonts**: `GET /api/fonts` lists the system fonts a `text` object's `font` prop may name, via
 `manimpango.list_fonts()` — the same Pango stack Manim's `Text` renders with, so the editor's list

@@ -22,12 +22,20 @@ worker runs it as a subprocess and streams progress over WebSocket → the clien
 
 ## Layout
 
-| Path | What | More |
-|------|------|------|
-| `frontend/` | Vite + React + TS editor (Konva canvas, Zustand stores) | `frontend/CLAUDE.md` |
-| `backend/` | FastAPI app: REST/WS API, codegen, render queue, storage | `backend/CLAUDE.md` |
-| `backend/app/codegen/` | IR → Manim Python transpiler (the subtle core) | `backend/app/codegen/CLAUDE.md` |
-| `scripts/` | Bootstrap + launch + package scripts: PowerShell (`*.ps1`, Windows) and shell (`*.sh`, macOS/Linux), hand-mirrored pairs | `scripts/CLAUDE.md` |
+Every directory below has its own `CLAUDE.md`; the deeper ones hold the detail.
+
+| Path | What |
+|------|------|
+| `frontend/` | Vite + React + TS editor (Konva canvas, Zustand stores) |
+| `frontend/src/store/` | The `Project` IR, undo/redo, autosave, object factories + defaults |
+| `frontend/src/canvas/` | Konva stage + KaTeX overlay: coordinates, direct manipulation, previews |
+| `frontend/src/timeline/` | Keyframe / camera / audio lanes, snapping, slide breaks |
+| `frontend/src/components/` | Shell, panels, modals (settings, export, presenter) |
+| `backend/` | FastAPI app: REST/WS API, storage, dep checks |
+| `backend/app/codegen/` | IR → Manim Python transpiler (**the subtle core**); animation emission is split into its `ANIMATION-EMISSION.md` |
+| `backend/app/render/` | Job queue, Manim subprocess, ffmpeg (audio mix, stitch, slideshow) |
+| `backend/tests/` | Standalone codegen regression harnesses (not pytest) |
+| `scripts/` | Bootstrap + launch + package scripts: PowerShell (`*.ps1`, Windows) and shell (`*.sh`, macOS/Linux), hand-mirrored pairs |
 
 The IR schema is defined twice and **must be kept in sync by hand**: Pydantic models in
 `backend/app/models/ir.py` and TypeScript types in `frontend/src/types/ir.ts`. There is no
