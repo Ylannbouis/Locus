@@ -129,7 +129,7 @@ export function ObjectDefaultsTab() {
       <div className="objdef__foot">
         <span className="panel-hint">
           {editedCount === 0 ? 'All entries are at their built-in defaults.'
-            : `${editedCount} ${editedCount === 1 ? 'entry is' : 'entries are'} customised.`}
+            : `${editedCount} ${editedCount === 1 ? 'entry is' : 'entries are'} customized.`}
         </span>
         <button className="btn" disabled={editedCount === 0} onClick={resetAllObjectDefaults}>
           Reset all

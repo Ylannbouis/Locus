@@ -5,8 +5,8 @@
   Windows Job Object configured with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, then
   runs the command in $env:LOCUS_CMD (from directory $env:LOCUS_DIR).
 
-  Because child processes inherit the job, closing this window — by Ctrl+C, by
-  the X button, or by Stop-Process — terminates the whole process tree. This is
+  Because child processes inherit the job, closing this window - by Ctrl+C, by
+  the X button, or by Stop-Process - terminates the whole process tree. This is
   what lets us run `uvicorn --reload` (and vite) without leaking orphaned
   reloader/worker/node processes.
 #>

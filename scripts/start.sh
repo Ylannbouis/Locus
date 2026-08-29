@@ -17,8 +17,18 @@ VENV_PY="$PROJECT_ROOT/backend/.venv/bin/python"
 BACKEND_DIR="$PROJECT_ROOT/backend"
 FRONTEND_DIR="$PROJECT_ROOT/frontend"
 
+# --- Preflight: the venv interpreter must actually RUN, with the deps present -
+# Testing only that the file is executable is not enough. A venv that has lost
+# its pyvenv.cfg still has an executable python that dies on every launch, which
+# would leave the backend dead on arrival while the browser still opened.
 if [[ ! -x "$VENV_PY" ]]; then
     printf 'Virtual environment not found. Run  bash scripts/setup.sh  first.\n' >&2
+    exit 1
+fi
+PROBE='import importlib.util as u, sys; m=[n for n in ("fastapi","uvicorn","pydantic","manim") if u.find_spec(n) is None]; print(" ".join(m)); sys.exit(1 if m else 0)'
+if ! probe_out="$("$VENV_PY" -c "$PROBE" 2>&1)"; then
+    printf 'The backend virtual environment at\n  %s\nis broken or incomplete:\n  %s\nRun  bash scripts/setup.sh  to repair it.\n' \
+        "$VENV_PY" "$probe_out" >&2
     exit 1
 fi
 
@@ -53,16 +63,36 @@ open_url() {
     elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$1"  # Linux
     fi
 }
-if command -v curl >/dev/null 2>&1; then
-    printf 'Waiting for the frontend to be ready...\n'
-    for _ in $(seq 1 60); do
-        if curl -sf -o /dev/null http://localhost:5173/; then
-            printf 'Frontend is up. Opening browser...\n'
-            open_url "http://localhost:5173/"
-            break
-        fi
+# Bounded by wall-clock rather than attempt count: each attempt can itself burn
+# the 2s timeout, so a fixed number of tries was never really "30 seconds".
+wait_for_http() {
+    local url="$1" timeout="$2" deadline
+    deadline=$(( $(date +%s) + timeout ))
+    while (( $(date +%s) < deadline )); do
+        curl -sf -o /dev/null --max-time 2 "$url" && return 0
         sleep 0.5
     done
+    return 1
+}
+
+if command -v curl >/dev/null 2>&1; then
+    # /openapi.json is served by FastAPI itself, so it answers as soon as uvicorn
+    # is listening -- unlike /api/system/deps, which shells out to manim/ffmpeg.
+    printf 'Waiting for the backend to be ready...\n'
+    if wait_for_http "http://127.0.0.1:8000/openapi.json" 30; then
+        printf 'Backend is up.\n'
+    else
+        printf 'Backend did not answer on http://localhost:8000 within 30s.\n'
+        printf 'Scroll up for its error output; if the venv is broken, re-run  bash scripts/setup.sh\n'
+    fi
+
+    printf 'Waiting for the frontend to be ready...\n'
+    if wait_for_http "http://localhost:5173/" 30; then
+        printf 'Frontend is up. Opening browser...\n'
+        open_url "http://localhost:5173/"
+    else
+        printf 'Frontend did not answer on http://localhost:5173 within 30s.\n'
+    fi
 fi
 
 printf '\nApp URL: http://localhost:5173/   (use http://, not https)\n'

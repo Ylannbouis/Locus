@@ -5,7 +5,7 @@
 
   Step 1 (works today): build the frontend to frontend/dist. The backend then
   serves it at http://localhost:8000 (main.py mounts frontend/dist if present),
-  so the whole app runs from a single uvicorn process — no Vite needed.
+  so the whole app runs from a single uvicorn process - no Vite needed.
 
   Step 2 (skeleton): bundle the backend with PyInstaller into a single folder.
   This is left as a documented skeleton because Manim + LaTeX + ffmpeg are large
@@ -26,7 +26,7 @@ $FrontendDir = Join-Path $ProjectRoot "frontend"
 $BackendDir  = Join-Path $ProjectRoot "backend"
 $VenvPython  = Join-Path $BackendDir ".venv\Scripts\python.exe"
 
-Write-Host "== Locus — package ==" -ForegroundColor Cyan
+Write-Host "== Locus - package ==" -ForegroundColor Cyan
 
 # --- Step 1: build the frontend ------------------------------------------------
 Write-Host "Building frontend (vite build)..." -ForegroundColor Gray
