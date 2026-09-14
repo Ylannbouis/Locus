@@ -1,7 +1,5 @@
 # Locus (A Manim Wrapper)
 
-**IMPORTANT DISCLAIMER**: AI was used in the creation of this project. However, the tool itself does not use AI; any content you create is completely human-made.
-
 This app is a GUI-driven 2D math animation editor that wraps Manim Community Edition. This tool is meant for speeding up the creation of smaller animations as well as creating unique and beautiful slideshows. It's designed to be very easy and simple to use. Teachers and lecturers would find this tool helpful. That being said, it lacks the many benefits of programmatic animations. For that, you'll have to export the code and write on it manually.
 
 ## Architecture
