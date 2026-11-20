@@ -455,6 +455,10 @@ class RenderRequest(BaseModel):
     format: RenderFormat = "mp4"
     transparent: bool = False
     transition: bool = True  # crossfade between scenes when stitching all scenes
+    # Render only [range_start, range_end) seconds of ONE scene (mp4 / gif / png).
+    # Frames outside the window are never rasterized — see codegen `_LocusRange`.
+    range_start: Optional[float] = None
+    range_end: Optional[float] = None
 
 
 class MorphPreviewRequest(BaseModel):
@@ -475,6 +479,8 @@ class RenderJob(BaseModel):
     fps: Optional[int] = None
     transparent: bool = False
     transition: bool = True
+    range_start: Optional[float] = None
+    range_end: Optional[float] = None
     status: Literal["queued", "running", "done", "error"] = "queued"
     progress: int = 0
     message: str = ""

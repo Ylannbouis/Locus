@@ -6,7 +6,7 @@ run by the render worker.
 
 | File | Role |
 |------|------|
-| `template.py` | Jinja2 scaffold + `SCENE_CLASS_NAME = "LocusScene"`. `render_script(body, background_color, base_class="Scene", progress_total=None)` — `base_class` becomes `MovingCameraScene` when the scene uses the camera. Body is pre-indented (8 spaces) and injected; numpy fns (`sin`, `cos`, …) are imported so plot expressions can use them bare. Also holds the helper classes, emitted only when the body references them: `LocusApply`/`LocusFade`/`LocusIntro`, plus `_LocusProgress` when `progress_total` is given. |
+| `template.py` | Jinja2 scaffold + `SCENE_CLASS_NAME = "LocusScene"`. `render_script(…, time_range=(t0, t1))` (worker range renders only) adds the `_LocusRange` mixin — see "Range renders" below. `render_script(body, background_color, base_class="Scene", progress_total=None)` — `base_class` becomes `MovingCameraScene` when the scene uses the camera. Body is pre-indented (8 spaces) and injected; numpy fns (`sin`, `cos`, …) are imported so plot expressions can use them bare. Also holds the helper classes, emitted only when the body references them: `LocusApply`/`LocusFade`/`LocusIntro`, plus `_LocusProgress` when `progress_total` is given. |
 | `objects.py` | `emit_object(obj, assets_root=None) -> (var, lines)`: Mobject construction + styling + placement per type/subtype. |
 | `animations.py` | `emit_animation(verb, var, params, var_map) -> expr`: one **object** verb → the inner expression of a `self.play(...)`. Plus `emit_transform_chain` (fuse simultaneous move/scale/rotate + an overlapping fade's opacity into one `LocusApply`) and `emit_intro_transform` (fuse a creation verb with such a cluster into `LocusIntro`). Camera verbs live in `scene.py`. |
 | `scene.py` | Orchestrator: `build_body` / `generate_scene_script` / `generate_morph_preview_script`. Ties objects + relationships + timeline + camera together. `build_body_timed` is `build_body` plus the exact seconds the emitted statements render — the render bar's denominator, which is why `_object_tracks` and the timeline-model `tracks` carry an `end` alongside each expression. |
@@ -163,6 +163,23 @@ absolute `zoom` (and `track: true` for continuous follow). **No IR schema change
   `self.play()` while the frame is in the scene's mobject list, otherwise the camera silently stays put.
   (One-shot focus moves are explicit animations and don't need this.)
 - Initial framing (`camera_track.initial_pan/zoom`) is emitted as step 0 of `build_body`.
+
+## Range renders (`_LocusRange`, worker only)
+
+`generate_scene_script(…, time_range=(t0, t1))` outputs just those seconds of the timeline without
+changing the body: the whole scene still *runs* (so the state at t0 is exact), but the mixin patches the
+Cairo renderer in `setup()` so frames outside the window are never rasterized — only counted on
+`renderer.time`, which is the clock everything keys off:
+
+- `render` (one animation frame) draws + emits only inside `[t0, t1)`, else just advances the clock;
+- `add_frame` (also called directly with `num_frames > 1` by frozen-frame **static waits**) emits only
+  the slice of those frames inside the window;
+- `play` drops the partial movie of a play that wrote **no** frames (sets it to `None`, which the file
+  writer skips) — otherwise Manim would concat an empty segment. That case is real in the sequential
+  (camera-tracking) model, where plays and `self.wait`s sit wholly outside the window.
+
+Verified against full renders in both emission models (length exact; first/last frames match the full
+render at t0/t1). The ejected `/script` never carries it.
 
 ## Adding a new object type / verb / subtype
 

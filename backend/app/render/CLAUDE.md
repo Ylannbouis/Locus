@@ -43,6 +43,11 @@ restart loses them.
 - `RenderJob.format` ∈ `mp4 | gif | png | still | slideshow`. `png` returns the frame *directory*, which
   the worker zips (`zip_dir`); `still` uses `-s` (last frame); `transparent` adds `-t` (non-mp4 only).
 - `RenderJob.mode` is `"scene"` (normal) or `"morph"` (a 1s standalone `morph_equation` preview).
+- **Range renders** (`range_start` / `range_end`): only for a *single-scene* mp4 / gif / png job
+  (`_job_range` returns None otherwise, clamps to `scene_runtime_seconds`, and errors on an empty
+  window). The script gets the `_LocusRange` mixin (see `app/codegen/CLAUDE.md`), so the output *is*
+  the window; the voiceover is re-timed to it first (`_clips_in_range`: shift by −t0, trim to the
+  window, moving a straddling clip's trim-in point and dropping a fade that was cut away).
 
 ## Progress (`_JobProgress`, and the script's `_LocusProgress`)
 

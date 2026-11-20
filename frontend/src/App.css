@@ -1052,3 +1052,20 @@ body {
 .field__color--mixed { opacity: 0.55; }
 .kf-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; margin: 4px 0; }
 .inspector__paste-anim { width: 100%; margin-bottom: 8px; }
+
+/* Render range: a band on the ruler + a faint full-height tint over the lanes. */
+.tl__range-band {
+  position: absolute; top: 0; height: 100%; z-index: 1;
+  background: var(--accent-soft); border-left: 2px solid var(--accent); border-right: 2px solid var(--accent);
+}
+.tl__range {
+  position: absolute; top: 0; bottom: 0; z-index: 0; pointer-events: none;
+  background: var(--accent-soft); opacity: 0.6;
+}
+.tl__range-ctl { display: inline-flex; align-items: center; gap: 2px; margin: 0 4px; }
+.tl__range-label { font-size: 11px; color: var(--accent); font-variant-numeric: tabular-nums; min-width: 64px; text-align: center; }
+.tl__range-label--empty { color: var(--text-dim); }
+/* Nothing in the timeline is meant to be text-selected — and Shift+drag (range)
+   or a quick drag would otherwise paint selection highlights across it. */
+.tl { user-select: none; }
+.tl input, .tl textarea { user-select: text; }

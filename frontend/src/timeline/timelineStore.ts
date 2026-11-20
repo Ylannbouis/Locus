@@ -15,6 +15,11 @@ interface TimelineUIState {
   playhead: number; // seconds — audio-preview position marker
   playing: boolean;
   snapEnabled: boolean; // drag-snapping to neighbouring edges (persisted)
+  // A time range on one scene's timeline (Shift+drag the ruler, or I / O at the
+  // playhead) — what "Render selected range" in the Export panel renders.
+  // UI-only, never saved; it belongs to the scene it was drawn on.
+  range: { sceneId: string; start: number; end: number } | null;
+  setRange: (r: { sceneId: string; start: number; end: number } | null) => void;
   selectKf: (id: string, additive?: boolean) => void;
   selectAudio: (id: string | null) => void;
   selectBreak: (id: string | null) => void;
@@ -33,6 +38,12 @@ export const useTimelineStore = create<TimelineUIState>((set) => ({
   playhead: 0,
   playing: false,
   snapEnabled: localStorage.getItem(SNAP_KEY) !== '0', // default on
+  range: null,
+  setRange: (r) => set({
+    range: r && r.end - r.start >= 0.05
+      ? { sceneId: r.sceneId, start: Math.max(0, Math.round(r.start * 100) / 100), end: Math.round(r.end * 100) / 100 }
+      : null,
+  }),
   selectKf: (id, additive) => set(s => {
     if (!additive) return { selectedKfIds: [id], selectedAudioId: null, selectedBreakId: null };
     return {

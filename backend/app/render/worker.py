@@ -21,7 +21,7 @@ from typing import Callable
 from app.codegen.scene import (generate_scene_script, generate_morph_preview_script,
                                scene_runtime_seconds)
 from app.codegen.template import SCENE_CLASS_NAME
-from app.models.ir import RenderJob, Scene
+from app.models.ir import AudioClip, RenderJob, Scene
 from app.render import queue as rq
 from app.render.audio import audible_clips, mux_scene_audio
 from app.render.slideshow import build_slideshow, zip_slideshow
@@ -293,6 +293,43 @@ def _render_one(script: str, scene_dir: Path, job: RenderJob,
 _DEFAULT_CROSSFADE = 0.6
 
 
+def _job_range(job: RenderJob, scene: Scene, n_scenes: int, is_morph: bool) -> tuple[float, float] | None:
+    """The [t0, t1) window to render, or None for the whole scene. Only for a
+    single-scene mp4 / gif / png render; clamped to the scene's runtime."""
+    if job.range_start is None or job.range_end is None or is_morph or n_scenes != 1:
+        return None
+    if job.format not in ("mp4", "gif", "png"):
+        return None
+    total = scene_runtime_seconds(scene)
+    t0 = max(0.0, float(job.range_start))
+    t1 = min(float(job.range_end), total) if total > 0 else float(job.range_end)
+    if t1 - t0 < 0.05:
+        raise ValueError(f"Selected range {job.range_start:.2f}–{job.range_end:.2f}s is empty "
+                         f"(the scene runs {total:.2f}s)")
+    return (t0, t1)
+
+
+def _clips_in_range(clips: list[AudioClip], t0: float, t1: float) -> list[AudioClip]:
+    """Voiceover clips re-timed for a range render: shifted by -t0, trimmed to
+    the window (moving the trim-in point for a clip that started earlier)."""
+    out: list[AudioClip] = []
+    for c in clips:
+        start, end = c.start_time, c.start_time + c.duration
+        if end <= t0 or start >= t1:
+            continue
+        cut_in = max(0.0, t0 - start)
+        new_end = min(end, t1)
+        out.append(c.model_copy(update={
+            "start_time": max(0.0, start - t0),
+            "offset": c.offset + cut_in,
+            "duration": new_end - max(start, t0),
+            # A fade that was partly cut away just starts mid-way; keep it simple.
+            "fade_in": c.fade_in if cut_in == 0 else 0.0,
+            "fade_out": c.fade_out if new_end == end else 0.0,
+        }))
+    return out
+
+
 def _boundaries(scenes: list[Scene], default_crossfade: bool) -> list[tuple[str, float] | None]:
     """How each scene hands over to the next when stitching: its own
     `transition_out` if set ("cut" = hard cut), else the export panel's default
@@ -337,6 +374,12 @@ async def _process(job: RenderJob) -> None:
     if (job.format not in ("mp4", "slideshow") or is_morph) and len(scenes) > 1:
         scenes = scenes[:1]
 
+    try:
+        time_range = _job_range(job, scenes[0], len(scenes), is_morph)
+    except ValueError as exc:
+        rq.update_job(job.job_id, status="error", message=str(exc))
+        return
+
     job_dir = renders_dir(job.project_id) / job.job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
@@ -359,7 +402,7 @@ async def _process(job: RenderJob) -> None:
             if is_morph:
                 script = generate_morph_preview_script(project, scene, job.keyframe_id)
             else:
-                script = generate_scene_script(project, scene, progress=True)
+                script = generate_scene_script(project, scene, progress=True, time_range=time_range)
             # Manim runs off-thread, so its callbacks are marshalled back to the
             # loop thread — rq.update_job broadcasts through an asyncio.Queue.
             def on_frames(fraction: float) -> None:
@@ -401,6 +444,9 @@ async def _process(job: RenderJob) -> None:
     # track so every input has identical streams for concat.
     if job.format in ("mp4", "slideshow") and not is_morph:
         assets = assets_dir(project.id)
+        if time_range is not None:
+            # Only the window was rendered: line the voiceover up with it.
+            scenes = [s.model_copy(update={"audio": _clips_in_range(list(s.audio), *time_range)}) for s in scenes]
         if any(audible_clips(s.audio, assets) for s in scenes):
             rq.update_job(job.job_id, progress=88 if stitch or is_slideshow else 91, message="Mixing audio…")
             try:

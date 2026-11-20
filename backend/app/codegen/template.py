@@ -253,6 +253,70 @@ class _LocusProgress:
 
 '''
 
+# Range renders (worker only): output just the frames in [t0, t1) of the scene's
+# timeline. Everything still *runs* — mobjects are built, every animation
+# interpolates, so the state at t0 is exactly right — but frames before t0 / after
+# t1 are never rasterized (the Cairo draw is the expensive part), only counted on
+# the renderer's clock (`renderer.time`, which drives everything here):
+#   - `render` (one animation frame): draw + emit only inside the window;
+#   - `add_frame` (also hit directly by frozen-frame waits with num_frames > 1):
+#     emit only the slice of those frames inside the window;
+#   - `play`: a play that ends up with no frames in the window has its partial
+#     movie dropped (set to None — the file writer skips those), or Manim would
+#     try to concat an empty segment.
+_LOCUS_RANGE_HELPER = '''
+import math as _math
+
+
+class _LocusRange:
+    _locus_t0 = 0.0
+    _locus_t1 = 1e9
+
+    def setup(self):
+        super().setup()
+        r = self.renderer
+        if not hasattr(r, "add_frame") or not hasattr(r, "file_writer"):
+            return  # not the Cairo renderer: render everything
+        t0, t1 = float(self._locus_t0), float(self._locus_t1)
+        dt = 1.0 / config.frame_rate
+        half = dt / 2
+        orig_render, orig_add, orig_play = r.render, r.add_frame, r.play
+        written = [0]
+
+        def inside():
+            return t0 - half <= r.time < t1 - half
+
+        def render(scene, time, moving_mobjects=None):
+            if inside():
+                orig_render(scene, time, moving_mobjects)
+            elif not r.skip_animations:
+                r.time += dt  # keep the clock, skip the draw
+
+        def add_frame(frame, num_frames=1):
+            if r.skip_animations:
+                return orig_add(frame, num_frames)
+            start = r.time
+            lo = max(0, _math.ceil((t0 - half - start) / dt))
+            hi = min(num_frames, _math.ceil((t1 - half - start) / dt))
+            if hi > lo:
+                r.time = start + lo * dt
+                orig_add(frame, hi - lo)
+                written[0] += hi - lo
+            r.time = start + num_frames * dt
+
+        def play(scene, *args, **kwargs):
+            before = written[0]
+            orig_play(scene, *args, **kwargs)
+            fw = r.file_writer
+            if written[0] == before and fw.partial_movie_files and fw.partial_movie_files[-1] is not None:
+                fw.partial_movie_files[-1] = None
+                if fw.sections and fw.sections[-1].partial_movie_files:
+                    fw.sections[-1].partial_movie_files[-1] = None
+
+        r.render, r.add_frame, r.play = render, add_frame, play
+
+'''
+
 # The construct body is pre-rendered (already indented 8 spaces) and injected.
 # base_class is "Scene" normally, or "MovingCameraScene" when the scene animates
 # the camera (only that class exposes self.camera.frame).
@@ -274,10 +338,12 @@ class {{ class_name }}({{ bases }}):
 
 def render_script(body: str, background_color: str = "#000000",
                   base_class: str = "Scene",
-                  progress_total: float | None = None) -> str:
+                  progress_total: float | None = None,
+                  time_range: tuple[float, float] | None = None) -> str:
     """Render the scene script. `progress_total` (the scene's expected animation
     seconds) adds the frame-progress instrumentation the render worker reads;
-    leave it None — as the eject/`/script` endpoint does — for a clean script."""
+    leave it None — as the eject/`/script` endpoint does — for a clean script.
+    `time_range` (worker only) outputs just those seconds — `_LocusRange`."""
     helpers = ""
     if "LocusApply(" in body or "LocusFade(" in body:
         helpers += _LOCUS_FX_HELPER
@@ -289,6 +355,11 @@ def render_script(body: str, background_color: str = "#000000",
         helpers += _LOCUS_PROGRESS_HELPER
         bases = f"_LocusProgress, {base_class}"
         class_prefix = f"    _locus_total = {max(0.01, float(progress_total)):.3f}\n\n"
+    if time_range is not None:
+        t0, t1 = time_range
+        helpers += _LOCUS_RANGE_HELPER
+        bases = f"_LocusRange, {bases}"
+        class_prefix += f"    _locus_t0 = {float(t0)!r}\n    _locus_t1 = {float(t1)!r}\n\n"
     return _TEMPLATE.render(
         class_name=SCENE_CLASS_NAME,
         background_color_repr=repr(background_color),

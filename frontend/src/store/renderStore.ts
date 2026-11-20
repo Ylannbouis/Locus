@@ -9,6 +9,8 @@ export interface RenderOptions {
   fps?: number | null;
   transparent?: boolean;
   transition?: boolean;
+  range_start?: number | null;
+  range_end?: number | null;
 }
 
 interface RenderState {

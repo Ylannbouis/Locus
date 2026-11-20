@@ -137,6 +137,9 @@ timing can be judged without rendering. Editor-only approximation; see `frontend
 **Record mode** (● Rec) builds on it: the canvas shows the scene at the playhead but stays editable, and
 dragging / rotating / resizing an object there records a move / rotate / scale keyframe that *ends* at
 the playhead (re-recording at the same time adjusts it; at 0s you edit the starting layout).
+**Range renders**: Shift+drag the timeline ruler (or I / O) to mark a range, and the Export panel can
+render just that window — frames outside it are never rasterized (a `_LocusRange` mixin in the worker's
+script), and the voiceover is re-timed to match.
 Editing ergonomics: a **multi-object Inspector** (align / distribute, shared style edits in one undo
 step), **smart guides** (drag-snapping to other objects' edges and centres and the frame, with guide
 lines), and **copy animation** (Ctrl+C keyframes, Ctrl+V onto the selected objects at the playhead).

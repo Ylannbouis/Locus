@@ -67,6 +67,9 @@ they're typed or dragged.
   the earlier scene's `transition_out` — Default / Cut / Crossfade / Fade through black / Wipe left /
   Wipe right + duration. A dashed chip = default, i.e. it follows the Export panel's crossfade checkbox,
   which is therefore now "the default for boundaries without their own transition".
+- **Range renders:** when the timeline has a range on the current scene, `RenderPanel` shows "Only
+  the selected range (a–b s)" (on by default, enabled for single-scene mp4 / gif / png and the 480p
+  preview) and adds `range_start` / `range_end` to the request — see `timeline/CLAUDE.md`.
 - `RenderPanel` builds a `RenderOptions` (format mp4/gif/png/still/slideshow, resolution preset, fps,
   transparent, crossfade) and calls `renderStore.triggerRender(projectId, sceneId|null, opts)` —
   **`sceneId === null` renders & stitches all scenes** (mp4 only; the panel disables "all scenes" for

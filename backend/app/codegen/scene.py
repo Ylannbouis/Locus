@@ -1021,14 +1021,17 @@ def scene_runtime_seconds(scene: Scene) -> float:
     return end + 0.5 if end > 0 else 1.0
 
 
-def generate_scene_script(project: Project, scene: Scene, *, progress: bool = False) -> str:
+def generate_scene_script(project: Project, scene: Scene, *, progress: bool = False,
+                          time_range: tuple[float, float] | None = None) -> str:
     """`progress=True` adds the worker's frame-progress instrumentation. The
-    eject / `/script` path leaves it off so the user gets a plain Manim script."""
+    eject / `/script` path leaves it off so the user gets a plain Manim script.
+    `time_range=(t0, t1)` (worker only) outputs just those seconds of the timeline."""
     bg = scene.background_color or project.settings.background_color or "#000000"
     body, seconds = build_body_timed(scene, assets_root=_assets_root(project))
     base = "MovingCameraScene" if _uses_camera(scene) else "Scene"
     return render_script(body=body, background_color=bg, base_class=base,
-                         progress_total=seconds if progress else None)
+                         progress_total=seconds if progress else None,
+                         time_range=time_range)
 
 
 def generate_morph_preview_script(project: Project, scene: Scene, keyframe_id: str) -> str:

@@ -224,6 +224,37 @@ export function Timeline() {
   }, [selectedSceneId]);
   useEffect(() => () => stopPlayback(), []);
 
+  // ---- render range (Shift+drag the ruler, or I / O at the playhead) --------
+  const range = useTimelineStore(s => s.range);
+  const setRange = useTimelineStore(s => s.setRange);
+  const rangeHere = range && range.sceneId === selectedSceneId ? range : null;
+  const rangeDragRef = useRef<{ anchor: number } | null>(null);
+  const setIn = () => {
+    if (!selectedSceneId) return;
+    const t = useTimelineStore.getState().playhead;
+    const end = rangeHere && rangeHere.end > t + 0.05 ? rangeHere.end : Math.max(t + 1, contentEndRef.current);
+    setRange({ sceneId: selectedSceneId, start: t, end });
+  };
+  const setOut = () => {
+    if (!selectedSceneId) return;
+    const t = useTimelineStore.getState().playhead;
+    const start = rangeHere && rangeHere.start < t - 0.05 ? rangeHere.start : 0;
+    setRange({ sceneId: selectedSceneId, start, end: t });
+  };
+  const setInRef = useRef(setIn); setInRef.current = setIn;
+  const setOutRef = useRef(setOut); setOutRef.current = setOut;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+      if (e.key === 'i' || e.key === 'I') setInRef.current();
+      else if (e.key === 'o' || e.key === 'O') setOutRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
   const objects = scene?.objects ?? [];
   const keyframes = scene?.timeline.keyframes ?? [];
@@ -239,6 +270,7 @@ export function Timeline() {
     ...audioClips.map(c => c.start_time + c.duration),
     ...breaks.map(b => b.time),
   );
+  const contentEndRef = useRef(contentEnd); contentEndRef.current = contentEnd;
   const totalDur = Math.max(4, contentEnd) + 2;
   const contentW = totalDur * pxPerSec;
   const ticks = Math.ceil(totalDur);
@@ -602,6 +634,14 @@ export function Timeline() {
           {playing ? '⏸' : '▶'}
         </button>
         <PlayheadTime />
+        <span className="tl__range-ctl" title="Render range — Shift+drag on the ruler, or I / O to set its start / end at the playhead. Export → “Only the selected range” renders just this part.">
+          <button className="btn btn--ghost tl__zoom" onClick={setIn} title="Range start at the playhead (I)">⇤</button>
+          {rangeHere
+            ? <span className="tl__range-label">{rangeHere.start.toFixed(2)}–{rangeHere.end.toFixed(2)}s</span>
+            : <span className="tl__range-label tl__range-label--empty">range</span>}
+          <button className="btn btn--ghost tl__zoom" onClick={setOut} title="Range end at the playhead (O)">⇥</button>
+          {rangeHere && <button className="btn btn--ghost tl__zoom" onClick={() => setRange(null)} title="Clear the range">✕</button>}
+        </span>
         <button className={`btn tl__snap ${snapEnabled ? 'is-on' : 'btn--ghost'}`}
           title={snapEnabled ? 'Snapping on — drags snap to neighbouring edges, t=0 and the playhead (hold Alt to bypass)' : 'Snapping off'}
           onClick={toggleSnap}>🧲</button>
@@ -635,14 +675,31 @@ export function Timeline() {
               onPointerDown={e => {
                 if (e.button !== 0) return;
                 (e.target as Element).setPointerCapture?.(e.pointerId);
+                // Shift+drag marks a render range instead of scrubbing.
+                if (e.shiftKey && selectedSceneId) {
+                  window.getSelection()?.removeAllRanges(); // Shift+press would extend a text selection
+                  const t = laneTime(e);
+                  rangeDragRef.current = { anchor: t };
+                  setRange(null);
+                  return;
+                }
                 scrubRef.current = { wasPlaying: playing };
                 if (playing) stopPlayback();
                 // Scrubbing previews on the canvas (Record mode already follows the playhead).
                 if (!useCanvasStore.getState().record) useCanvasStore.getState().setPreview(true);
                 rulerSeek(e);
               }}
-              onPointerMoveCapture={e => { if (scrubRef.current) rulerSeek(e); }}
+              onPointerMoveCapture={e => {
+                const rd = rangeDragRef.current;
+                if (rd && selectedSceneId) {
+                  const t = laneTime(e);
+                  setRange({ sceneId: selectedSceneId, start: Math.min(rd.anchor, t), end: Math.max(rd.anchor, t) });
+                  return;
+                }
+                if (scrubRef.current) rulerSeek(e);
+              }}
               onPointerUpCapture={() => {
+                if (rangeDragRef.current) { rangeDragRef.current = null; return; }
                 const s = scrubRef.current;
                 scrubRef.current = null;
                 if (s?.wasPlaying && project) {
@@ -650,6 +707,11 @@ export function Timeline() {
                 }
               }}
               onDoubleClick={e => { if (isSlideshow) { e.stopPropagation(); addBreak(laneTime(e)); } }}>
+              {rangeHere && (
+                <div className="tl__range-band" style={{ left: rangeHere.start * pxPerSec, width: (rangeHere.end - rangeHere.start) * pxPerSec }}
+                  title={`Render range ${rangeHere.start.toFixed(2)}–${rangeHere.end.toFixed(2)}s — right-click to clear`}
+                  onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setRange(null); }} />
+              )}
               {Array.from({ length: ticks + 1 }, (_, i) => (
                 <div key={i} className="tl__tick" style={{ left: i * pxPerSec }}>
                   <span className="tl__tick-label">{i}s</span>
@@ -757,6 +819,10 @@ export function Timeline() {
             );
           })}
 
+          {rangeHere && (
+            // Full-height tint behind the lanes (grid-level, so offset by LABEL_W by hand).
+            <div className="tl__range" style={{ left: LABEL_W + rangeHere.start * pxPerSec, width: (rangeHere.end - rangeHere.start) * pxPerSec }} />
+          )}
           <PlayheadLine pxPerSec={pxPerSec} />
         </div>
       </div>

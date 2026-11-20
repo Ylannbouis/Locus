@@ -267,6 +267,9 @@ export interface RenderRequest {
   format?: RenderFormat;
   transparent?: boolean;
   transition?: boolean;
+  // Render only [range_start, range_end) seconds of one scene (mp4 / gif / png).
+  range_start?: number | null;
+  range_end?: number | null;
 }
 
 export interface RenderJob {
@@ -281,6 +284,8 @@ export interface RenderJob {
   /** Seconds left in the Manim phase; null while unknown or during ffmpeg. */
   eta_seconds?: number | null;
   output_path?: string | null;
+  range_start?: number | null;
+  range_end?: number | null;
 }
 
 export interface DepStatus {

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import { useRenderStore } from '../store/renderStore';
+import { useTimelineStore } from '../timeline/timelineStore';
 import { CodeView } from './CodeView';
 import { Presenter } from './Presenter';
 import type { RenderFormat, ResolutionPreset } from '../types/ir';
@@ -42,6 +43,9 @@ export function RenderPanel() {
   const [format, setFormat] = useState<RenderFormat>(isSlideshow ? 'slideshow' : 'mp4');
   const [scope, setScope] = useState<'scene' | 'all'>('scene');
   const [crossfade, setCrossfade] = useState(true);
+  // The timeline's render range (UI-only) — offered for single-scene video/frame exports.
+  const tlRange = useTimelineStore(s => s.range);
+  const [useRange, setUseRange] = useState(true);
   const [showCode, setShowCode] = useState(false);
   const [presenting, setPresenting] = useState(false);
 
@@ -70,6 +74,13 @@ export function RenderPanel() {
   const unit = isSlideshow ? 'slide' : 'scene';
   const canPresent = job?.status === 'done' && job.format === 'slideshow';
 
+  const rangeHere = tlRange && tlRange.sceneId === selectedSceneId ? tlRange : null;
+  const rangeFormats: RenderFormat[] = ['mp4', 'gif', 'png'];
+  // Single-scene only: a range is a window onto one timeline.
+  const rangeOk = !!rangeHere && !renderAll && !deckExport && rangeFormats.includes(format);
+  const rangeOpts = (fmt: RenderFormat) => (rangeHere && useRange && rangeFormats.includes(fmt)
+    ? { range_start: rangeHere.start, range_end: rangeHere.end } : {});
+
   const run = async () => {
     if (resolution !== '480p' &&
       !window.confirm(`Render at ${resolution}? Higher resolutions can take several minutes.`)) return;
@@ -79,6 +90,7 @@ export function RenderPanel() {
       quality, format, resolution, fps,
       transparent: transparent && allowTransparent,
       transition: crossfade,
+      ...(rangeOk ? rangeOpts(format) : {}),
     });
   };
 
@@ -87,9 +99,11 @@ export function RenderPanel() {
   // stitching every slide into one video is exactly what the kind rules out.
   const runPreview = async () => {
     if (isDirty) await save();
-    await triggerRender(project.id, renderAll && !isSlideshow ? null : selectedSceneId, {
+    const previewAll = renderAll && !isSlideshow;
+    await triggerRender(project.id, previewAll ? null : selectedSceneId, {
       quality: 'preview', format: 'mp4', resolution: '480p', fps,
       transparent: false, transition: crossfade,
+      ...(!previewAll ? rangeOpts('mp4') : {}),
     });
   };
 
@@ -147,6 +161,18 @@ export function RenderPanel() {
           </label>
         )}
       </div>
+
+      {rangeHere && !renderAll && !deckExport && (
+        <label className="field field--check"
+          title={rangeOk
+            ? 'Only the frames in the timeline range are drawn — much faster for checking one moment. Set the range with Shift+drag on the ruler, or I / O.'
+            : 'Ranges apply to MP4, GIF and PNG-sequence exports'}>
+          <input type="checkbox" checked={useRange && rangeOk} disabled={!rangeOk} onChange={e => setUseRange(e.target.checked)} />
+          <span className="field__label" style={{ margin: 0 }}>
+            Only the selected range ({rangeHere.start.toFixed(2)}–{rangeHere.end.toFixed(2)}s)
+          </span>
+        </label>
+      )}
 
       {renderAll && !deckExport && (
         <label className="field field--check"

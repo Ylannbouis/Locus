@@ -57,6 +57,16 @@ simultaneous animations on one object be seen and edited — the codegen then *f
   (`ObjDragState.rows`, from the `data-obj-row` labels) and the insertion point follows the pointer's Y
   against each row's midpoint; the drop shows as an inset line on the row it would go before.
 
+## Render range (`timelineStore.range`)
+
+A `{sceneId, start, end}` window — **UI-only, never saved**, and it belongs to the scene it was drawn
+on. Set it by **Shift+dragging the ruler** (instead of scrubbing; the press clears any page text
+selection, and `.tl` is `user-select: none` so the drag can't paint highlights), or with **I / O**
+(start / end at the playhead; the toolbar's ⇤ / ⇥ do the same, ✕ or right-clicking the band clears).
+It draws as an accent band on the ruler plus a faint full-height tint (grid-level → offset by
+`LABEL_W` by hand, like the playhead). The Export panel offers "Only the selected range" for
+single-scene mp4 / gif / png renders (and the 480p preview), sending `range_start` / `range_end`.
+
 ## Snapping (`snapEnabled`, 🧲 toolbar toggle, persisted; **Alt** bypasses)
 
 While dragging/trimming/resizing, the dragged edge snaps within `SNAP_PX` (8px) to the edges of

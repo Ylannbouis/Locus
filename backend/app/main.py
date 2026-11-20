@@ -241,6 +241,8 @@ async def post_render(req: RenderRequest) -> dict[str, str]:
         fps=req.fps,
         transparent=req.transparent,
         transition=req.transition,
+        range_start=req.range_start,
+        range_end=req.range_end,
     )
     rq.enqueue(job)
     return {"job_id": job_id}
