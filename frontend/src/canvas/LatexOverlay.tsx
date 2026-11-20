@@ -12,6 +12,7 @@ import { useCanvasStore } from '../store/canvasStore';
 import { objectBounds, braceLabelPoint, vectorLabelPoint } from './geometry';
 import type { Ghost } from './motion';
 import type { Point2D, SceneObject } from '../types/ir';
+import { snapPosition } from './snapping';
 
 interface MoveHandle {
   pos: Point2D;
@@ -319,12 +320,13 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
       const sel = useProjectStore.getState().selectedObjectIds;
       const isMulti = sel.length > 1 && sel.includes(d.id);
       let nx = d.startX + dxUnits, ny = d.startY + dyUnits;
-      // Snap onto the center lines (x=0 / y=0) within SNAP_PX (screen px) — but not
-      // during a multi-select drag (snapping one member would shift the whole set).
+      // Smart guides (canvas/snapping.ts): edges / centres of other objects and
+      // of the frame, within SNAP_PX screen px — but not during a multi-select
+      // drag (snapping one member would shift the whole set).
       if (!isMulti && useCanvasStore.getState().snapToCenter) {
-        const t = SNAP_PX / (view.scale * PX_PER_UNIT);
-        if (Math.abs(nx) <= t) nx = 0;
-        if (Math.abs(ny) <= t) ny = 0;
+        const r = snapPosition(d.id, { x: nx, y: ny }, SNAP_PX / (view.scale * PX_PER_UNIT));
+        nx = r.pos.x; ny = r.pos.y;
+        useCanvasStore.getState().setGuides(r.guides);
       }
       setDrag({ id: d.id, x: nx, y: ny });
       // Drag the rest of the selection along live.
@@ -369,10 +371,10 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
       let nx = d.startX + (e.clientX - d.startSX) / (view.scale * PX_PER_UNIT);
       let ny = d.startY - (e.clientY - d.startSY) / (view.scale * PX_PER_UNIT);
       if (!isMulti && useCanvasStore.getState().snapToCenter) {
-        const t = SNAP_PX / (view.scale * PX_PER_UNIT);
-        if (Math.abs(nx) <= t) nx = 0;
-        if (Math.abs(ny) <= t) ny = 0;
+        const r = snapPosition(d.id, { x: nx, y: ny }, SNAP_PX / (view.scale * PX_PER_UNIT));
+        nx = r.pos.x; ny = r.pos.y;
       }
+      useCanvasStore.getState().setGuides([]);
       if (isMulti) {
         // Commit the move and clear both live offsets together, so followers never
         // render at (already-moved position) + (stale drag delta) — a teleport in

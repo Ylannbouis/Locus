@@ -10,6 +10,7 @@ import { LatexOverlay } from './LatexOverlay';
 import { SceneNodes } from './SceneNodes';
 import { effectivePosition, transformAfter, type Ghost } from './motion';
 import { frameAt } from './playback';
+import { setSnapObjects } from './snapping';
 import { recordMove, recordRotate, recordScale, normDeg, REC_MIN_TIME, type Recorded } from './record';
 import { stopPlayback } from '../timeline/audioPlayback';
 import {
@@ -164,6 +165,9 @@ export function CanvasStage() {
   // What's on screen, for hit-testing (click-through) — the animated pose when
   // the canvas is showing a frame.
   const hitObjects = frame ? frame.objects : objects;
+  // Smart guides snap against what's on screen (canvas/snapping.ts).
+  setSnapObjects(hitObjects);
+  const guides = useCanvasStore(s => s.guides);
 
   // ---- Camera viewport overlay -------------------------------------------
   // Shows the framing of the selected camera keyframe, or the scene's initial
@@ -419,6 +423,7 @@ export function CanvasStage() {
       }
     }
     function onUp() {
+      useCanvasStore.getState().setGuides([]); // a released drag leaves no guide lines behind
       if (pan.current.active) { pan.current.active = false; setPanning(false); return; }
       if (!bandRef.current.active) return;
       const b = bandRef.current;
@@ -782,6 +787,15 @@ export function CanvasStage() {
               onDragEnd={e => commitCameraPan(manimX(e.target.x() + camHalfWpx), manimY(e.target.y() + camHalfHpx))}
             />
           )}
+          {guides.map(g => {
+            // Smart-guide line for the drag in progress, spanning the whole view.
+            const F = 1e5, c = lightBg ? '#c026d3' : '#ff4fd8';
+            return g.axis === 'x'
+              ? <Line key={`g-x-${g.at}`} points={[worldX(g.at), -F, worldX(g.at), F]} stroke={c}
+                  strokeWidth={1 / view.scale} dash={[5 / view.scale, 4 / view.scale]} listening={false} />
+              : <Line key={`g-y-${g.at}`} points={[-F, worldY(g.at), F, worldY(g.at)]} stroke={c}
+                  strokeWidth={1 / view.scale} dash={[5 / view.scale, 4 / view.scale]} listening={false} />;
+          })}
           {previewArrows.map(a => (
             <Arrow key={`arr-${a.kf.id}`}
               points={[worldX(a.from.x), worldY(a.from.y), worldX(a.to.x), worldY(a.to.y)]}
@@ -932,9 +946,9 @@ export function CanvasStage() {
       )}
 
       <div className="canvas-toolbar">
-        <label title="Snap objects to the center lines while dragging">
+        <label title="Smart guides: while dragging, snap to other objects' edges and centres and to the frame's centre and edges">
           <input type="checkbox" checked={snapToCenter} onChange={e => setSnapToCenter(e.target.checked)} />
-          Snap to center
+          Snap
         </label>
         <button type="button" className={`canvas-toolbar__btn${previewOn ? ' is-on' : ''}`}
           onClick={() => { if (previewOn) stopPlayback(); setPreview(!previewOn); }}

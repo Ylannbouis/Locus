@@ -92,11 +92,17 @@ and Pango lay out the *same* font file, matching the em is enough to match glyph
   dragged — and must not reset a parked walk, `cycleHolds`) from a **click** (which walks). A drag
   always ends with the dragged object selected, since the following click lands away from the parked
   spot and restarts the walk.
-- **Snap to center:** dragging snaps onto the horizontal/vertical center lines within `SNAP_PX`
-  (screen px) of the Manim origin. Konva drags use a shared `dragBoundFunc` (the origin sits at the
-  stage's own `x`/`y` in absolute coords); the overlay converts `SNAP_PX` to units. Toggled via the
-  `.canvas-toolbar` checkbox → `store/canvasStore.snapToCenter` (persisted). Suppressed while several
-  objects are selected.
+- **Smart guides (`snapping.ts`):** dragging one object snaps its left/centre/right and
+  bottom/centre/top onto the same features of every other object **on screen** and onto the frame's
+  centre lines and edges, within `SNAP_PX` screen px, drawing a magenta guide line for each axis that
+  snapped (`canvasStore.guides`, rendered by `CanvasStage`, cleared on any pointer release). Konva drags
+  go through the shared `dragBoundFunc` (`snapDragBound`: absolute px → scene units → `snapPosition` →
+  back; nodes carry `id={o.id}` so it knows which object it's moving); overlay drags call
+  `snapPosition` in units. "On screen" is published by `CanvasStage` each render (`setSnapObjects`) —
+  the authored layout, or the animated frame in Record mode. Graphs and angle/brace neither snap nor
+  act as targets (their `position` isn't where they are). Toggled by the toolbar's **Snap** checkbox
+  (`canvasStore.snapToCenter`, persisted — the name predates guides). Suppressed while several objects
+  are selected.
 - **Multi-select drag:** dragging one member moves the whole set live via a shared
   `groupDrag = {anchorId, dx, dy}` — the anchor is driven by Konva/overlay while every *other*
   selected object (shape **and** overlay equation) renders offset by `(dx, dy)`. The anchor keeps its

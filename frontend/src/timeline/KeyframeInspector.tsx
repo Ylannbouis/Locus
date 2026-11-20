@@ -112,6 +112,8 @@ export function KeyframeInspector() {
   const selectedSceneId = useProjectStore(s => s.selectedSceneId);
   const updateKeyframe = useProjectStore(s => s.updateKeyframe);
   const updateAnimationGroup = useProjectStore(s => s.updateAnimationGroup);
+  const copyKeyframes = useProjectStore(s => s.copyKeyframes);
+  const kfClipCount = useProjectStore(s => (s.lastCopy === 'keyframes' ? s.kfClipboard?.length ?? 0 : 0));
   const ungroupKeyframes = useProjectStore(s => s.ungroupKeyframes);
   const removeKeyframe = useProjectStore(s => s.removeKeyframe);
   // Field selectors, not a whole-store destructure — the store's playhead
@@ -160,6 +162,14 @@ export function KeyframeInspector() {
         </select>
       </label>
       <EasingPreview easing={kf.easing} />
+
+      <div className="kf-copy">
+        <button type="button" className="btn btn--ghost" onClick={() => copyKeyframes(selectedKfIds)}
+          title="Copy (Ctrl+C), then select objects and paste (Ctrl+V) to give them this animation">
+          ⧉ Copy animation{selectedKfIds.length > 1 ? `s (${selectedKfIds.length})` : ''}
+        </button>
+        {kfClipCount > 0 && <span className="panel-hint">Copied — select objects, then Ctrl+V.</span>}
+      </div>
 
       {/* ---- animation group: parallel or staggered ---- */}
       {kf.group_id && (() => {

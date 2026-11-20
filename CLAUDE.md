@@ -137,6 +137,9 @@ timing can be judged without rendering. Editor-only approximation; see `frontend
 **Record mode** (● Rec) builds on it: the canvas shows the scene at the playhead but stays editable, and
 dragging / rotating / resizing an object there records a move / rotate / scale keyframe that *ends* at
 the playhead (re-recording at the same time adjusts it; at 0s you edit the starting layout).
+Editing ergonomics: a **multi-object Inspector** (align / distribute, shared style edits in one undo
+step), **smart guides** (drag-snapping to other objects' edges and centres and the frame, with guide
+lines), and **copy animation** (Ctrl+C keyframes, Ctrl+V onto the selected objects at the playhead).
 **Auto-intro** (optional project setting, also a checkbox under the Add panel) gives each newly added
 object a Write / Create / Fade In right after the scene's last animation. Animation groups have a
 **stagger** slider (`lag_ratio`; the editor keeps member start times equal to what the codegen plays,

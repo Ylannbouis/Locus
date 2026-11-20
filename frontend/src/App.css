@@ -1042,3 +1042,13 @@ body {
 .theme-toggle { font-size: 13px; }
 /* Home header: keep the toggle beside "+ New Project" rather than centred. */
 .project-home__header .theme-toggle { margin-left: auto; margin-right: 8px; }
+
+/* ---------------------------------------------------------------------------
+   Multi-object Inspector
+--------------------------------------------------------------------------- */
+.multi-insp__btns { display: flex; flex-wrap: wrap; gap: 4px; }
+.multi-insp__icon-btn { width: 32px; height: 30px; padding: 0; font-size: 15px; display: grid; place-items: center; }
+.multi-insp__mixed { color: var(--warn); font-style: italic; }
+.field__color--mixed { opacity: 0.55; }
+.kf-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; margin: 4px 0; }
+.inspector__paste-anim { width: 100%; margin-bottom: 8px; }

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { Guide } from '../canvas/snapping';
 
 // UI-only canvas preferences (not part of the project IR). Persisted to
 // localStorage so they survive reloads, like the timeline height.
@@ -19,6 +20,13 @@ interface CanvasState {
   // Mutually exclusive with `preview`; not persisted either.
   record: boolean;
   setRecord: (v: boolean) => void;
+  // Smart-guide lines for the drag in progress (canvas/snapping.ts); cleared on release.
+  guides: Guide[];
+  setGuides: (g: Guide[]) => void;
+}
+
+function sameGuides(a: Guide[], b: Guide[]): boolean {
+  return a.length === b.length && a.every((g, i) => g.axis === b[i].axis && Math.abs(g.at - b[i].at) < 1e-9);
 }
 
 export const useCanvasStore = create<CanvasState>((set) => ({
@@ -28,4 +36,8 @@ export const useCanvasStore = create<CanvasState>((set) => ({
   setPreview: (v) => set(v ? { preview: true, record: false } : { preview: false }),
   record: false,
   setRecord: (v) => set(v ? { record: true, preview: false } : { record: false }),
+  guides: [],
+  // Called on every drag-move: only publish real changes, so a drag that isn't
+  // snapping doesn't re-render the canvas each frame.
+  setGuides: (g) => set(s => (sameGuides(s.guides, g) ? s : { guides: g })),
 }));

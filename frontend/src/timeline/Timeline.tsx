@@ -779,6 +779,13 @@ export function Timeline() {
               </>
             )}
             <button className="tl__menu-item" onClick={() => { duplicateKf(kf); setMenu(null); }}>Duplicate</button>
+            <button className="tl__menu-item"
+              title="Then select one or more objects and press Ctrl+V to give them the same animation"
+              onClick={() => {
+                const sel = useTimelineStore.getState().selectedKfIds;
+                useProjectStore.getState().copyKeyframes(sel.includes(kf.id) ? sel : [kf.id]);
+                setMenu(null);
+              }}>Copy animation</button>
             <button className="tl__menu-item tl__menu-item--danger" onClick={() => { removeKeyframe(kf.id); setMenu(null); }}>Delete</button>
           </div>
         );

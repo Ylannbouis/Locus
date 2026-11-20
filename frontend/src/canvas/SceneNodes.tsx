@@ -6,6 +6,7 @@ import { PX_PER_UNIT, MANIM_EM_UNITS_PER_PT, SNAP_PX, worldX, worldY, manimX, ma
 import { samplePlot, sampleParametric, sampleVectorField, vectorFieldColor } from './plotting';
 import { objectBounds, lineSegment, intersect, BRACE_BUFF, BRACE_DEPTH } from './geometry';
 import { useCanvasStore } from '../store/canvasStore';
+import { snapPosition } from './snapping';
 import { useProjectStore } from '../store/projectStore';
 import { assetUrl } from '../api/client';
 
@@ -16,15 +17,18 @@ import { assetUrl } from '../api/client';
 // Skipped while several objects are selected (a group move shouldn't snap on one
 // member's edge, which would shift the whole group unexpectedly).
 function snapDragBound(this: Konva.Node, pos: { x: number; y: number }) {
-  if (!useCanvasStore.getState().snapToCenter) return pos;
+  const cs = useCanvasStore.getState();
+  if (!cs.snapToCenter) return pos;
   if (useProjectStore.getState().selectedObjectIds.length > 1) return pos;
   const stage = this.getStage();
   if (!stage) return pos;
-  const cx = stage.x(), cy = stage.y();
-  return {
-    x: Math.abs(pos.x - cx) <= SNAP_PX ? cx : pos.x,
-    y: Math.abs(pos.y - cy) <= SNAP_PX ? cy : pos.y,
-  };
+  // Smart guides (canvas/snapping.ts) work in scene units: absolute px → units
+  // (the stage carries the view's pan + zoom), snap, and back.
+  const k = stage.scaleX() * PX_PER_UNIT;
+  const m = { x: (pos.x - stage.x()) / k, y: -(pos.y - stage.y()) / k };
+  const r = snapPosition(this.id(), m, SNAP_PX / k);
+  cs.setGuides(r.guides);
+  return { x: stage.x() + r.pos.x * k, y: stage.y() - r.pos.y * k };
 }
 
 // Build an SVG path for a brace along a baseline (world px). axis 'h' or 'v';
@@ -397,7 +401,8 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
       onDragMove: (e: Konva.KonvaEventObject<DragEvent>) => onNodeDragMove?.(o, e.target),
       onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => onCommitDrag(o, e.target),
     };
-    const common = { key: o.id, ...pos, ...drag, ...sel };
+    // `id` lets the shared dragBoundFunc find which object it's snapping.
+    const common = { key: o.id, id: o.id, ...pos, ...drag, ...sel };
     const p = o.props as any;
     const draw = drawOf(p);
     // Rotate gizmo only for a lone selection (same rule as the image Transformer
@@ -475,7 +480,7 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
         // when several objects are selected and moved together).
         const canEdit = isSel && selectedIds.length === 1 && onEndpointDrag && onEndpointCommit;
         return (
-          <Group key={o.id} {...pos} {...drag}>
+          <Group key={o.id} id={o.id} {...pos} {...drag}>
             {shapeNode}
             {canEdit && ends.map(([which, hx, hy]) => (
               <KCircle key={which} x={hx} y={hy} radius={hr} fill="#ea580c" stroke="#ffffff" strokeWidth={1.5 / viewScale}

@@ -4,7 +4,7 @@ import type { Project, ProjectSettings, Scene, SceneObject, Keyframe, Relationsh
 import { saveProject } from '../api/client';
 import { newId, uniqueName, copyName } from './objectFactory';
 import { computeFinalState } from './finalState';
-import { useTimelineStore } from '../timeline/timelineStore';
+import { useTimelineStore, CAMERA_ID } from '../timeline/timelineStore';
 
 const HISTORY_LIMIT = 50;
 
@@ -16,6 +16,10 @@ interface ProjectState {
   // Audio-clip clipboard — scoped to a project (assets are per-project files).
   // Copying objects clears it, so Ctrl+V always pastes the most recent copy.
   audioClipboard: { projectId: string; clip: AudioClip } | null;
+  // Keyframe clipboard ("copy animation"): pasted onto the selected objects.
+  kfClipboard: Keyframe[] | null;
+  // Which clipboard Ctrl+V pastes from — whatever was copied last.
+  lastCopy: 'objects' | 'audio' | 'keyframes' | null;
   history: Project[];
   future: Project[];
   isDirty: boolean;
@@ -55,6 +59,8 @@ interface ProjectState {
   addObject: (obj: SceneObject) => void;
   // `coalesceKey`: pass from typed / dragged inputs so one gesture is one undo step (see `_mutate`).
   updateObject: (id: string, patch: Partial<SceneObject>, coalesceKey?: string) => void;
+  // Several objects, one undo step (multi-select Inspector, align / distribute).
+  updateObjects: (updates: { id: string; patch: Partial<SceneObject> }[], coalesceKey?: string) => void;
   removeObject: (id: string) => void;
   removeSelected: () => void;
   moveObject: (id: string, x: number, y: number) => void;
@@ -82,6 +88,10 @@ interface ProjectState {
   removeKeyframe: (id: string) => void;
   removeKeyframes: (ids: string[]) => void;
   groupKeyframes: (ids: string[]) => void;
+  copyKeyframes: (ids: string[]) => void;
+  // Paste the copied animation onto `targetIds` (each gets every copied keyframe,
+  // relative timing kept, earliest at the playhead); none → the original objects.
+  pasteKeyframes: (targetIds?: string[]) => void;
   ungroupKeyframes: (ids: string[]) => void;
   // Edit an animation group (stagger = lag_ratio); members re-time via normalizeGroups.
   updateAnimationGroup: (id: string, patch: Partial<AnimationGroup>, coalesceKey?: string) => void;
@@ -198,6 +208,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   selectedObjectIds: [],
   clipboard: [],
   audioClipboard: null,
+  kfClipboard: null,
+  lastCopy: null,
   history: [],
   future: [],
   isDirty: false,
@@ -405,6 +417,22 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   }, undefined, coalesceKey),
 
+  updateObjects: (updates, coalesceKey) => {
+    if (!updates.length) return;
+    _mutate(set, get, draft => {
+      const scene = activeScene(draft, get().selectedSceneId);
+      if (!scene) return;
+      for (const { id, patch } of updates) {
+        const obj = scene.objects.find(o => o.id === id);
+        if (!obj) continue;
+        Object.assign(obj, patch);
+        if (obj.type === 'text' && !(obj.props as Record<string, unknown>).name_custom) {
+          obj.name = autoTextName(scene, obj);
+        }
+      }
+    }, undefined, coalesceKey);
+  },
+
   removeObject: (id) => {
     useTimelineStore.getState().clearKf();
     _mutate(set, get, draft => {
@@ -469,6 +497,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({
       clipboard: withGroupChildren(scene, selectedObjectIds).map(o => JSON.parse(JSON.stringify(o))),
       audioClipboard: null, // objects copied last -> Ctrl+V pastes objects
+      lastCopy: 'objects',
     });
   },
 
@@ -595,6 +624,44 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     });
   },
 
+  copyKeyframes: (ids) => {
+    const scene = activeScene(get().project, get().selectedSceneId);
+    const kfs = scene?.timeline.keyframes.filter(k => ids.includes(k.id)) ?? [];
+    if (!kfs.length) return;
+    set({ kfClipboard: JSON.parse(JSON.stringify(kfs)), lastCopy: 'keyframes' });
+  },
+
+  pasteKeyframes: (targetIds) => {
+    const clip = get().kfClipboard;
+    if (!clip?.length) return;
+    const t0 = useTimelineStore.getState().playhead;
+    const minStart = Math.min(...clip.map(k => k.start_time));
+    const made: string[] = [];
+    _mutate(set, get, draft => {
+      const scene = activeScene(draft, get().selectedSceneId);
+      if (!scene) return;
+      const exists = new Set(scene.objects.map(o => o.id));
+      const targets = (targetIds ?? []).filter(id => exists.has(id));
+      for (const k of clip) {
+        // Camera moves stay on the camera; everything else goes onto each target
+        // (or back onto its own object when nothing is selected, if it's here).
+        const onto = k.object_id === CAMERA_ID ? [CAMERA_ID]
+          : targets.length ? targets : exists.has(k.object_id) ? [k.object_id] : [];
+        for (const oid of onto) {
+          const nk: Keyframe = {
+            ...JSON.parse(JSON.stringify(k)), id: newId('kf'), object_id: oid, group_id: null,
+            start_time: Math.max(0, Math.round((t0 + k.start_time - minStart) * 100) / 100),
+          };
+          scene.timeline.keyframes.push(nk);
+          made.push(nk.id);
+        }
+      }
+    });
+    // Show what was pasted: select the new keyframes.
+    const tl = useTimelineStore.getState();
+    made.forEach((id, i) => tl.selectKf(id, i > 0));
+  },
+
   groupKeyframes: (ids) => {
     if (ids.length < 2) return;
     const gid = newId('agrp');
@@ -714,7 +781,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const scene = activeScene(project, selectedSceneId);
     const clip = scene?.audio?.find(c => c.id === id);
     if (!project || !clip) return;
-    set({ audioClipboard: { projectId: project.id, clip: JSON.parse(JSON.stringify(clip)) } });
+    set({ audioClipboard: { projectId: project.id, clip: JSON.parse(JSON.stringify(clip)) }, lastCopy: 'audio' });
   },
 
   pasteAudioClip: (atTime) => {
@@ -881,8 +948,21 @@ if (typeof window !== 'undefined') {
     // Copy/paste routes to the audio clipboard when an audio clip is selected
     // (timeline selection and object selection are mutually exclusive).
     const audioId = useTimelineStore.getState().selectedAudioId;
-    if (ctrl && e.key === 'c') { e.preventDefault(); if (audioId) s.copyAudioClip(audioId); else s.copySelection(); return; }
-    if (ctrl && e.key === 'v') { e.preventDefault(); if (s.audioClipboard) s.pasteAudioClip(); else s.paste(); return; }
+    const kfIds = useTimelineStore.getState().selectedKfIds;
+    if (ctrl && e.key === 'c') {
+      e.preventDefault();
+      if (kfIds.length) s.copyKeyframes(kfIds);
+      else if (audioId) s.copyAudioClip(audioId);
+      else s.copySelection();
+      return;
+    }
+    if (ctrl && e.key === 'v') {
+      e.preventDefault();
+      if (s.lastCopy === 'keyframes') s.pasteKeyframes(s.selectedObjectIds);
+      else if (s.lastCopy === 'audio' && s.audioClipboard) s.pasteAudioClip();
+      else s.paste();
+      return;
+    }
     if (ctrl && e.key === 'd') { e.preventDefault(); if (audioId) s.duplicateAudioClip(audioId); else s.duplicateSelection(); return; }
     if (ctrl && e.key === 'g') { e.preventDefault(); s.groupSelected(); return; }
     if (e.key === 'Delete' || e.key === 'Backspace') {

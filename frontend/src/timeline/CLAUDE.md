@@ -44,6 +44,8 @@ simultaneous animations on one object be seen and edited — the codegen then *f
   starts are derived from the group (`store/projectStore.normalizeGroups`), so moving one alone would
   snap back. The group's **stagger** (`lag_ratio`, 0 = parallel, 1 = back to back) is a slider in
   `KeyframeInspector` when a grouped keyframe is selected; the timeline then shows the staggered starts.
+- **Copy animation:** Ctrl+C on selected keyframes (or the right-click menu's "Copy animation"), then
+  select objects and Ctrl+V — see `store/CLAUDE.md` → Clipboards.
 - **Group drag:** grabbing a keyframe that's already part of a multi-selection keeps the whole set
   (shift-click toggles membership, mirroring canvas multi-select), and dragging shifts every selected
   keyframe by the anchor's delta (`DragState.members`), clamped so the *earliest* member never crosses

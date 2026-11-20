@@ -33,7 +33,10 @@ npm run dev                                                       # background, 
   `s = clamp(min(w/(14.2222*80), h/(8*80)) * 0.92, 0.2, 5)`; Manim (x,y) → page
   `(box.x + w/2 + x*80*s, box.y + h/2 − y*80*s)`. Holds until you wheel-zoom/pan.
 - Konva shapes are canvas pixels — drive them with `page.mouse` at computed coords
-  (drag = down/move/up). LaTeX/text/matrix objects are HTML in `.latex-overlay`
+  (drag = down/move/up). **`page.mouse.click` has no `modifiers` option** — for a shift-click
+  (multi-select) wrap it in `keyboard.down('Shift')` / `keyboard.up('Shift')`. Smart guides snap
+  drags within 8 screen px of another object's edge/centre, so aim drags away from those (or untick
+  the toolbar's Snap) when exact drop positions matter. LaTeX/text/matrix objects are HTML in `.latex-overlay`
   (normal locators work). The Transformer rotate anchor sits 26 screen px above the
   selected node's bbox top-center.
 - Inspector fields: `page.locator('label.field', { hasText: '<Label>' }).locator('input')`.

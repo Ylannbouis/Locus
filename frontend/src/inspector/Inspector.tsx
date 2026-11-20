@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import { newId } from '../store/objectFactory';
 import { FontField } from '../components/FontField';
+import { MultiInspector } from './MultiInspector';
 import type { SceneObject, Point2D, Scene, Relationship, RelationshipType } from '../types/ir';
 
 function NumberField({ label, value, step = 0.1, onChange }: {
@@ -86,9 +87,15 @@ export function Inspector() {
   const selectedIds = useProjectStore(s => s.selectedObjectIds);
   const updateObject = useProjectStore(s => s.updateObject);
   const removeObject = useProjectStore(s => s.removeObject);
+  const pasteKeyframes = useProjectStore(s => s.pasteKeyframes);
+  const kfClipCount = useProjectStore(s => (s.lastCopy === 'keyframes' ? s.kfClipboard?.length ?? 0 : 0));
 
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
   const obj = scene?.objects.find(o => o.id === selectedIds[0]);
+
+  // Several objects: edit what they share, arrange them (MultiInspector.tsx).
+  const multi = selectedIds.length > 1 ? (scene?.objects ?? []).filter(o => selectedIds.includes(o.id)) : [];
+  if (multi.length > 1) return <MultiInspector objects={multi} />;
 
   if (!obj) {
     return (
@@ -115,6 +122,14 @@ export function Inspector() {
   return (
     <div className="inspector">
       <h3 className="panel-title">Properties</h3>
+
+      {kfClipCount > 0 && (
+        <button type="button" className="btn btn--secondary inspector__paste-anim"
+          title="Paste the copied animation onto this object, starting at the playhead (Ctrl+V)"
+          onClick={() => pasteKeyframes([obj.id])}>
+          ⧉ Paste animation ({kfClipCount})
+        </button>
+      )}
 
       {/* A `text` object's name tracks its content (greyed out, since it isn't
           typed) until you name it yourself; clearing the field hands it back. */}

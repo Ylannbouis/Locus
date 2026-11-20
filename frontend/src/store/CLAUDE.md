@@ -119,8 +119,20 @@ no narration).
 
 ## Clipboards
 
-`clipboard` (objects) and `audioClipboard` (one audio clip) are separate, and the last copy wins:
-`copySelection` clears the audio clipboard, so Ctrl+V always pastes whatever was copied last. The
+`clipboard` (objects), `audioClipboard` (one audio clip) and `kfClipboard` (keyframes — "copy
+animation") are separate, and **the last copy wins**: `lastCopy` records which one Ctrl+V pastes from.
+Ctrl+C copies the selected keyframes if any, else the selected audio clip, else the selected objects.
+
+**Keyframe paste** (`pasteKeyframes(targetIds)`) gives *each* selected object every copied keyframe,
+keeping their relative timing with the earliest at the playhead, in one undo step, and selects the
+result. With no object selected it repeats the animation on the keyframes' own objects; camera
+keyframes always stay on the camera; group membership is dropped (re-group to stagger the copies).
+Entry points: Ctrl+C / Ctrl+V, the keyframe right-click menu's "Copy animation", the Keyframe
+Inspector's ⧉ button, and a "Paste animation" button the Inspector / MultiInspector show while
+keyframes are what was copied last.
+
+`updateObjects([{id, patch}], coalesceKey)` is `updateObject` for several objects in one undo step
+(multi-object Inspector, align / distribute). The
 audio clipboard carries a `projectId` and **refuses to paste into another project**, since assets are
 per-project files on the backend. Audio paste lands in the *active* scene at the playhead, so clips
 move across scenes.
