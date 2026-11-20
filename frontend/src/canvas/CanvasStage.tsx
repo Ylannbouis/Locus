@@ -10,6 +10,7 @@ import { LatexOverlay } from './LatexOverlay';
 import { SceneNodes } from './SceneNodes';
 import { effectivePosition, transformAfter, type Ghost } from './motion';
 import { frameAt } from './playback';
+import { recordMove, recordRotate, recordScale, normDeg, REC_MIN_TIME, type Recorded } from './record';
 import { stopPlayback } from '../timeline/audioPlayback';
 import {
   PX_PER_UNIT, FRAME_WIDTH, FRAME_HEIGHT, SNAP_PX,
@@ -56,6 +57,7 @@ export function CanvasStage() {
   const updateObject = useProjectStore(s => s.updateObject);
   const updateKeyframe = useProjectStore(s => s.updateKeyframe);
   const updateCameraTrack = useProjectStore(s => s.updateCameraTrack);
+  const upsertKeyframes = useProjectStore(s => s.upsertKeyframes);
   const snapToCenter = useCanvasStore(s => s.snapToCenter);
   const setSnapToCenter = useCanvasStore(s => s.setSnapToCenter);
   const selectedKfIds = useTimelineStore(s => s.selectedKfIds);
@@ -65,8 +67,18 @@ export function CanvasStage() {
   const previewPinned = useCanvasStore(s => s.preview);
   const setPreview = useCanvasStore(s => s.setPreview);
   const playing = useTimelineStore(s => s.playing);
-  const previewOn = previewPinned || playing;
-  const playhead = useTimelineStore(s => (previewOn ? s.playhead : 0));
+  // Record mode: same view of the scene at the playhead, but editable — and
+  // edits there become keyframes (see canvas/record.ts). Playing while recording
+  // is read-only until playback stops.
+  const recording = useCanvasStore(s => s.record);
+  const setRecord = useCanvasStore(s => s.setRecord);
+  const previewOn = previewPinned || playing;   // the read-only preview
+  const showFrame = previewOn || recording;     // canvas shows the scene at the playhead
+  const recEdit = recording && !previewOn;      // ...and it's editable
+  const playhead = useTimelineStore(s => (showFrame ? s.playhead : 0));
+  // At (about) 0s there is nothing to animate *from*: Record mode edits the
+  // starting layout there, exactly like normal editing.
+  const recAt = recEdit && playhead >= REC_MIN_TIME;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -116,13 +128,15 @@ export function CanvasStage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (!useCanvasStore.getState().preview && !useTimelineStore.getState().playing) return;
+      const cs = useCanvasStore.getState();
+      if (!cs.preview && !cs.record && !useTimelineStore.getState().playing) return;
       stopPlayback();
       setPreview(false);
+      setRecord(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [setPreview]);
+  }, [setPreview, setRecord]);
 
   const centered = useRef(false);
   const viewRef = useRef(view); viewRef.current = view;
@@ -145,8 +159,11 @@ export function CanvasStage() {
   const selKf = scene?.timeline.keyframes.find(k => k.id === selectedKfIds[0]);
   const previewKf = selKf && (selKf.verb === 'move' || selKf.verb === 'scale' || selKf.verb === 'rotate')
     ? selKf : undefined;
-  const spacePreview = spaceHeld && selectedIds.length === 1 && !previewOn;
-  const frame = previewOn && scene ? frameAt(scene, playhead) : null;
+  const spacePreview = spaceHeld && selectedIds.length === 1 && !showFrame;
+  const frame = showFrame && scene ? frameAt(scene, playhead) : null;
+  // What's on screen, for hit-testing (click-through) — the animated pose when
+  // the canvas is showing a frame.
+  const hitObjects = frame ? frame.objects : objects;
 
   // ---- Camera viewport overlay -------------------------------------------
   // Shows the framing of the selected camera keyframe, or the scene's initial
@@ -163,7 +180,7 @@ export function CanvasStage() {
   const hasCameraKf = !!scene?.timeline.keyframes.some(k => k.object_id === CAMERA_ID);
   // Suppress the initial-framing overlay while previewing a move/scale/rotate so
   // the canvas isn't cluttered; a selected camera keyframe still shows it.
-  const showCamera = !previewOn && (!!camKf || ((trackActive || hasCameraKf) && !previewKf && !spacePreview));
+  const showCamera = !showFrame && (!!camKf || ((trackActive || hasCameraKf) && !previewKf && !spacePreview));
   const focusObj = camKf && camParams.focus_object_id ? objects.find(o => o.id === camParams.focus_object_id) : undefined;
   const camZoom = camKf ? Number(camParams.zoom ?? 1) : (camTrack?.initial_zoom ?? 1);
   // For a focus keyframe, frame the object where it is at the keyframe's time
@@ -198,7 +215,7 @@ export function CanvasStage() {
   const isLatexLike = (o: SceneObject) => o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix';
   const isXform = (v: string) => v === 'move' || v === 'scale' || v === 'rotate';
 
-  const previewKfs = scene && !previewOn
+  const previewKfs = scene && !showFrame
     ? (spacePreview
         ? scene.timeline.keyframes.filter(k => k.object_id === selectedIds[0] && isXform(k.verb))
         : scene.timeline.keyframes.filter(k => selectedKfIds.includes(k.id) && isXform(k.verb)))
@@ -453,14 +470,14 @@ export function CanvasStage() {
     const w = screenToWorld(sx, sy, viewRef.current);
     const mx = manimX(w.x), my = manimY(w.y);
     const frozen = new Set(previewFrozenIds);
-    const hits = objects
-      .filter(o => o.visible && o.type !== 'group' && !frozen.has(o.id))
+    const hits = hitObjects
+      .filter(o => o.visible && o.type !== 'group' && !frozen.has(o.id) && (frame?.opacity[o.id] ?? 1) > 0.001)
       .filter(o => {
         const b = objectBounds(o);
         return Math.abs(mx - b.cx) <= b.hw && Math.abs(my - b.cy) <= b.hh;
       })
       // Topmost first — the order Manim stacks them: z_index, then scene order.
-      .sort((a, b) => (b.z_index ?? 0) - (a.z_index ?? 0) || objects.indexOf(b) - objects.indexOf(a));
+      .sort((a, b) => (b.z_index ?? 0) - (a.z_index ?? 0) || hitObjects.indexOf(b) - hitObjects.indexOf(a));
     if (hits.length < 2) return id;
     const c = cycleRef.current;
     const from = hits.findIndex(h => h.id === (cycleContinues(c, sx, sy) ? c!.id : id));
@@ -584,6 +601,68 @@ export function CanvasStage() {
     }
   }
 
+  // ---- Record mode commits ----------------------------------------------
+  // Each turns a manipulation of the pose shown at the playhead into keyframes
+  // (one undo step), then parks the playhead where they complete so the pose
+  // you dropped stays on screen.
+  const recScene = () => {
+    const st = useProjectStore.getState();
+    return st.project?.scenes.find(s => s.id === st.selectedSceneId);
+  };
+  const framePos = (id: string): Point2D => frame?.objects.find(o => o.id === id)?.position ?? { x: 0, y: 0 };
+  const commitRecorded = (recs: (Recorded | null)[]) => {
+    const ok = recs.filter((r): r is Recorded => !!r);
+    if (!ok.length) return;
+    upsertKeyframes(ok.map(r => r.kf));
+    const end = Math.max(...ok.map(r => r.end));
+    if (end > playhead + 1e-6) useTimelineStore.getState().setPlayhead(end);
+  };
+  const recordMoveBy = (ids: string[], dx: number, dy: number) => {
+    const sc = recScene();
+    if (!sc) return;
+    commitRecorded(ids.map(id => {
+      const p = framePos(id);
+      return recordMove(sc, id, playhead, { x: p.x + dx, y: p.y + dy });
+    }));
+  };
+  function recordDrag(o: SceneObject, node: Konva.Node) {
+    const dx = manimX(node.x()) - o.position.x, dy = manimY(node.y()) - o.position.y;
+    const ids = selectedIds.length > 1 && selectedIds.includes(o.id) ? selectedIds : [o.id];
+    // Same single-flush rule as commitDrag: land the keyframes and clear the
+    // live follow offset together.
+    flushSync(() => {
+      recordMoveBy(ids, dx, dy);
+      setGroupDrag(null);
+    });
+  }
+  // Rotate gizmo released in Record mode. `o` is the baked clone on screen.
+  function recordRotation(o: SceneObject, node: Konva.Node) {
+    const sc = recScene();
+    const p = o.props as Record<string, unknown>;
+    const pointBased = (o.type === 'shape' && p.subtype === 'polygon') || (o.type === 'geometry' && p.subtype === 'vector');
+    const baked = Number(p.rotation) || 0;
+    // Screen rotation is CW; Manim degrees are CCW. Point-based types carry no
+    // rotation prop (it's baked into their points), so the node angle is the delta.
+    const deg = pointBased ? normDeg(-node.rotation()) : normDeg(-node.rotation() - baked);
+    // Hand the node back to React: it re-renders at the recorded pose.
+    node.rotation(pointBased ? 0 : -baked);
+    node.position({ x: worldX(o.position.x), y: worldY(o.position.y) });
+    if (sc) commitRecorded([recordRotate(sc, o.id, playhead, deg)]);
+  }
+  // Image resize/rotate released in Record mode → scale and/or rotate keyframes.
+  function recordImageTransform(o: SceneObject, node: Konva.Node) {
+    const sc = recScene();
+    const baked = Number((o.props as Record<string, unknown>).rotation) || 0;
+    const factor = Math.abs(node.scaleX());
+    const deg = normDeg(-node.rotation() - baked);
+    node.scaleX(1); node.scaleY(1); node.rotation(-baked);
+    node.position({ x: worldX(o.position.x), y: worldY(o.position.y) });
+    if (sc) commitRecorded([recordScale(sc, o.id, playhead, factor), recordRotate(sc, o.id, playhead, deg)]);
+  }
+  // Authored-edit commits from the frame view (Record mode at ~0s) must use the
+  // real object, never the baked clone (which may carry preview-only props).
+  const realObj = (o: SceneObject) => objects.find(x => x.id === o.id) ?? o;
+
   // Commit a dragged line-like endpoint (start/end point, in the shape's local coords).
   function commitEndpoint(id: string, which: 'start' | 'end', point: Point2D) {
     const o = objects.find(ob => ob.id === id);
@@ -625,7 +704,7 @@ export function CanvasStage() {
             strokeWidth={1}
             dash={[8, 8]}
           />
-          {frame ? (
+          {frame && !recEdit ? (
             <SceneNodes
               objects={frame.objects}
               selectedIds={[]}
@@ -634,6 +713,23 @@ export function CanvasStage() {
               nonInteractiveIds={frame.objects.map(o => o.id)}
               viewScale={view.scale}
               opacities={frame.opacity}
+            />
+          ) : frame ? (
+            <SceneNodes
+              objects={frame.objects}
+              selectedIds={selectedIds}
+              onSelect={handleSelect}
+              onCommitDrag={recAt ? recordDrag : commitDrag}
+              viewScale={view.scale}
+              opacities={frame.opacity}
+              // Endpoints are geometry, not motion — only editable at the start.
+              endpointDrag={recAt ? null : endpointDrag}
+              onEndpointDrag={recAt ? undefined : (id, which, point) => setEndpointDrag({ id, which, point })}
+              onEndpointCommit={recAt ? undefined : commitEndpoint}
+              groupDrag={groupDrag}
+              onNodeDragMove={onNodeDragMove}
+              onCommitTransform={recAt ? recordImageTransform : (o, n) => commitImageTransform(realObj(o), n)}
+              onCommitRotate={recAt ? recordRotation : (o, n) => commitObjectRotation(realObj(o), n)}
             />
           ) : (
           <SceneNodes
@@ -757,13 +853,31 @@ export function CanvasStage() {
         </div>
       )}
 
-      {frame ? (
+      {frame && !recEdit ? (
         <LatexOverlay
           onSelect={() => {}}
           objects={frame.objects}
           view={view}
           readOnly
           opacities={frame.opacity}
+        />
+      ) : frame ? (
+        <LatexOverlay
+          onSelect={handleSelect}
+          objects={frame.objects}
+          view={view}
+          opacities={frame.opacity}
+          groupDrag={groupDrag}
+          onGroupDrag={setGroupDrag}
+          editHooks={recAt ? {
+            moveTo: (id, x, y) => { const p = framePos(id); recordMoveBy([id], x - p.x, y - p.y); },
+            moveBy: recordMoveBy,
+            rotateTo: (id, deg) => {
+              const sc = recScene();
+              const cur = Number((frame.objects.find(o => o.id === id)?.props as Record<string, unknown> | undefined)?.rotation) || 0;
+              if (sc) commitRecorded([recordRotate(sc, id, playhead, normDeg(deg - cur))]);
+            },
+          } : null}
         />
       ) : (
       <LatexOverlay
@@ -785,6 +899,18 @@ export function CanvasStage() {
           onCommit: pos => { commitRotateAnchor(pos); setAnchorDrag(null); },
         } : null}
       />
+      )}
+
+      {recEdit && (
+        <div className="canvas-preview-banner canvas-preview-banner--rec">
+          <span>● Recording · {playhead.toFixed(2)}s</span>
+          <span className="canvas-preview-banner__hint">
+            {recAt
+              ? 'drag, rotate or resize objects to keyframe them here'
+              : 'at 0s you edit the starting layout — move the playhead to animate'}
+          </span>
+          <button type="button" className="canvas-toolbar__btn" onClick={() => setRecord(false)}>Stop</button>
+        </div>
       )}
 
       {previewOn && (
@@ -815,13 +941,18 @@ export function CanvasStage() {
           title="Show the scene as animated at the timeline playhead (read-only). Playing or scrubbing the timeline turns this on.">
           ▶ Preview
         </button>
+        <button type="button" className={`canvas-toolbar__btn canvas-toolbar__btn--rec${recording ? ' is-on' : ''}`}
+          onClick={() => { stopPlayback(); setRecord(!recording); }}
+          title="Record mode: the canvas shows the scene at the playhead, and dragging, rotating or resizing an object there adds a keyframe that lands it in that pose at the playhead. Esc to stop.">
+          ● Rec
+        </button>
         <button type="button" className="canvas-toolbar__btn" onClick={fitView}
           title="Fit the frame in view — scroll or Alt+drag to pan, pinch or Ctrl+scroll to zoom">
           Fit
         </button>
       </div>
 
-      {objects.length === 0 && !previewOn && (
+      {objects.length === 0 && !showFrame && (
         <div className="canvas-empty">Add an object from the left panel to begin.</div>
       )}
     </div>

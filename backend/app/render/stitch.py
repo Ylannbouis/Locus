@@ -1,8 +1,10 @@
 """ffmpeg scene stitching — Phase 6.
 
 Two strategies:
-  - concat: lossless concatenation of same-codec clips (concat demuxer, -c copy).
-  - crossfade: xfade filtergraph that dissolves between consecutive clips.
+  - concat: lossless concatenation of same-codec clips (concat demuxer, -c copy),
+    used when every boundary is a hard cut.
+  - stitch_scenes: one filtergraph where each boundary is either an xfade
+    transition (crossfade / fade through black / wipe) or a concat cut.
 
 All ffmpeg/ffprobe calls run through a blocking subprocess so they work on the
 Windows SelectorEventLoop (asyncio.create_subprocess_exec raises there). Callers
@@ -55,21 +57,36 @@ def concat_scenes(input_paths: list[Path], output_path: Path) -> None:
         raise RuntimeError(f"ffmpeg concat failed: {proc.stdout.decode(errors='replace')[-800:]}")
 
 
-def crossfade_scenes(input_paths: list[Path], output_path: Path, duration: float = 0.6) -> None:
-    """Dissolve between consecutive clips using a chained xfade filtergraph.
+# IR TransitionType -> ffmpeg xfade transition name ("cut" is handled as concat).
+XFADE_NAMES = {
+    "crossfade": "fade",
+    "fade_to_black": "fadeblack",
+    "wipe_left": "wipeleft",
+    "wipe_right": "wiperight",
+}
 
-    Each xfade's offset is the running output length so far minus the fade
-    duration; the clips must share resolution/fps (they do — same render flags).
+
+def crossfade_scenes(input_paths: list[Path], output_path: Path, duration: float = 0.6) -> None:
+    """Dissolve between every pair of consecutive clips."""
+    stitch_scenes(input_paths, output_path, [("fade", duration)] * max(0, len(input_paths) - 1))
+
+
+def stitch_scenes(input_paths: list[Path], output_path: Path,
+                  boundaries: "list[tuple[str, float] | None]") -> None:
+    """Join clips with a per-boundary transition in one filtergraph.
+
+    `boundaries[k]` joins clip k to clip k+1: `(xfade_name, seconds)` overlaps
+    the clips by that long (each xfade's offset is the running output length
+    minus the fade), `None` is a hard cut (concat filter, no overlap). The clips
+    must share resolution/fps — they do, same render flags. All-cut input takes
+    the lossless `concat_scenes` path instead.
     """
-    if len(input_paths) < 2:
+    if len(input_paths) < 2 or all(b is None for b in boundaries):
         if input_paths:
             concat_scenes(input_paths, output_path)
         return
 
     durs = [probe_duration(p) for p in input_paths]
-    d = max(0.1, float(duration))
-    # Clamp the fade so it never exceeds the shorter neighbouring clip.
-    d = min(d, min(durs) * 0.5) if all(x > 0 for x in durs) else d
 
     inputs: list[str] = []
     for p in input_paths:
@@ -80,12 +97,24 @@ def crossfade_scenes(input_paths: list[Path], output_path: Path, duration: float
     acc = durs[0]
     starts = [0.0]  # where each clip begins in the stitched output
     for k in range(1, len(input_paths)):
-        offset = max(0.0, acc - d)
-        starts.append(offset)
+        b = boundaries[k - 1] if k - 1 < len(boundaries) else None
         out = f"[v{k}]"
-        filters.append(f"{prev}[{k}:v]xfade=transition=fade:duration={d}:offset={round(offset, 4)}{out}")
+        if b is None:
+            starts.append(acc)
+            filters.append(f"{prev}[{k}:v]concat=n=2:v=1:a=0{out}")
+            acc = acc + durs[k]
+        else:
+            name, dur = b
+            d = max(0.1, float(dur))
+            # Never longer than half of either neighbouring clip.
+            if durs[k - 1] > 0 and durs[k] > 0:
+                d = min(d, durs[k - 1] * 0.5, durs[k] * 0.5)
+            offset = max(0.0, acc - d)
+            starts.append(offset)
+            filters.append(f"{prev}[{k}:v]xfade=transition={name}:duration={round(d, 4)}"
+                           f":offset={round(offset, 4)}{out}")
+            acc = acc + durs[k] - d
         prev = out
-        acc = acc + durs[k] - d
 
     # Audio: delay each clip's track to its start in the stitched timeline and
     # mix (tracks simply overlap during the video fade). The worker gives every
@@ -105,7 +134,7 @@ def crossfade_scenes(input_paths: list[Path], output_path: Path, duration: float
     cmd += ["-pix_fmt", "yuv420p", str(output_path)]
     proc = _run(cmd)
     if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg xfade failed: {proc.stdout.decode(errors='replace')[-800:]}")
+        raise RuntimeError(f"ffmpeg stitch failed: {proc.stdout.decode(errors='replace')[-800:]}")
 
 
 def zip_dir(src_dir: Path, output_zip: Path) -> None:

@@ -134,6 +134,15 @@ Chalkduster into grey scribble for the length of the animation).
 read-only view of the scene at the playhead (moves/scales/rotates with easing, hide-until-creation,
 stroke tracing / equation wipes for drawing verbs, fades, group motion, camera framing) — so most
 timing can be judged without rendering. Editor-only approximation; see `frontend/src/canvas/CLAUDE.md`.
+**Record mode** (● Rec) builds on it: the canvas shows the scene at the playhead but stays editable, and
+dragging / rotating / resizing an object there records a move / rotate / scale keyframe that *ends* at
+the playhead (re-recording at the same time adjusts it; at 0s you edit the starting layout).
+**Auto-intro** (optional project setting, also a checkbox under the Add panel) gives each newly added
+object a Write / Create / Fade In right after the scene's last animation. Animation groups have a
+**stagger** slider (`lag_ratio`; the editor keeps member start times equal to what the codegen plays,
+and a group drags as a unit), and scenes have per-boundary **transitions** (cut / crossfade / fade
+through black / wipe left / wipe right, set from a chip between scene tabs) that the ffmpeg stitcher
+applies when exporting all scenes as one video.
 
 Editor ergonomics added since: timeline lanes **reorder by dragging their object label** (which is
 also the object's slot in `scene.objects`), the timeline's label column now really stays pinned while

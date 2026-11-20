@@ -14,11 +14,18 @@ interface CanvasState {
   // the canvas. Deliberately not persisted — a reload should land in edit mode.
   preview: boolean;
   setPreview: (v: boolean) => void;
+  // Record mode: the canvas shows the scene at the playhead but stays editable,
+  // and drags / rotations / resizes there become keyframes (canvas/record.ts).
+  // Mutually exclusive with `preview`; not persisted either.
+  record: boolean;
+  setRecord: (v: boolean) => void;
 }
 
 export const useCanvasStore = create<CanvasState>((set) => ({
   snapToCenter: localStorage.getItem(SNAP_KEY) !== 'false', // default on
   setSnapToCenter: (v) => { localStorage.setItem(SNAP_KEY, String(v)); set({ snapToCenter: v }); },
   preview: false,
-  setPreview: (v) => set({ preview: v }),
+  setPreview: (v) => set(v ? { preview: true, record: false } : { preview: false }),
+  record: false,
+  setRecord: (v) => set(v ? { record: true, preview: false } : { record: false }),
 }));

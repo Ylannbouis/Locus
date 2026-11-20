@@ -5,14 +5,15 @@
 | `DepGate.tsx` | Blocks the app until `GET /api/system/deps` reports manim/ffmpeg/latex present (`POST /api/system/deps/refresh` re-checks). `sympy` is optional — its absence shows a banner, not a gate. |
 | `ProjectHome.tsx` | Open / create / delete a project, including the animation-vs-slideshow **kind** picker. |
 | `EditorShell.tsx` | Editor layout: topbar, Add panel, canvas, outliner, inspector, timeline, scene panel. |
-| `AddPanel.tsx` | The Add Object buttons, grouped by category. |
-| `ScenePanel.tsx` | Multi-scene (or multi-slide) list: add/delete/duplicate/reorder/inline-rename. |
+| `AddPanel.tsx` | The Add Object buttons, grouped by category, plus the "Animate new objects in" toggle (`settings.auto_intro`). |
+| `ScenePanel.tsx` | Multi-scene (or multi-slide) list: add/delete/duplicate/reorder/inline-rename, plus the scene-to-scene transition chips. |
 | `RenderPanel.tsx` | Export options + job progress + download/preview. |
 | `ProjectSettings.tsx` | The ⚙ project-wide settings modal (two tabs). |
 | `ObjectDefaultsTab.tsx` | Second settings tab, driven by `store/objectDefaults.ts`. |
 | `Presenter.tsx` | Fullscreen slideshow playback inside the editor. |
 | `CodeView.tsx` | Read-only ejected Manim Python + project JSON. |
 | `FontField.tsx` | The system-font `<select>` + its session-wide font cache. |
+| `ThemeToggle.tsx` | ☾/☀ button flipping the UI theme (`src/theme.ts`); in the editor topbar and the project home header. |
 
 `App.tsx` is just `DepGate` → (`EditorShell` if a project is loaded, else `ProjectHome`).
 
@@ -33,7 +34,8 @@ autosaved like any other mutation. All of them pass a `coalesceKey` (see `store/
 they're typed or dragged.
 
 - **Project tab:** `metadata` (name / author / description), the background colour, the render
-  defaults, and a read-only About block.
+  defaults, an **Animation** section (`auto_intro` — the same flag as the Add panel's checkbox), and a
+  read-only About block.
 - **Background** is `settings.background_color`, and it is genuinely project-wide: `CanvasStage` and
   the codegen (`scene.py`) both resolve
   `scene.background_color || settings.background_color || '#000000'`. A scene-level override therefore
@@ -60,6 +62,11 @@ they're typed or dragged.
 
 - `ScenePanel` drives `addScene` / `removeScene` / `duplicateScene` / `duplicateSceneFinal` /
   `moveScene` / `renameScene`. `selectedSceneId` is the active scene; **always keep ≥ 1 scene.**
+- **Scene transitions** (animation projects only — slides are never stitched): a round chip between
+  two scene tabs opens a fixed-position popover (the tab strip scrolls, so it can't be a child) that sets
+  the earlier scene's `transition_out` — Default / Cut / Crossfade / Fade through black / Wipe left /
+  Wipe right + duration. A dashed chip = default, i.e. it follows the Export panel's crossfade checkbox,
+  which is therefore now "the default for boundaries without their own transition".
 - `RenderPanel` builds a `RenderOptions` (format mp4/gif/png/still/slideshow, resolution preset, fps,
   transparent, crossfade) and calls `renderStore.triggerRender(projectId, sceneId|null, opts)` —
   **`sceneId === null` renders & stitches all scenes** (mp4 only; the panel disables "all scenes" for

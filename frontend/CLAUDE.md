@@ -19,6 +19,7 @@ Stack: React 19 + react-konva + zustand + immer + katex + axios. Dev server on *
 | `inspector/Inspector.tsx` | Per-type property editors (right sidebar). | — |
 | `outliner/Outliner.tsx` | Object tree: select, z-order, show/hide, delete, group/ungroup. | — |
 | `api/client.ts` | Thin axios wrappers over the REST API + the WS URL helper. Calls same-origin `/api`, `/ws` (proxied). | — |
+| `theme.ts` | UI theme (Chalkboard dark default / Paper & Ink light): `initTheme` (run in `main.tsx` before mount — no flash), `useTheme`, persisted in `localStorage` (`locus.theme`). `components/ThemeToggle.tsx` flips it. | below |
 | `util/color.ts` | `parseHex` / `luminance` / `isLightColor` — shared by the canvas and the settings UI so overlays can flip on a light background. | — |
 
 `App.tsx`: `DepGate` → (`EditorShell` if a project is loaded, else `ProjectHome`).
@@ -45,6 +46,23 @@ Details live in the per-directory files above; these are the ones you can't work
   `backend/app/render/slideshow.py`.
 - **Previews are editor-only.** Ghosts, plot sampling and audio playback approximate the render; the
   backend codegen and ffmpeg are the truth. Never let preview state leak into the IR.
+
+## Theming (`App.css` tokens + `theme.ts`)
+
+Two themes, selected by `<html data-theme="chalkboard" | "paper">`: **Chalkboard** (default, dark,
+Manim's palette — `--accent` is `BLUE_C`, danger `RED_C`, ok `GREEN_C`) and **Paper & Ink** (light,
+warm paper, ink-blue accent, serif `--font-display` headings). Both are blocks of CSS custom properties
+at the top of `App.css`, and **every colour in the stylesheet must be a token** — a literal hex looks
+fine in one theme and breaks the other. Add a token to *both* blocks instead. Deliberate exceptions:
+chrome drawn **over the canvas** (camera HUD, canvas toolbar, preview/record banners, `.canvas-empty`)
+and the fullscreen **presenter** stay dark in both themes because they always sit on the scene; white
+text on coloured keyframe/clip blocks; `VERB_META` colours (semantic, readable on both).
+
+Buttons have three tiers: `.btn--primary` (one per area — solid accent, `--radius-primary`: 8px in
+Chalkboard, a pill in Paper), `.btn--secondary` (tinted, borderless), `.btn--ghost` (no fill until
+hover); plain `.btn` is a neutral fill. `.btn--danger` (solid) and `.btn--danger-ghost` for destructive
+actions. Add-panel entries are icon tiles (`tile(icon, label)` in `AddPanel.tsx`; the glyph is
+`aria-hidden`, so a button's accessible name is just its label).
 
 ## Where the editor's shape is decided
 

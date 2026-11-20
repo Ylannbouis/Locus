@@ -10,7 +10,8 @@ shapes and equations stay aligned:
 | `LatexOverlay.tsx` | HTML layer: KaTeX for equations/matrices, styled HTML for Pango `text`, plus the HTML handles (rotate, move, ⊕ pivot). |
 | `coords.ts` | Coordinate model + the empirically calibrated size constants. |
 | `motion.ts` | Timeline transform math for previews (editor-only): `applyKf` (full or partial), easing (`RATE`/`ease`/`kfAlpha`). |
-| `playback.ts` | `frameAt(scene, t)` — the whole scene as animated at time `t`, for the playback preview. |
+| `playback.ts` | `frameAt(scene, t)` — the whole scene as animated at time `t`, for the playback preview and Record mode. |
+| `record.ts` | Record mode: turns a drag / rotate / resize at the playhead into a move / rotate / scale keyframe. |
 | `plotting.ts` | JS sampling of parametric curves / vector fields (preview only). |
 | `geometry.ts` | Axes geometry, brace/vector label anchors, segment intersection. |
 
@@ -158,6 +159,31 @@ code — when emission semantics change, check this file too:
   transform/replace/morph cross-fade source → target; Indicate pulses scale + colour; Circumscribe/Flash
   draw nothing extra.
 - the camera framing interpolates pan and frame *width* linearly; outside the shot is dimmed.
+
+## Record mode (`record.ts`, `canvasStore.record`)
+
+**● Rec** in the canvas toolbar shows the same frame at the playhead but **editable**: dragging,
+rotating (gizmo / HTML handle) or resizing (images) an object there becomes a keyframe instead of an
+authored edit, via `upsertKeyframes` (one undo step for the whole gesture, multi-selection included).
+`record` and `preview` are mutually exclusive in `canvasStore`; playing while recording is read-only
+until playback stops (`recEdit = record && !(preview || playing)`), and the timeline's ▶ / scrub only
+turn `preview` on when not recording.
+
+- **A recorded keyframe ENDS at the playhead** ("be here at t"). It starts where the object's previous
+  keyframe *of the same verb* ended, capped at `REC_DURATION` (1s). Re-recording at the end of an
+  existing same-verb keyframe (±0.05s) **adjusts** it (delta/target, angle, factor) rather than
+  stacking another. If a same-verb keyframe is still running at t, the new one queues right after it
+  and the playhead jumps to its end so the dropped pose stays on screen.
+- Moves are recorded as **`delta`**, computed against `frameAt` at the new keyframe's end *without*
+  it — so group motion and other animations compose instead of double-counting. Rotations/scales are
+  the gizmo's delta relative to the pose shown (`normDeg` takes the short way round).
+- At `t < REC_MIN_TIME` (≈0s) there's nothing to animate from, so the canvas edits the **starting
+  layout** exactly like normal editing — but commits always go through the *real* object
+  (`realObj`), never the baked clone, whose preview-only props must not reach the IR.
+- The gizmo leaves the Konva node rotated/scaled; record handlers **reset the node** to the clone's pose
+  before committing, because react-konva only re-applies props that change.
+- Line endpoint handles are geometry, not motion: disabled while recording past 0s. `LatexOverlay`
+  takes `editHooks` (moveTo / moveBy / rotateTo) so its drags and rotate handle record too.
 
 KaTeX output is memoised in `LatexOverlay.renderTex` (bounded map) because the preview re-renders
 every equation each frame.

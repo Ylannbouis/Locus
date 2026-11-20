@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ThemeToggle } from './ThemeToggle';
 import type { ProjectKind, ProjectSummary } from '../types/ir';
 import { createProject, deleteProject, getProject, getProjects } from '../api/client';
 import { useProjectStore } from '../store/projectStore';
@@ -86,6 +87,7 @@ export function ProjectHome() {
     <div className="project-home">
       <header className="project-home__header">
         <h1>Locus</h1>
+        <ThemeToggle />
         <button className="btn btn--primary" onClick={() => setShowForm(true)}>
           + New Project
         </button>

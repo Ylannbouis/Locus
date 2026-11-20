@@ -25,7 +25,7 @@ from app.models.ir import RenderJob, Scene
 from app.render import queue as rq
 from app.render.audio import audible_clips, mux_scene_audio
 from app.render.slideshow import build_slideshow, zip_slideshow
-from app.render.stitch import concat_scenes, crossfade_scenes, zip_dir
+from app.render.stitch import XFADE_NAMES, stitch_scenes, zip_dir
 from app.storage.projects import assets_dir, load_project, renders_dir
 
 _QUALITY_FLAG = {"preview": "-ql", "final": "-qh"}
@@ -290,6 +290,25 @@ def _render_one(script: str, scene_dir: Path, job: RenderJob,
     return rc, list(tail), media_dir
 
 
+_DEFAULT_CROSSFADE = 0.6
+
+
+def _boundaries(scenes: list[Scene], default_crossfade: bool) -> list[tuple[str, float] | None]:
+    """How each scene hands over to the next when stitching: its own
+    `transition_out` if set ("cut" = hard cut), else the export panel's default
+    (a 0.6s crossfade when `job.transition`, otherwise a cut)."""
+    out: list[tuple[str, float] | None] = []
+    for s in scenes[:-1]:
+        tr = s.transition_out
+        if tr is not None:
+            kind = tr.type.value if hasattr(tr.type, "value") else str(tr.type)
+            name = XFADE_NAMES.get(kind)
+            out.append((name, max(0.1, float(tr.duration))) if name else None)
+        else:
+            out.append(("fade", _DEFAULT_CROSSFADE) if default_crossfade else None)
+    return out
+
+
 async def _process(job: RenderJob) -> None:
     rq.update_job(job.job_id, status="running", progress=5, message="Preparing scene…")
 
@@ -412,10 +431,7 @@ async def _process(job: RenderJob) -> None:
         elif stitch:
             rq.update_job(job.job_id, progress=92, message="Stitching scenes…")
             final = job_dir / "project.mp4"
-            if job.transition:
-                await asyncio.to_thread(crossfade_scenes, outputs, final, 0.6)
-            else:
-                await asyncio.to_thread(concat_scenes, outputs, final)
+            await asyncio.to_thread(stitch_scenes, outputs, final, _boundaries(scenes, job.transition))
             output_path = final
         elif job.format == "png":
             rq.update_job(job.job_id, progress=92, message="Zipping frames…")

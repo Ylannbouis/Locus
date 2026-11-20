@@ -46,6 +46,9 @@ state each frame. Fusion is per play bucket (ungrouped tracks, or a parallel `la
   *fade* keeps the fade and the intro stays standalone — an Animation-class intro can't join a LocusApply.
 - **Cross-family overlaps need no fusion** (a fade on a *group* while a *child* transforms, or vice
   versa) — LocusApply/LocusFade split geometry from style per member, see below.
+- **The editor mirrors group timing** (`normalizeGroups` in `frontend/src/store/projectStore.ts`): it
+  rewrites every member's `start_time` to group start + Σ previous durations × lag, so the timeline and
+  the canvas preview show when members really play. **Change both** if group timing changes here.
 - A **staggered group** (`lag_ratio > 0`) emits with the *same timing* as Manim's
   `AnimationGroup(…, lag_ratio=…)` (member *i* starts at Σ previous run_times × lag) but as parallel
   `Succession(Wait(start), member)` tracks inside a `lag_ratio=0` group, so each member *begins* — and

@@ -38,8 +38,8 @@ restart loses them.
   a runaway guard, not a deadline. Override with `LOCUS_RENDER_TIMEOUT` (seconds; `0` disables). The
   ffmpeg helpers keep their own fixed timeouts: `stitch.py` 1800s, `audio.py` 600s, probes 60s.
 - `RenderJob.scene_id` is a specific scene, or **`None` = every scene**. Multi-scene **mp4** jobs render
-  each scene then stitch (`crossfade_scenes` when `transition`, else `concat_scenes`); other formats and
-  morph render a single scene.
+  each scene then stitch with per-boundary transitions (see "Stitching"); other formats and morph render
+  a single scene.
 - `RenderJob.format` ∈ `mp4 | gif | png | still | slideshow`. `png` returns the frame *directory*, which
   the worker zips (`zip_dir`); `still` uses `-s` (last frame); `transparent` adds `-t` (non-mp4 only).
 - `RenderJob.mode` is `"scene"` (normal) or `"morph"` (a 1s standalone `morph_equation` preview).
@@ -85,11 +85,19 @@ also why slideshow slides get no padding: nothing is concatenated, so stream par
 
 ## Stitching (`stitch.py`)
 
-`concat_scenes` uses the concat demuxer with `-c copy` (no re-encode), which is why every input must
-already have identical streams. `crossfade_scenes` chains `xfade` — each offset is the running output
-length minus the fade duration — and delays + amixes the per-scene audio to match the video offsets,
-using `_has_audio` (ffprobe) to see which inputs actually have a track. `probe_duration` is ffprobe;
-`zip_dir` packages PNG sequences.
+**Per-boundary transitions.** The worker's `_boundaries(scenes, job.transition)` turns each scene's
+`transition_out` into how it hands over to the next: an ffmpeg xfade name (`XFADE_NAMES`: crossfade →
+`fade`, fade_to_black → `fadeblack`, wipe_left/right → `wipeleft`/`wiperight`) + seconds, or `None` for a
+cut (`type == "cut"`). A scene *without* a `transition_out` follows the Export panel's checkbox
+(`job.transition`: 0.6s crossfade, else cut). `transition_in` is unused.
+
+`stitch_scenes` builds one filtergraph from those boundaries: an xfade overlaps the clips (offset =
+running output length − fade, the fade clamped to half of either neighbour), a cut is a `concat` filter
+(no overlap); the per-scene audio is `adelay`ed to each clip's start and `amix`ed, using `_has_audio`
+(ffprobe) to see whether the inputs carry a track. **All-cut input takes `concat_scenes` instead** — the
+concat demuxer with `-c copy` (no re-encode), which is why every input must already have identical
+streams. `crossfade_scenes` is now a thin all-crossfade wrapper. `probe_duration` is ffprobe; `zip_dir`
+packages PNG sequences.
 
 ## Slideshow (`slideshow.py`)
 

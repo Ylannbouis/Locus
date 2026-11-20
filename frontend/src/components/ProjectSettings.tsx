@@ -211,6 +211,19 @@ export function ProjectSettings({ onClose }: { onClose: () => void }) {
             </label>
           </section>
 
+          {/* ---- Animation ---------------------------------------------- */}
+          <section className="settings-section">
+            <h3 className="panel-title">Animation</h3>
+            <label className="field field--check">
+              <input type="checkbox" checked={!!project.settings.auto_intro}
+                onChange={e => updateSettings({ auto_intro: e.target.checked })} />
+              <span className="field__label" style={{ margin: 0 }}>
+                Animate new objects in — each object you add gets a Write / Create / Fade In keyframe
+                right after the scene's last animation (also toggled at the bottom of the Add panel)
+              </span>
+            </label>
+          </section>
+
           {/* ---- About ------------------------------------------------- */}
           <section className="settings-section">
             <h3 className="panel-title">About</h3>

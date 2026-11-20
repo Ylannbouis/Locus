@@ -23,8 +23,12 @@ npm run dev                                                       # background, 
   Browsers live in `%LOCALAPPDATA%\ms-playwright`; run `npx playwright install chromium`
   if the package/browser revisions mismatch.
 - Project home: `+ New Project` → fill `.project-home__input` → `Create`.
-- Add objects via the Add-panel buttons (exact names: `▭ Rectangle`, `∑ Expression`,
-  `△ Polygon`, …). New objects land at Manim (0,0) = canvas center and are auto-selected.
+- Add objects via the Add-panel tiles — `getByRole('button', { name: 'Rectangle' })`, `'Expression'`,
+  `'Polygon'`, … (the glyph is `aria-hidden`, so the accessible name is the bare label). New objects
+  land at Manim (0,0) = canvas center and are auto-selected. If the project has "Animate new objects
+  in" (`settings.auto_intro`) on, each add also creates an intro keyframe.
+- The UI theme (Chalkboard dark by default / Paper & Ink) is `localStorage['locus.theme']`; set it in
+  an init script to screenshot a specific theme.
 - **Canvas coordinates**: get `.canvas-stage` boundingBox; initial view scale
   `s = clamp(min(w/(14.2222*80), h/(8*80)) * 0.92, 0.2, 5)`; Manim (x,y) → page
   `(box.x + w/2 + x*80*s, box.y + h/2 − y*80*s)`. Holds until you wheel-zoom/pan.

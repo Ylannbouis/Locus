@@ -40,6 +40,10 @@ simultaneous animations on one object be seen and edited — the codegen then *f
 
 ## Keyframe editing
 
+- **Animation groups** (`Group ∥` / `Ungroup`): grabbing any member drags **the whole group** — member
+  starts are derived from the group (`store/projectStore.normalizeGroups`), so moving one alone would
+  snap back. The group's **stagger** (`lag_ratio`, 0 = parallel, 1 = back to back) is a slider in
+  `KeyframeInspector` when a grouped keyframe is selected; the timeline then shows the staggered starts.
 - **Group drag:** grabbing a keyframe that's already part of a multi-selection keeps the whole set
   (shift-click toggles membership, mirroring canvas multi-select), and dragging shifts every selected
   keyframe by the anchor's delta (`DragState.members`), clamped so the *earliest* member never crosses
@@ -76,8 +80,9 @@ the drag kind:
 - `audioPlayback.ts` is editor-only preview: Web Audio schedules one BufferSource+Gain per clip
   (linear fades mirror ffmpeg's `afade`), an rAF loop drives `timelineStore.playhead`, and the ruler
   is a scrub bar (pointer-capture drag; resumes playback on release if it was playing). The same
-  transport drives the **canvas playback preview**: ▶ and ruler scrubs set `canvasStore.preview`, and
-  the canvas animates from `playhead` (see `canvas/CLAUDE.md`). Playback runs even with no audio
+  transport drives the **canvas playback preview**: ▶ and ruler scrubs set `canvasStore.preview` (unless
+  Record mode is on — it already follows the playhead and must stay editable), and the canvas animates
+  from `playhead` (see `canvas/CLAUDE.md`). Playback runs even with no audio
   clips — the rAF loop just advances the playhead to the end of the content. The backend render (and
   its ffmpeg mix) remains the truth.
 - The playhead line and the toolbar readout are separate components subscribing to `playhead`, so

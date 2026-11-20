@@ -42,6 +42,13 @@ interface Props {
   // outline, handles or pointer events — at a per-object opacity.
   readOnly?: boolean;
   opacities?: Record<string, number>;
+  // Record mode: commits go here (and become keyframes) instead of editing the
+  // object's authored position / rotation.
+  editHooks?: {
+    moveTo: (id: string, x: number, y: number) => void;
+    moveBy: (ids: string[], dx: number, dy: number) => void;
+    rotateTo: (id: string, deg: number) => void;
+  } | null;
   // Selection goes through the stage so equations share one click-through stack
   // with the Konva shapes (CanvasStage.handleSelect): a press only makes sure
   // something is selected to drag, the click that follows walks down the stack.
@@ -255,7 +262,7 @@ function latexFontPx(o: SceneObject): number {
   return Number((o.props as any).font_size ?? 48) * em * PX_PER_UNIT;
 }
 
-export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [], moveHandle = null, anchorHandle = null, groupDrag = null, onGroupDrag, onSelect, readOnly = false, opacities }: Props) {
+export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [], moveHandle = null, anchorHandle = null, groupDrag = null, onGroupDrag, onSelect, readOnly = false, opacities, editHooks = null }: Props) {
   const storeSelectedIds = useProjectStore(s => s.selectedObjectIds);
   const selectedIds = readOnly ? NO_IDS : storeSelectedIds;
   const moveObject = useProjectStore(s => s.moveObject);
@@ -331,7 +338,8 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
         const st = useProjectStore.getState();
         const sc = st.project?.scenes.find(s => s.id === st.selectedSceneId);
         const o = sc?.objects.find(x => x.id === rh.id);
-        if (o) st.updateObject(o.id, { props: { ...o.props, rotation: round2(rotFromPointer(rh, e)) } });
+        if (editHooks) editHooks.rotateTo(rh.id, round2(rotFromPointer(rh, e)));
+        else if (o) st.updateObject(o.id, { props: { ...o.props, rotation: round2(rotFromPointer(rh, e)) } });
         rotHandleRef.current = null;
         setRotDrag(null);
         return;
@@ -370,12 +378,14 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
         // render at (already-moved position) + (stale drag delta) — a teleport in
         // the drag direction (see CanvasStage.commitDrag).
         flushSync(() => {
-          st.moveObjectsBy(sel, nx - d.startX, ny - d.startY);
+          if (editHooks) editHooks.moveBy(sel, nx - d.startX, ny - d.startY);
+          else st.moveObjectsBy(sel, nx - d.startX, ny - d.startY);
           setDrag(null);
           onGroupDrag?.(null);
         });
       } else {
-        st.moveObject(d.id, nx, ny);
+        if (editHooks) editHooks.moveTo(d.id, nx, ny);
+        else st.moveObject(d.id, nx, ny);
         setDrag(null);
         onGroupDrag?.(null);
       }
@@ -386,7 +396,7 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [view.scale, moveObject, moveHandle, anchorHandle, onGroupDrag]);
+  }, [view.scale, moveObject, moveHandle, anchorHandle, onGroupDrag, editHooks]);
 
   const latexObjects = objects.filter(o => (o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix') && o.visible);
 

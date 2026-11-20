@@ -41,7 +41,9 @@ export type RelationshipType = 'next_to' | 'align_to' | 'move_to_point' | 'cente
 
 export type GroupType = 'parallel' | 'sequential_lagged';
 
-export type TransitionType = 'fade_to_black' | 'wipe_left' | 'wipe_right' | 'crossfade';
+// Used as `Scene.transition_out` (how a scene hands over to the next when an
+// animation project is stitched). 'cut' = explicit hard cut. Mirrors ir.py.
+export type TransitionType = 'fade_to_black' | 'wipe_left' | 'wipe_right' | 'crossfade' | 'cut';
 
 export type ResolutionPreset = '480p' | '720p' | '1080p' | '4k';
 
@@ -209,6 +211,9 @@ export interface ProjectSettings {
   background_color: string;
   transparent_background: boolean;
   output_dir?: string | null;
+  // Editor-only: newly added objects get an intro keyframe after the scene's
+  // last animation (see projectStore.addObject). Absent on older projects.
+  auto_intro?: boolean;
   // Absent on projects saved before this existed — always read it defensively.
   object_defaults?: Record<string, ObjectDefault>;
 }

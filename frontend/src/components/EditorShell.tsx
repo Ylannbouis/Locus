@@ -11,6 +11,7 @@ import { AudioClipInspector } from '../timeline/AudioClipInspector';
 import { useTimelineStore } from '../timeline/timelineStore';
 import { RenderPanel } from './RenderPanel';
 import { ProjectSettings } from './ProjectSettings';
+import { ThemeToggle } from './ThemeToggle';
 
 const MIN_TL = 90;
 const maxTL = () => Math.round(window.innerHeight * 0.7);
@@ -70,6 +71,7 @@ export function EditorShell() {
           {project.metadata.name}
           {isDirty && <span className="editor-shell__dirty"> •</span>}
         </span>
+        <ThemeToggle />
         <button className="btn btn--ghost" onClick={() => setShowSettings(true)} title="Project settings">⚙ Settings</button>
         <button className="btn btn--ghost" onClick={save} disabled={!isDirty}>Save</button>
       </header>

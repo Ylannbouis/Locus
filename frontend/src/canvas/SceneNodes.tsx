@@ -622,6 +622,8 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
     const op = opacities[o.id] ?? 1;
     if (op <= 0.001) return null;
     const node = renderNode(o);
-    return node && <Group key={o.id} opacity={op} listening={false}>{node}</Group>;
+    // No `listening` override: read-only callers freeze the nodes themselves, and
+    // Record mode needs them draggable through the wrapper.
+    return node && <Group key={o.id} opacity={op}>{node}</Group>;
   })}</>;
 }

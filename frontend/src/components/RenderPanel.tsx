@@ -149,9 +149,10 @@ export function RenderPanel() {
       </div>
 
       {renderAll && !deckExport && (
-        <label className="field field--check">
+        <label className="field field--check"
+          title="Applies where you haven't picked a transition with the chip between two scene tabs">
           <input type="checkbox" checked={crossfade} onChange={e => setCrossfade(e.target.checked)} />
-          <span className="field__label" style={{ margin: 0 }}>Crossfade between scenes</span>
+          <span className="field__label" style={{ margin: 0 }}>Crossfade between scenes (where no transition is set)</span>
         </label>
       )}
 

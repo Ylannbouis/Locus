@@ -111,6 +111,8 @@ export function KeyframeInspector() {
   const project = useProjectStore(s => s.project);
   const selectedSceneId = useProjectStore(s => s.selectedSceneId);
   const updateKeyframe = useProjectStore(s => s.updateKeyframe);
+  const updateAnimationGroup = useProjectStore(s => s.updateAnimationGroup);
+  const ungroupKeyframes = useProjectStore(s => s.ungroupKeyframes);
   const removeKeyframe = useProjectStore(s => s.removeKeyframe);
   // Field selectors, not a whole-store destructure — the store's playhead
   // updates at 60fps during audio playback.
@@ -158,6 +160,33 @@ export function KeyframeInspector() {
         </select>
       </label>
       <EasingPreview easing={kf.easing} />
+
+      {/* ---- animation group: parallel or staggered ---- */}
+      {kf.group_id && (() => {
+        const g = scene.timeline.groups.find(x => x.id === kf.group_id);
+        if (!g) return null;
+        const members = scene.timeline.keyframes.filter(k => k.group_id === g.id);
+        const lag = Number(g.lag_ratio) || 0;
+        const setLag = (v: number) => updateAnimationGroup(g.id,
+          { lag_ratio: Math.max(0, Math.min(1, Math.round(v * 100) / 100)) }, `group:${g.id}:lag`);
+        return (
+          <div className="kf-group">
+            <span className="field__label">Group · {members.length} animations</span>
+            <label className="field">
+              <span className="field__label">Stagger {lag > 0 ? `(each starts ${Math.round(lag * 100)}% into the previous)` : '(all together)'}</span>
+              <div className="field-row">
+                <input type="range" min={0} max={1} step={0.05} value={lag} onChange={e => setLag(parseFloat(e.target.value))} />
+                <input className="field__input kf-group__num" type="number" min={0} max={1} step={0.05} value={lag}
+                  onChange={e => { const v = parseFloat(e.target.value); if (!Number.isNaN(v)) setLag(v); }} />
+              </div>
+            </label>
+            <span className="panel-hint">
+              0 plays them in parallel, 1 one after another. Order follows the timeline; drag any member to move the whole group.
+            </span>
+            <button className="btn btn--ghost" onClick={() => ungroupKeyframes(members.map(k => k.id))}>Ungroup</button>
+          </div>
+        );
+      })()}
 
       {/* ---- camera move ---- */}
       {isCamera && (

@@ -13,6 +13,17 @@ import type { SceneObject } from '../types/ir';
 
 const LINE_SUBTYPES = ['line', 'arrow', 'dashed_line', 'double_arrow'];
 
+// An Add-panel tile's content: glyph chip + label. The glyph is decorative, so
+// the button's accessible name is just the label ("Circle", "Expression"…).
+function tile(icon: string, label: string) {
+  return (
+    <>
+      <span className="add-panel__icon" aria-hidden="true">{icon}</span>
+      <span className="add-panel__label">{label}</span>
+    </>
+  );
+}
+
 // naturalWidth / naturalHeight of an image file (1 if it can't be decoded —
 // the backend will still validate the extension on upload).
 function measureAspect(file: File): Promise<number> {
@@ -27,6 +38,7 @@ function measureAspect(file: File): Promise<number> {
 
 export function AddPanel() {
   const addObject = useProjectStore(s => s.addObject);
+  const updateSettings = useProjectStore(s => s.updateSettings);
   const selectObject = useProjectStore(s => s.selectObject);
   const project = useProjectStore(s => s.project);
   const selectedSceneId = useProjectStore(s => s.selectedSceneId);
@@ -110,52 +122,60 @@ export function AddPanel() {
 
       <div className="add-panel__group">
         <span className="add-panel__cat">Text &amp; Math</span>
-        <button className="btn add-panel__btn" onClick={() => add('latex_text', createLatex)}>∑ Expression</button>
-        <button className="btn add-panel__btn" onClick={() => add('text', createText)}>T Text</button>
-        <button className="btn add-panel__btn" onClick={() => add('matrix', createMatrix)}>⊞ Matrix</button>
+        <button className="btn add-panel__btn" onClick={() => add('latex_text', createLatex)}>{tile('∑', 'Expression')}</button>
+        <button className="btn add-panel__btn" onClick={() => add('text', createText)}>{tile('T', 'Text')}</button>
+        <button className="btn add-panel__btn" onClick={() => add('matrix', createMatrix)}>{tile('⊞', 'Matrix')}</button>
       </div>
 
       <div className="add-panel__group">
         <span className="add-panel__cat">Shapes</span>
-        <button className="btn add-panel__btn" onClick={() => add('rectangle', createRectangle)}>▭ Rectangle</button>
-        <button className="btn add-panel__btn" onClick={() => add('circle', createCircle)}>◯ Circle</button>
-        <button className="btn add-panel__btn" onClick={() => add('ellipse', createEllipse)}>⬭ Ellipse</button>
-        <button className="btn add-panel__btn" onClick={() => add('polygon', createPolygon)}>△ Polygon</button>
-        <button className="btn add-panel__btn" onClick={() => add('line', createLine)}>╱ Line</button>
-        <button className="btn add-panel__btn" onClick={() => add('arrow', createArrow)}>→ Arrow</button>
-        <button className="btn add-panel__btn" onClick={() => add('double_arrow', createDoubleArrow)}>↔ Double Arrow</button>
-        <button className="btn add-panel__btn" onClick={() => add('dashed_line', createDashedLine)}>┄ Dashed Line</button>
+        <button className="btn add-panel__btn" onClick={() => add('rectangle', createRectangle)}>{tile('▭', 'Rectangle')}</button>
+        <button className="btn add-panel__btn" onClick={() => add('circle', createCircle)}>{tile('◯', 'Circle')}</button>
+        <button className="btn add-panel__btn" onClick={() => add('ellipse', createEllipse)}>{tile('⬭', 'Ellipse')}</button>
+        <button className="btn add-panel__btn" onClick={() => add('polygon', createPolygon)}>{tile('△', 'Polygon')}</button>
+        <button className="btn add-panel__btn" onClick={() => add('line', createLine)}>{tile('╱', 'Line')}</button>
+        <button className="btn add-panel__btn" onClick={() => add('arrow', createArrow)}>{tile('→', 'Arrow')}</button>
+        <button className="btn add-panel__btn" onClick={() => add('double_arrow', createDoubleArrow)}>{tile('↔', 'Double Arrow')}</button>
+        <button className="btn add-panel__btn" onClick={() => add('dashed_line', createDashedLine)}>{tile('┄', 'Dashed Line')}</button>
       </div>
 
       <div className="add-panel__group">
         <span className="add-panel__cat">Coordinates</span>
-        <button className="btn add-panel__btn" onClick={() => add('axes', createAxes)}>✛ Axes</button>
-        <button className="btn add-panel__btn" onClick={() => add('number_line', createNumberLine)}>⊢ Number Line</button>
-        <button className="btn add-panel__btn" onClick={() => add('number_plane', createNumberPlane)}>▦ Number Plane</button>
+        <button className="btn add-panel__btn" onClick={() => add('axes', createAxes)}>{tile('✛', 'Axes')}</button>
+        <button className="btn add-panel__btn" onClick={() => add('number_line', createNumberLine)}>{tile('⊢', 'Number Line')}</button>
+        <button className="btn add-panel__btn" onClick={() => add('number_plane', createNumberPlane)}>{tile('▦', 'Number Plane')}</button>
       </div>
 
       <div className="add-panel__group">
         <span className="add-panel__cat">Graph</span>
-        <button className="btn add-panel__btn" onClick={() => addOnAxes('function_plot', createFunctionPlot)}>∿ Function Plot</button>
-        <button className="btn add-panel__btn" onClick={() => addOnAxes('parametric', createParametric)}>⟳ Parametric</button>
-        <button className="btn add-panel__btn" onClick={() => addOnAxes('implicit', createImplicit)}>◔ Implicit</button>
-        <button className="btn add-panel__btn" onClick={() => add('vector_field', createVectorField)}>⇶ Vector Field</button>
+        <button className="btn add-panel__btn" onClick={() => addOnAxes('function_plot', createFunctionPlot)}>{tile('∿', 'Function Plot')}</button>
+        <button className="btn add-panel__btn" onClick={() => addOnAxes('parametric', createParametric)}>{tile('⟳', 'Parametric')}</button>
+        <button className="btn add-panel__btn" onClick={() => addOnAxes('implicit', createImplicit)}>{tile('◔', 'Implicit')}</button>
+        <button className="btn add-panel__btn" onClick={() => add('vector_field', createVectorField)}>{tile('⇶', 'Vector Field')}</button>
       </div>
 
       <div className="add-panel__group">
         <span className="add-panel__cat">Geometry</span>
-        <button className="btn add-panel__btn" onClick={() => add('vector', createVector)}>↗ Vector</button>
-        <button className="btn add-panel__btn" onClick={addAngle}>∠ Angle</button>
-        <button className="btn add-panel__btn" onClick={addBrace}>⏟ Brace</button>
+        <button className="btn add-panel__btn" onClick={() => add('vector', createVector)}>{tile('↗', 'Vector')}</button>
+        <button className="btn add-panel__btn" onClick={addAngle}>{tile('∠', 'Angle')}</button>
+        <button className="btn add-panel__btn" onClick={addBrace}>{tile('⏟', 'Brace')}</button>
       </div>
 
       <div className="add-panel__group">
         <span className="add-panel__cat">Media</span>
         <button className="btn add-panel__btn" disabled={uploading} onClick={() => fileInput.current?.click()}>
-          {uploading ? '⏳ Uploading…' : '🖼 Image'}
+          {uploading ? tile('⏳', 'Uploading…') : tile('🖼', 'Image')}
         </button>
         <input ref={fileInput} type="file" accept=".png,.jpg,.jpeg,.webp,.bmp" style={{ display: 'none' }} onChange={onImagePicked} />
       </div>
+
+      {/* Same setting as Settings → Project → Animation (settings.auto_intro). */}
+      <label className="field field--check add-panel__auto"
+        title="Each new object gets a Write / Create / Fade In keyframe right after the scene's last animation, so the scene builds up in the order you add things">
+        <input type="checkbox" checked={!!project?.settings.auto_intro}
+          onChange={e => updateSettings({ auto_intro: e.target.checked })} />
+        <span className="field__label" style={{ margin: 0 }}>Animate new objects in</span>
+      </label>
     </div>
   );
 }

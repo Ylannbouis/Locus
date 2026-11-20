@@ -251,7 +251,9 @@ export function Timeline() {
     const from = t >= contentEnd - 0.01 ? 0 : t; // at the end -> replay from the top
     // The canvas animates along (playback preview) and stays on the last frame
     // when playback ends, until the user clicks back into edit mode.
-    useCanvasStore.getState().setPreview(true);
+    // (In Record mode the canvas already follows the playhead and must stay
+    // editable once playback stops, so don't switch it to read-only preview.)
+    if (!useCanvasStore.getState().record) useCanvasStore.getState().setPreview(true);
     void playFrom(project.id, audioClips, from, contentEnd);
   };
 
@@ -380,7 +382,14 @@ export function Timeline() {
     // Group-move only when several keyframes are selected together and we grabbed
     // one of them (resize is always the single grabbed keyframe).
     const sel = useTimelineStore.getState().selectedKfIds;
-    const groupIds = mode === 'move' && sel.includes(kf.id) && sel.length > 1 ? sel : [kf.id];
+    const base = mode === 'move' && sel.includes(kf.id) && sel.length > 1 ? sel : [kf.id];
+    // An animation group moves as a unit: its members' starts are derived from
+    // the group (projectStore.normalizeGroups), so dragging one alone would just
+    // snap back. Pull in every member of any group being grabbed.
+    const gids = new Set(base.map(id => keyframes.find(k => k.id === id)?.group_id).filter(Boolean));
+    const groupIds = mode === 'move' && gids.size
+      ? [...new Set([...base, ...keyframes.filter(k => k.group_id && gids.has(k.group_id)).map(k => k.id)])]
+      : base;
     const members = groupIds
       .map(id => keyframes.find(k => k.id === id))
       .filter((k): k is Keyframe => !!k)
@@ -537,7 +546,7 @@ export function Timeline() {
       <div key={kf.id}
         className={`tl__kf ${sel ? 'tl__kf--sel' : ''} ${kf.group_id ? 'tl__kf--grouped' : ''}`}
         style={{ left: start * pxPerSec, width: w, top: row * ROW_H + 4, height: ROW_H - 8, background: meta.color }}
-        title={`${meta.label} @ ${start.toFixed(2)}s · ${dur.toFixed(2)}s${kf.group_id ? ' · parallel' : ''}`}
+        title={`${meta.label} @ ${start.toFixed(2)}s · ${dur.toFixed(2)}s${kf.group_id ? ((scene?.timeline.groups.find(g => g.id === kf.group_id)?.lag_ratio ?? 0) > 0 ? ' · staggered group' : ' · parallel group') : ''}`}
         onPointerDown={e => startDrag(e, kf, 'move')}
         onClick={e => { e.stopPropagation(); setMenu(null); }}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); selectKf(kf.id, false); setMenu({ kind: 'kf', x: e.clientX, y: e.clientY, id: kf.id }); }}>
@@ -628,7 +637,8 @@ export function Timeline() {
                 (e.target as Element).setPointerCapture?.(e.pointerId);
                 scrubRef.current = { wasPlaying: playing };
                 if (playing) stopPlayback();
-                useCanvasStore.getState().setPreview(true); // scrubbing previews on the canvas
+                // Scrubbing previews on the canvas (Record mode already follows the playhead).
+                if (!useCanvasStore.getState().record) useCanvasStore.getState().setPreview(true);
                 rulerSeek(e);
               }}
               onPointerMoveCapture={e => { if (scrubRef.current) rulerSeek(e); }}

@@ -68,10 +68,14 @@ class GroupType(str, Enum):
 
 
 class TransitionType(str, Enum):
+    # Used as `Scene.transition_out`: how this scene hands over to the NEXT one
+    # when an animation project is stitched (render/stitch.py). "cut" is an
+    # explicit hard cut, overriding the export panel's default crossfade.
     FADE_TO_BLACK = "fade_to_black"
     WIPE_LEFT = "wipe_left"
     WIPE_RIGHT = "wipe_right"
     CROSSFADE = "crossfade"
+    CUT = "cut"
 
 
 class ResolutionPreset(str, Enum):
@@ -361,6 +365,9 @@ class Scene(BaseModel):
     timeline: Timeline = Field(default_factory=Timeline)
     audio: list[AudioClip] = Field(default_factory=list)
     camera_track: CameraTrack = Field(default_factory=CameraTrack)
+    # `transition_out` = the transition into the next scene when stitching
+    # (None = follow the export's default crossfade setting). `transition_in` is
+    # reserved and currently unused.
     transition_in: Optional[Transition] = None
     transition_out: Optional[Transition] = None
     # Slideshow projects only: play the next slide automatically when this one
@@ -397,6 +404,9 @@ class ProjectSettings(BaseModel):
     background_color: str = "#000000"
     transparent_background: bool = False
     output_dir: Optional[str] = None
+    # Editor-only: give each newly added object an intro animation (Write /
+    # Create / FadeIn) after the scene's last animation. Never read by codegen.
+    auto_intro: bool = False
     # Per-Add-panel-entry defaults for newly created objects (see ObjectDefault).
     object_defaults: dict[str, ObjectDefault] = Field(default_factory=dict)
 

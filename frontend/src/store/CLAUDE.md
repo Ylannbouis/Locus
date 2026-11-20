@@ -7,7 +7,7 @@
 | `objectFactory.ts` | `newId()`, `uniqueName()`, `copyName()`, per-type `SceneObject` factories, and `withDefaults`/`objectDefaultFor` which layer the project's Object Defaults over the factory output. |
 | `objectDefaults.ts` | Registry behind Settings → Object Defaults: one entry per Add-panel button (key, label, category, factory, editable-field list). |
 | `finalState.ts` | `computeFinalState(scene)` — bakes a scene's end-of-animation look into a static, timeline-less scene. |
-| `canvasStore.ts` | UI-only canvas state: snap-to-center (persisted to `localStorage`) and the playback-preview flag `preview` (not persisted). |
+| `canvasStore.ts` | UI-only canvas state: snap-to-center (persisted to `localStorage`), and the mutually exclusive `preview` (read-only playback view) / `record` (Record mode) flags (not persisted). |
 
 `projectStore` mirrors the backend IR exactly and is the source of truth; the canvas, timeline and
 inspector are all views onto it.
@@ -34,6 +34,20 @@ inspector are all views onto it.
 - **Undo/redo repair the selection** (`_validSelection`): undoing "+ Scene" removes the active scene,
   so `selectedSceneId` falls back to the first scene (else the editor goes blank and every mutation
   no-ops), and selected object ids that no longer exist are dropped.
+- **`_mutate` runs `normalizeGroups` after every recipe**: an animation group's members are re-timed to
+  when the codegen plays them — the group starts at its earliest member and, with a stagger
+  (`lag_ratio > 0`), member *i* starts Σ(previous durations) × lag later (start order, ties in list
+  order = Python's stable sort). The codegen ignores members' own starts, so without this a dragged or
+  resized member would show a time it never plays at. `updateAnimationGroup` edits `lag_ratio` (and keeps
+  `type` = `parallel` / `sequential_lagged` in step); the timeline drags a group as a unit.
+- **Auto-intro** (`settings.auto_intro`, editor-only): `addObject` also pushes an intro keyframe for
+  any non-group object — Write for text/equations/matrices, Fade In for images, Create otherwise
+  (`introVerbFor`) — starting at the end of the scene's last keyframe, 1s long. Only `addObject` does
+  this (so the Add panel, including the Axes / angle lines it conjures); paste, duplicate and
+  Duplicate final state don't.
+- `setSceneTransition(id, tr | null)` sets a scene's `transition_out` (null = export default).
+- `upsertKeyframes(kfs)` inserts-or-replaces by id in one mutation — Record mode's commit, so a
+  multi-object drag is one undo step.
 - Batch deletes are one mutation: Delete on several keyframes calls `removeKeyframes(ids)` (one undo
   entry), not `removeKeyframe` per id.
 - Live drag previews (canvas `groupDrag`/`endpointDrag`, timeline drag state) deliberately live

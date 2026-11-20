@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { produce } from 'immer';
-import type { Project, ProjectSettings, Scene, SceneObject, Keyframe, Relationship, AnimationGroup, CameraTrack, AudioClip } from '../types/ir';
+import type { Project, ProjectSettings, Scene, SceneObject, Keyframe, Relationship, AnimationGroup, AnimationVerb, CameraTrack, AudioClip, Transition } from '../types/ir';
 import { saveProject } from '../api/client';
 import { newId, uniqueName, copyName } from './objectFactory';
 import { computeFinalState } from './finalState';
@@ -43,6 +43,8 @@ interface ProjectState {
   moveScene: (id: string, dir: -1 | 1) => void;
   reorderScene: (id: string, toIndex: number) => void;
   setSceneAutoAdvance: (id: string, on: boolean) => void;
+  // How this scene hands over to the next when stitching (null = export default).
+  setSceneTransition: (id: string, tr: Transition | null, coalesceKey?: string) => void;
 
   // Selection
   selectObject: (id: string | null) => void;
@@ -75,10 +77,14 @@ interface ProjectState {
   addKeyframe: (kf: Keyframe) => void;
   updateKeyframe: (id: string, patch: Partial<Keyframe>, coalesceKey?: string) => void;
   moveKeyframesBy: (ids: string[], dt: number) => void;
+  // Insert-or-replace by id, all in one undo step (canvas Record mode).
+  upsertKeyframes: (kfs: Keyframe[]) => void;
   removeKeyframe: (id: string) => void;
   removeKeyframes: (ids: string[]) => void;
   groupKeyframes: (ids: string[]) => void;
   ungroupKeyframes: (ids: string[]) => void;
+  // Edit an animation group (stagger = lag_ratio); members re-time via normalizeGroups.
+  updateAnimationGroup: (id: string, patch: Partial<AnimationGroup>, coalesceKey?: string) => void;
 
   // Slide breaks (slideshow projects): mid-scene pause points
   addBreak: (atTime: number) => void;
@@ -142,6 +148,41 @@ function renameCopies(scene: Scene, copies: SceneObject[]): void {
   for (const c of copies) {
     c.name = copyName(taken, c.name);
     taken.add(c.name);
+  }
+}
+
+// The intro keyframe `settings.auto_intro` gives a newly added object: the verb
+// that suits it (and that the timeline would offer for it).
+function introVerbFor(obj: SceneObject): AnimationVerb {
+  if (obj.type === 'image') return 'fade_in';
+  if (obj.type === 'latex_text' || obj.type === 'text' || obj.type === 'matrix') return 'write';
+  return 'create';
+}
+
+// Keep every animation group's member start times equal to when the codegen
+// actually plays them, so the timeline (and the canvas playback preview) show
+// the truth. The codegen ignores members' own starts: a group starts at its
+// earliest member, and with a stagger (lag_ratio > 0) member i begins
+// Σ(previous members' durations) × lag_ratio later — members in start order,
+// ties in list order (Python's stable sort). Runs inside every `_mutate`.
+function normalizeGroups(p: Project): void {
+  for (const sc of p.scenes) {
+    const groups = sc.timeline.groups ?? [];
+    if (!groups.length) continue;
+    const kfs = sc.timeline.keyframes;
+    for (const g of groups) {
+      const mem = kfs.map((k, i) => ({ k, i }))
+        .filter(x => x.k.group_id === g.id)
+        .sort((a, b) => a.k.start_time - b.k.start_time || a.i - b.i);
+      if (!mem.length) continue;
+      const lag = Math.max(0, Number(g.lag_ratio) || 0);
+      let t = mem[0].k.start_time;
+      for (const { k } of mem) {
+        const s = Math.round(t * 1000) / 1000;
+        if (Math.abs(k.start_time - s) > 1e-6) k.start_time = s;
+        t += (Number(k.duration) || 0) * lag;
+      }
+    }
   }
 }
 
@@ -312,6 +353,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     if (s) s.auto_advance = on;
   }),
 
+  setSceneTransition: (id, tr, coalesceKey) => _mutate(set, get, draft => {
+    const s = draft.scenes.find(sc => sc.id === id);
+    if (s) s.transition_out = tr ? { ...tr } : null;
+  }, undefined, coalesceKey),
+
   reorderScene: (id, toIndex) => _mutate(set, get, draft => {
     const idx = draft.scenes.findIndex(s => s.id === id);
     if (idx < 0) return;
@@ -337,6 +383,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     // Auto-number a repeated default name: 2nd "Equation" -> "Equation 2", etc.
     obj.name = uniqueName(scene.objects.map(o => o.name), obj.name);
     scene.objects.push(obj);
+    // Auto-intro (project setting): animate the new object in right after
+    // everything already on the timeline, so a scene builds up in add order.
+    if (draft.settings.auto_intro && obj.type !== 'group') {
+      const end = Math.max(0, ...scene.timeline.keyframes.map(k => k.start_time + k.duration));
+      scene.timeline.keyframes.push({
+        id: newId('kf'), object_id: obj.id, verb: introVerbFor(obj),
+        start_time: Math.round(end * 100) / 100, duration: 1, easing: 'smooth', group_id: null, params: {},
+      });
+    }
   }, [obj.id]),
 
   updateObject: (id, patch, coalesceKey) => _mutate(set, get, draft => {
@@ -508,6 +563,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     });
   }),
 
+  upsertKeyframes: (kfs) => {
+    if (!kfs.length) return;
+    _mutate(set, get, draft => {
+      const scene = activeScene(draft, get().selectedSceneId);
+      if (!scene) return;
+      for (const kf of kfs) {
+        const i = scene.timeline.keyframes.findIndex(k => k.id === kf.id);
+        if (i >= 0) scene.timeline.keyframes[i] = kf;
+        else scene.timeline.keyframes.push(kf);
+      }
+    });
+  },
+
   removeKeyframe: (id) => {
     useTimelineStore.getState().clearKf();
     _mutate(set, get, draft => {
@@ -543,6 +611,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       scene.timeline.groups.push(group);
     });
   },
+
+  updateAnimationGroup: (id, patch, coalesceKey) => _mutate(set, get, draft => {
+    const g = activeScene(draft, get().selectedSceneId)?.timeline.groups.find(x => x.id === id);
+    if (!g) return;
+    Object.assign(g, patch);
+    // The codegen keys off lag_ratio alone; keep `type` truthful for readers.
+    g.type = (Number(g.lag_ratio) || 0) > 0 ? 'sequential_lagged' : 'parallel';
+  }, undefined, coalesceKey),
 
   ungroupKeyframes: (ids) => _mutate(set, get, draft => {
     const scene = activeScene(draft, get().selectedSceneId);
@@ -764,7 +840,7 @@ function _mutate(
 ): void {
   const { project, history } = get();
   if (!project) return;
-  const next = produce(project, recipe);
+  const next = produce(project, draft => { recipe(draft); normalizeGroups(draft); });
   const now = Date.now();
   const merge = !!coalesceKey && _coalesce?.key === coalesceKey
     && now - _coalesce.at < COALESCE_MS && history.length > 0;
