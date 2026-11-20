@@ -572,6 +572,102 @@ def seqmodel_group_fadeout_then_fadein():
     }
 
 
+@scenario
+def move_then_create_hidden():
+    """A Move before a Create doesn't put the object on screen: it stays hidden
+    until the Create (the move happens unseen) and is drawn where the move
+    left it — the editor preview's rule (first *presence* event decides)."""
+    objs = [shape("a", 0)]
+    kfs = [kf("a", "move", 1.0, params=MOVE_R2), kf("a", "create", 3.0)]
+    return ir_scene(objs, kfs), {
+        "windows": {"a": [(0.0, 2.95, False), (3.5, 4.4, True)]},
+        "final": {"a": True},
+        "final_pos": {"a": (2.0, 0.0)},
+    }
+
+
+@scenario
+def group_move_then_child_write():
+    """An ancestor group's move before a child's Write: the child stays hidden
+    until its Write, then shows where the group took it."""
+    objs = [shape("a", -1, parent="G"), shape("b", 1, parent="G"), group("G")]
+    kfs = [kf("G", "move", 0.5, params=MOVE_R2), kf("b", "write", 2.0)]
+    return ir_scene(objs, kfs), {
+        "windows": {"a": [(0.0, 3.4, True)], "b": [(0.0, 1.95, False), (2.6, 3.4, True)]},
+        "final": {"a": True, "b": True},
+        "final_pos": {"b": (3.0, 0.0)},
+    }
+
+
+@scenario
+def move_then_grouped_create():
+    """The Create that introduces the object is in a parallel keyframe group:
+    still hidden before it, revealed by it."""
+    objs = [shape("a", 0), shape("b", 0, 2)]
+    g = IRAnimationGroup(id="kg", lag_ratio=0.0)
+    kfs = [kf("a", "move", 0.5, params=MOVE_R2),
+           kf("a", "create", 2.0, group_id="kg"), kf("b", "indicate", 2.0, group_id="kg")]
+    return ir_scene(objs, kfs, groups=[g]), {
+        "windows": {"a": [(0.0, 1.95, False), (2.6, 3.4, True)]},
+        "final": {"a": True},
+        "final_pos": {"a": (2.0, 0.0)},
+    }
+
+
+@scenario
+def fadeout_before_create_starts_visible():
+    """The exception: a fade_out *before* the Create means the object started on
+    screen (its first presence event is the exit)."""
+    objs = [shape("a", 0)]
+    kfs = [kf("a", "move", 0.5, params=MOVE_R2), kf("a", "fade_out", 1.5), kf("a", "create", 3.0)]
+    return ir_scene(objs, kfs), {
+        "windows": {"a": [(0.0, 1.4, True), (2.6, 2.95, False), (3.5, 4.4, True)]},
+        "final": {"a": True},
+    }
+
+
+@scenario
+def seqmodel_move_then_create_hidden():
+    """Sequential (camera-tracking) model: the move gets its own earlier play,
+    which adds the object to the scene — it must stay hidden until the Create's
+    play reveals it. (Overlapping keyframes serialize: d-move 0-5, a-move 5-6,
+    a-create 6-7.)"""
+    objs = [shape("a", 0), shape("d", 0, 2)]
+    kfs = [
+        Keyframe(object_id="__camera__", verb=AnimationVerb.CAMERA_MOVE, start_time=0.0,
+                 duration=5.0, easing=EasingType.LINEAR,
+                 params={"focus_object_id": "d", "track": True}),
+        kf("d", "move", 0.0, dur=5.0, params={"delta": {"x": 0.5, "y": 0.0}}),
+        kf("a", "move", 1.0, params=MOVE_R2),
+        kf("a", "create", 3.0),
+    ]
+    return ir_scene(objs, kfs), {
+        "windows": {"a": [(0.0, 5.95, False), (6.6, 7.4, True)]},
+        "final": {"a": True},
+        "final_pos": {"a": (2.0, 0.0)},
+    }
+
+
+@scenario
+def seqmodel_fadeout_then_create():
+    """Sequential model: a Create after the object's own fade_out draws it back
+    in visibly (a creation draws with the current, zeroed opacity unless the
+    object is revealed first). Serialized: d-move 0-5, fade_out 5-6, create 6-7."""
+    objs = [shape("a", 0), shape("d", 0, 2)]
+    kfs = [
+        Keyframe(object_id="__camera__", verb=AnimationVerb.CAMERA_MOVE, start_time=0.0,
+                 duration=5.0, easing=EasingType.LINEAR,
+                 params={"focus_object_id": "d", "track": True}),
+        kf("d", "move", 0.0, dur=5.0, params={"delta": {"x": 0.5, "y": 0.0}}),
+        kf("a", "fade_out", 1.0),
+        kf("a", "create", 3.0),
+    ]
+    return ir_scene(objs, kfs), {
+        "windows": {"a": [(0.1, 4.9, True), (6.6, 7.4, True)]},
+        "final": {"a": True},
+    }
+
+
 # ---------------------------------------------------------------------------
 # Assertions + runner
 # ---------------------------------------------------------------------------

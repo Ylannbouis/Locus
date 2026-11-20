@@ -86,6 +86,16 @@ export function createMatrix(): SceneObject {
   });
 }
 
+// A live numeric readout (Manim DecimalNumber) with an optional LaTeX label —
+// animated by Update keyframes (a trial counter, a running mean, …).
+export function createNumber(): SceneObject {
+  return base({
+    type: 'number', name: 'Number',
+    style: { fill_color: '#ffffff', fill_opacity: 1 },
+    props: { value: 0, decimals: 2, label: 'x =', font_size: 48 },
+  });
+}
+
 // --- Closed shapes ---------------------------------------------------------
 export function createRectangle(): SceneObject {
   return base({
@@ -214,6 +224,15 @@ export function createImplicit(axesId: string): SceneObject {
     type: 'graph', name: 'implicit',
     style: { stroke_color: '#ff6699', stroke_width: 4 },
     props: { subtype: 'implicit', axes_ref: axesId, expression: 'x**2 + y**2 - 4' },
+  });
+}
+
+// Bars on an Axes, fed by Update keyframes or the sampling simulator.
+export function createHistogram(axesId: string): SceneObject {
+  return base({
+    type: 'graph', name: 'Histogram',
+    style: { stroke_color: '#ffffff', stroke_width: 1.5, stroke_opacity: 1, fill_color: '#58c4dd', fill_opacity: 0.75 },
+    props: { subtype: 'histogram', axes_ref: axesId, bin_start: -2.5, bin_width: 1, values: [0.5, 1.5, 2.5, 1.5, 0.5], gap: 0 },
   });
 }
 

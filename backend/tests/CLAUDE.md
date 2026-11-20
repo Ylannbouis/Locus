@@ -15,7 +15,8 @@ everything. `stress_camera.py` also takes `--src`, which prints the generated sc
 
 | File | Covers | Run it after changing |
 |------|--------|-----------------------|
-| `stress_groups.py` | 23 adversarial group/fade scenarios: per-object **visibility over time** plus final-frame pixels. | fade/transform emission, the hide-until-creation pass, `LocusFade`/`LocusApply`/`LocusIntro`, `_object_tracks`. |
+| `stress_groups.py` | 29 adversarial group/fade scenarios: per-object **visibility over time** plus final-frame pixels — including "first presence event" cases (a move before a Create stays hidden, in both emission models and inside keyframe groups; a fade_out before a Create starts visible and the Create draws it back). | fade/transform emission, the hide-until-creation pass, `LocusFade`/`LocusApply`/`LocusIntro`, `_object_tracks`. |
+| `stress_data.py` | 12 scenarios for data-driven objects: per-frame **bar heights / readout values** (and the bars' real geometry) across chained `update_data`s, hidden-until-Write histograms, value updates while faded out, mismatched params dropped, and the sequential model; plus per-frame **attached-graph drift** (a histogram and a plot must stay on their axes while the axes are drawn in, moved, rotated, scaled, or moved together with them in a group) and empty bars collapsing to a point. Reuses `stress_groups.py`'s runner. | `LocusHistogram`/`LocusBars`/`LocusNumber`/`LocusCount`, `_locus_follow` / `_emit_follow`, the pivot helpers, the `update_data` filter in `build_body`. |
 | `stress_camera.py` | 6 scenarios sampling the real `self.camera.frame` (center + width) frame by frame across **both** emission models: three moves in one play, pan-only / zoom-only keyframes, initial framing, focus on a moved object, tracking. | `_camera_anim`, `_bake`, or how camera units are chained. |
 
 These exist because the bugs they catch are invisible in the generated *text* — the script looks right

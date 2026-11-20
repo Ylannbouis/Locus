@@ -23,6 +23,11 @@ interface CanvasState {
   // Smart-guide lines for the drag in progress (canvas/snapping.ts); cleared on release.
   guides: Guide[];
   setGuides: (g: Guide[]) => void;
+  // Centre of the visible canvas area in Manim units, published by CanvasStage
+  // whenever the view pans / zooms / resizes. New objects from the Add panel
+  // land here, so they appear where you're looking rather than at the origin.
+  viewCenter: { x: number; y: number };
+  setViewCenter: (c: { x: number; y: number }) => void;
 }
 
 function sameGuides(a: Guide[], b: Guide[]): boolean {
@@ -40,4 +45,6 @@ export const useCanvasStore = create<CanvasState>((set) => ({
   // Called on every drag-move: only publish real changes, so a drag that isn't
   // snapping doesn't re-render the canvas each frame.
   setGuides: (g) => set(s => (sameGuides(s.guides, g) ? s : { guides: g })),
+  viewCenter: { x: 0, y: 0 },
+  setViewCenter: (c) => set(s => (s.viewCenter.x === c.x && s.viewCenter.y === c.y ? s : { viewCenter: c })),
 }));

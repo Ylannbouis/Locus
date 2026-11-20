@@ -514,6 +514,17 @@ body {
 .kf-group { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-top: 1px solid var(--border); margin-top: 6px; }
 .kf-group input[type=range] { flex: 1; }
 .kf-group__num { width: 64px; flex: 0 0 64px; }
+/* Histogram Inspector: the sampling simulator section (SimulatorPanel.tsx) */
+.sim-panel { display: flex; flex-direction: column; gap: 6px; }
+.sim-panel[open] > summary { margin-bottom: 2px; }
+.sim-panel__title { cursor: pointer; font-weight: 600; color: var(--text); padding: 2px 0; }
+.sim-panel__actions { align-items: flex-end; }
+.sim-panel .sim-panel__actions .field { flex: 0 0 72px; min-width: 72px; }
+.sim-panel .sim-panel__actions .field .field__input { width: 100%; min-width: 0; }
+.sim-panel .sim-panel__actions .btn { white-space: nowrap; flex: 1 1 auto; min-width: 0; }
+.sim-panel .sim-panel__picker select { flex: 1 1 auto; min-width: 0; }
+.sim-panel .sim-panel__picker .btn { flex: 0 0 auto; white-space: nowrap; }
+.sim-panel__status { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .add-panel__auto { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
 /* Slideshow projects: auto-advance marker / toggle on a slide tab */
 .scene-tab__auto { font-size: 10px; opacity: 0.65; }
@@ -1061,6 +1072,11 @@ body {
 .tl__range {
   position: absolute; top: 0; bottom: 0; z-index: 0; pointer-events: none;
   background: var(--accent-soft); opacity: 0.6;
+}
+/* Box-select rectangle (grid-level, coordinates relative to .tl__grid). */
+.tl__marquee {
+  position: absolute; z-index: 20; pointer-events: none;
+  border: 1px solid var(--accent); background: var(--accent-soft); opacity: 0.8;
 }
 .tl__range-ctl { display: inline-flex; align-items: center; gap: 2px; margin: 0 4px; }
 .tl__range-label { font-size: 11px; color: var(--accent); font-variant-numeric: tabular-nums; min-width: 64px; text-align: center; }

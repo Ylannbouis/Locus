@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react';
 import { useProjectStore } from '../store/projectStore';
+import { useCanvasStore } from '../store/canvasStore';
 import {
   createLatex, createText, createMatrix, createRectangle, createCircle, createEllipse,
   createPolygon, createLine, createArrow, createDoubleArrow, createDashedLine,
   createAxes, createNumberLine, createNumberPlane, createFunctionPlot,
   createParametric, createImplicit, createVectorField,
-  createVector, createAngle, createBrace, createImage,
+  createVector, createAngle, createBrace, createImage, createNumber, createHistogram,
 } from '../store/objectFactory';
 import { newId, objectDefaultFor, withDefaults } from '../store/objectFactory';
 import { uploadImageAsset } from '../api/client';
@@ -47,8 +48,19 @@ export function AddPanel() {
   // Every creation path goes through `mk` so the project's Object Defaults
   // (Settings → Object Defaults) land on the object — including the ones the
   // user didn't click for directly, like the Axes an Implicit plot needs.
-  const mk = (key: string, obj: SceneObject): SceneObject =>
-    withDefaults(obj, objectDefaultFor(project, key));
+  // It also places the object at the centre of the canvas view, so it appears
+  // where you're looking even after panning / zooming away from the origin
+  // (points are local to `position`, so this moves lines / polygons whole).
+  // Axes-bound graphs, angles and braces are skipped: they're drawn from what
+  // they attach to, and their own position is never used.
+  const mk = (key: string, obj: SceneObject): SceneObject => {
+    const out = withDefaults(obj, objectDefaultFor(project, key));
+    const p = out.props as { axes_ref?: string; subtype?: string };
+    const attached = (out.type === 'graph' && !!p.axes_ref)
+      || (out.type === 'geometry' && (p.subtype === 'brace' || p.subtype === 'angle'));
+    if (!attached) out.position = { ...useCanvasStore.getState().viewCenter };
+    return out;
+  };
 
   const add = (key: string, factory: () => SceneObject) => {
     const obj = mk(key, factory());
@@ -125,6 +137,7 @@ export function AddPanel() {
         <button className="btn add-panel__btn" onClick={() => add('latex_text', createLatex)}>{tile('∑', 'Expression')}</button>
         <button className="btn add-panel__btn" onClick={() => add('text', createText)}>{tile('T', 'Text')}</button>
         <button className="btn add-panel__btn" onClick={() => add('matrix', createMatrix)}>{tile('⊞', 'Matrix')}</button>
+        <button className="btn add-panel__btn" onClick={() => add('number', createNumber)}>{tile('#', 'Number')}</button>
       </div>
 
       <div className="add-panel__group">
@@ -151,6 +164,7 @@ export function AddPanel() {
         <button className="btn add-panel__btn" onClick={() => addOnAxes('function_plot', createFunctionPlot)}>{tile('∿', 'Function Plot')}</button>
         <button className="btn add-panel__btn" onClick={() => addOnAxes('parametric', createParametric)}>{tile('⟳', 'Parametric')}</button>
         <button className="btn add-panel__btn" onClick={() => addOnAxes('implicit', createImplicit)}>{tile('◔', 'Implicit')}</button>
+        <button className="btn add-panel__btn" onClick={() => addOnAxes('histogram', createHistogram)}>{tile('▥', 'Histogram')}</button>
         <button className="btn add-panel__btn" onClick={() => add('vector_field', createVectorField)}>{tile('⇶', 'Vector Field')}</button>
       </div>
 

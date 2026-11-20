@@ -11,8 +11,11 @@
 //   - move / scale / rotate -> accumulated into position + geometry (via
 //     `effectiveTransform`, the same math the canvas ghost previews use).
 //   - creation verbs / indicate / circumscribe / flash -> object stays as-is.
+//   - update_data -> a histogram's final bars / a number's final value become
+//     its props.
 import type { CameraTrack, Keyframe, Point2D, Scene, SceneObject } from '../types/ir';
 import { effectivePosition, effectiveTransform, type Transform2D } from '../canvas/motion';
+import { withDataAt } from '../canvas/data';
 
 // Sentinel object id for camera keyframes (mirrors the backend CAMERA_ID).
 const CAMERA_ID = '__camera__';
@@ -99,6 +102,10 @@ export function bakeTransform(obj: SceneObject, T: Transform2D): SceneObject {
   } else if (obj.type === 'latex_text' || obj.type === 'text' || obj.type === 'matrix') {
     p.font_size = num(p.font_size, 48) * s;
     addRot();
+  } else if (obj.type === 'number') {
+    // No baked rotation: DecimalNumber rebuilds its glyphs upright on every
+    // value change, so the codegen never rotates a readout.
+    p.font_size = num(p.font_size, 48) * s;
   } else if (obj.type === 'image') {
     p.width = num(p.width, 4) * s;
     p.height = num(p.height, 3) * s;
@@ -137,7 +144,8 @@ export function computeFinalState(scene: Scene): { objects: SceneObject[]; camer
   for (const obj of scene.objects) {
     if (sourceRemoved.has(obj.id)) continue;              // replaced by its target
     if (!targets.has(obj.id) && endsFadedOut(obj.id, kfs)) continue; // faded away
-    objects.push(bakeTransform(obj, effectiveTransform(scene, obj.id, END_TIME)));
+    // Update keyframes leave a histogram / number at its last data: bake it in.
+    objects.push(bakeTransform(withDataAt(obj, kfs, END_TIME), effectiveTransform(scene, obj.id, END_TIME)));
   }
 
   // Camera framing after all camera moves (the scene has no camera timeline, so

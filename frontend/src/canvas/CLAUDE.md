@@ -12,6 +12,7 @@ shapes and equations stay aligned:
 | `motion.ts` | Timeline transform math for previews (editor-only): `applyKf` (full or partial), easing (`RATE`/`ease`/`kfAlpha`). |
 | `playback.ts` | `frameAt(scene, t)` — the whole scene as animated at time `t`, for the playback preview and Record mode. |
 | `record.ts` | Record mode: turns a drag / rotate / resize at the playhead into a move / rotate / scale keyframe. |
+| `data.ts` | Data-driven objects (`graph.histogram`, `number`): `dataAt(obj, kfs, t)` — bars / value after the eased `update_data` keyframes before `t` — plus the number's KaTeX (`numberTex`) and formatting. Mirrors the codegen's `LocusBars`/`LocusCount`/`LocusNumber`. |
 | `plotting.ts` | JS sampling of parametric curves / vector fields (preview only). |
 | `geometry.ts` | Axes geometry, brace/vector label anchors, segment intersection. |
 
@@ -44,9 +45,28 @@ The preview matches the render only because these are duplicated deliberately:
   stays a bare `\text{…}`, matching the codegen. `objectBounds` measures the widest line and scales
   height by row count (`text` breaks on `\n`, `latex_text` on `\\`).
 - **Baked `rotation`** (degrees, CCW) → applied via Konva/CSS rotation, **negated**, since screen
-  rotation is CW while Manim degrees are CCW. Codegen emits `.rotate(rot * DEGREES)`.
-- **Tick numbers** → drawn when `include_numbers` is set, sized by `number_font_size`; whole-number
-  ticks render without a trailing `.0` (`fmtNum`), matching the codegen's `_fmt_num`.
+  rotation is CW while Manim degrees are CCW. Codegen emits `.rotate(rot * DEGREES)` — for a coordinate
+  system about its data midpoint (`position`), which is the Konva group's origin.
+- **Graphs on an Axes belong to it.** Plots and histograms are drawn through `plotting.dataToManim`, which
+  applies the axes' `position`, lengths **and baked `rotation`** — so moving / scaling / rotating the axes
+  (an edit, or a playback frame) carries them along, and a graph's own move/scale/rotate keyframes do
+  nothing (the codegen drops them; `_locus_follow` makes the render match).
+- **Histogram bars** (`SceneNodes`, `graph.histogram`) → each bin minus `gap/2` a side, from y=0 clamped
+  into the y range — `LocusHistogram`'s layout — as closed `Line` polygons (so they turn with the axes).
+  An **empty bin draws nothing**: a stroked zero-height bar was a line along the base that read as a stray
+  x-axis (the codegen collapses it to a point). **Number readouts** → KaTeX `label + ' ' + number`,
+  `decimals` places, no thousands separators (`numberTex`), never rotated — `LocusNumber`.
+- **Plot expressions are evaluated as JavaScript too** (`plotting.ts`), so write `-((x - m)**2)`, never
+  `-(x - m)**2`: a unary minus right before `**` is a JS SyntaxError and the curve silently vanishes from
+  the preview while still rendering fine.
+- **Tick numbers** → drawn when `include_numbers` is set, sized by `number_font_size`. Every label on
+  an axis has the same number of decimals — as many as the step (`tickDecimals`: 0.5 → "3.0", 1 → "3")
+  — matching the count the codegen passes Manim (`_tick_decimals`).
+- **Where axes cross and where ticks fall mirror Manim, not "at 0"** (`SceneNodes.coordChildren`). The
+  axes meet at 0, or at a range's nearest end when 0 is outside it (`Axes._origin_shift`) — the simulator
+  fits ranges like `[2.5, 5]`, and drawing the y-axis at x = 0 left it floating off to the side.
+  `safeTicks` is `NumberLine.get_tick_range`: from `x_min` for a one-signed range, else multiples of the
+  step out from 0, with `x_max` dropped when the axis has a tip.
 
 **Pango fonts leave KaTeX entirely.** A `text` object with a `font` prop is previewed as plain styled
 HTML in that system font, because the codegen emits Pango `Text(font=…)` there. `textFont` gates both
@@ -155,16 +175,21 @@ code — when emission semantics change, check this file too:
 - a group's transforms carry its children (pivot = centroid of its leaf children); group opacity and a
   group's Write/Create propagate to descendants.
 - **hide-until-creation:** an object whose first presence event (creation-first on a tie) is a
-  creation verb, or a Transform target, is invisible before it.
+  creation verb, or a Transform target, is invisible before it. Moves / scales / indicates / updates
+  aren't presence events, so a Move before a Create plays unseen. The codegen uses the same rule
+  (`scene.py _first_kf`) — change both together.
 - drawing verbs are approximations: strokes trace via the transient **`__draw`** prop (line endpoint,
   plot sample slice, vector length, closed-shape `dash`; circles mirrored so the trace runs CCW like
-  Manim), equations/text wipe via **`__clip`** (CSS `clip-path`), Type On slices the text, Draw+Fill
+  Manim; axes / number lines draw x-axis then y-axis, each line → ticks → numbers, like Create's lag
+  over the axes' parts — `coordChildren(…, draw)`), equations/text wipe via **`__clip`** (CSS `clip-path`), Type On slices the text, Draw+Fill
   brings the fill in over the second half, anything else fades. `__draw`/`__clip` exist **only on
   preview clones — never write them into the IR.**
 - fades ramp opacity incl. `shift` (LocusFade: fade-out drifts and stays, fade-in slides in);
   transform/replace/morph cross-fade source → target; Indicate pulses scale + colour; Circumscribe/Flash
   draw nothing extra.
 - the camera framing interpolates pan and frame *width* linearly; outside the shot is dimmed.
+- `update_data` eases a histogram's bars / a number's value (`data.ts`, written into the clone's
+  `values` / `value`); a drawing verb on a histogram fades the bars in (no stroke trace).
 
 ## Record mode (`record.ts`, `canvasStore.record`)
 

@@ -7,7 +7,7 @@
 | `objectFactory.ts` | `newId()`, `uniqueName()`, `copyName()`, per-type `SceneObject` factories, and `withDefaults`/`objectDefaultFor` which layer the project's Object Defaults over the factory output. |
 | `objectDefaults.ts` | Registry behind Settings → Object Defaults: one entry per Add-panel button (key, label, category, factory, editable-field list). |
 | `finalState.ts` | `computeFinalState(scene)` — bakes a scene's end-of-animation look into a static, timeline-less scene. |
-| `canvasStore.ts` | UI-only canvas state: snap-to-center (persisted to `localStorage`), and the mutually exclusive `preview` (read-only playback view) / `record` (Record mode) flags (not persisted). |
+| `canvasStore.ts` | UI-only canvas state: snap-to-center (persisted to `localStorage`), the mutually exclusive `preview` (read-only playback view) / `record` (Record mode) flags (not persisted), and `viewCenter` — the centre of the visible canvas in Manim units, published by `CanvasStage` on every pan/zoom/resize. `AddPanel`'s `mk` places each new object there (except axes-bound graphs, angles and braces, whose position is unused). |
 
 `projectStore` mirrors the backend IR exactly and is the source of truth; the canvas, timeline and
 inspector are all views onto it.
@@ -46,6 +46,12 @@ inspector are all views onto it.
   this (so the Add panel, including the Axes / angle lines it conjures); paste, duplicate and
   Duplicate final state don't.
 - `setSceneTransition(id, tr | null)` sets a scene's `transition_out` (null = export default).
+- `applySimulation(runId, kfs, patches)` is the sampling simulator's commit (`inspector/SimulatorPanel.tsx`),
+  one undo step: drop every keyframe whose `params.sim_run === runId` (the previous run), add the new
+  ones, shallow-patch objects (histogram bins + `props.sim`, readouts, axes ranges, the normal curve).
+  Run ids are per histogram: the panel's `ownRunId` also refuses an id whose keyframes sit on a
+  *different* histogram (a copy made before `cloneObjects` reset it) and mints a fresh one, and
+  `pasteKeyframes` strips `sim_run` so a pasted copy isn't deleted by the next run.
 - `upsertKeyframes(kfs)` inserts-or-replaces by id in one mutation — Record mode's commit, so a
   multi-object drag is one undo step.
 - Batch deletes are one mutation: Delete on several keyframes calls `removeKeyframes(ids)` (one undo
@@ -60,7 +66,10 @@ inspector are all views onto it.
   and vice-versa, because the right sidebar shows `Inspector` / `KeyframeInspector` /
   `AudioClipInspector` depending on what is selected.
 - Group children are pulled in automatically for copy/duplicate (`withGroupChildren`);
-  `cloneObjects` deep-clones with fresh ids and rewires intra-set `parent_id`.
+  `cloneObjects` deep-clones with fresh ids and rewires intra-set `parent_id` and the id-holding props
+  (`REF_PROPS`: `axes_ref`, `target_id`, `line1_id`, `line2_id`, `normal_of`) when the referent was copied
+  too. A copied histogram's `props.sim` gets an empty `run_id` (and its readout ids cleared unless copied
+  along): sharing the original's run id let simulating the copy delete the original's keyframes.
 - **Keyboard shortcuts** (registered once at module load): Ctrl+Z/Y undo/redo, Ctrl+C/V/D copy/paste/
   duplicate, Ctrl+G group, Delete/Backspace remove (which also deletes the selected keyframes / audio
   clip / break). They no-op while typing in an input.
@@ -100,6 +109,8 @@ aspect ratio, so merging a width afterwards would stretch it. Defaults deliberat
 objects already in a scene.
 
 ## `computeFinalState` (Duplicate final state)
+
+`update_data` is baked too: a histogram / number carries its last data in `values` / `value`.
 
 Returns `{objects, cameraTrack}` — a scene's look after every animation, with no timeline, so each
 object carries its end state in its own geometry. Objects faded out and never re-created are dropped

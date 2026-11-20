@@ -9,17 +9,19 @@
 //     Draw+Fill, Type On, Fade In) — or that is only ever a Transform target —
 //     is hidden until that event, like the codegen's hide-until-creation pass.
 //   - drawing verbs are approximated: strokes trace in (line-likes, plots,
-//     vectors, closed-shape outlines), equations/text wipe in left-to-right,
+//     vectors, closed-shape outlines, axes / number lines), equations/text wipe in left-to-right,
 //     Type On reveals letters, everything else ramps opacity.
 //   - fades ramp opacity (with their optional shift); transform / replace /
 //     morph cross-fade the source into the target.
 //   - Indicate pulses scale + colour; Circumscribe and Flash draw nothing extra.
+//   - Update keyframes ease a histogram's bars / a number's value (data.ts).
 //   - group opacity multiplies into every descendant.
 // Never feed these baked clones back into the IR: they carry transient
 // `__draw` / `__clip` props that only the canvas renderers understand.
 import type { Keyframe, Point2D, Scene, SceneObject } from '../types/ir';
 import { applyKf, kfAlpha, kfProgress, PREVIEW_VERBS, effectiveTransform, type Transform2D } from './motion';
 import { bakeTransform } from '../store/finalState';
+import { dataAt } from './data';
 import { CAMERA_ID } from '../timeline/timelineStore';
 
 const DRAW_VERBS = new Set(['write', 'create', 'draw_border_then_fill']);
@@ -260,6 +262,10 @@ export function frameAt(scene: Scene, t: number): PlaybackFrame {
     composeAncestors(o, T, kfs, t, byId, byParent);
     const c = bakeTransform(o, T);
     const p = c.props as Record<string, unknown>;
+    // Histogram bars / number value as of t (Update keyframes, eased).
+    const d = dataAt(o, kfs, t);
+    if (Array.isArray(d)) p.values = d;
+    else if (d != null) p.value = d;
     // A group being drawn (Write/Create on the group) draws its children.
     const st = { ...own.get(o.id)! };
     if (st.draw == null) {
@@ -274,10 +280,11 @@ export function frameAt(scene: Scene, t: number): PlaybackFrame {
 
     if (st.draw != null) {
       const sub = String(p.subtype ?? '');
-      if (o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix') {
+      if (o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix' || o.type === 'number') {
         p.__clip = st.draw; // left-to-right wipe
       } else if ((o.type === 'shape' && (LINE_LIKE.has(sub) || CLOSED_SHAPES.has(sub)))
-        || o.type === 'graph' || (o.type === 'geometry' && sub === 'vector')) {
+        || o.type === 'graph' || (o.type === 'geometry' && sub === 'vector')
+        || (o.type === 'coordinate_system' && sub !== 'number_plane')) {
         p.__draw = st.draw;
         // Draw+Fill outlines first, then fills; Create/Write bring the fill in as
         // the stroke goes round.
@@ -300,7 +307,7 @@ export function frameAt(scene: Scene, t: number): PlaybackFrame {
         stroke_color: hexBlend(String(c.style.stroke_color || '#ffffff'), col, indicate.amt),
         fill_color: c.style.fill_color ? hexBlend(String(c.style.fill_color), col, indicate.amt) : c.style.fill_color,
       };
-      if ((o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix') && !c.style.fill_color) {
+      if ((o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix' || o.type === 'number') && !c.style.fill_color) {
         c.style.fill_color = hexBlend('#ffffff', col, indicate.amt);
       }
     }

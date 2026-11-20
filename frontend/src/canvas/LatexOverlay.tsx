@@ -10,6 +10,7 @@ import {
 import { useProjectStore } from '../store/projectStore';
 import { useCanvasStore } from '../store/canvasStore';
 import { objectBounds, braceLabelPoint, vectorLabelPoint } from './geometry';
+import { numberTex } from './data';
 import type { Ghost } from './motion';
 import type { Point2D, SceneObject } from '../types/ir';
 import { snapPosition } from './snapping';
@@ -245,6 +246,14 @@ function latexInner(o: SceneObject, fontSize: number, color: string): React.Reac
     );
   }
 
+  if (o.type === 'number') {
+    // Label + DecimalNumber, mirroring the codegen's LocusNumber (data.ts).
+    return (
+      <div style={{ padding: '4px', whiteSpace: 'nowrap' }}
+        dangerouslySetInnerHTML={{ __html: renderTex(numberTex(o)) }} />
+    );
+  }
+
   return (
     <div style={{ padding: '4px', whiteSpace: 'nowrap' }}
       dangerouslySetInnerHTML={{ __html: renderTex(equationTex(o)) }} />
@@ -400,7 +409,7 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
     };
   }, [view.scale, moveObject, moveHandle, anchorHandle, onGroupDrag, editHooks]);
 
-  const latexObjects = objects.filter(o => (o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix') && o.visible);
+  const latexObjects = objects.filter(o => (o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix' || o.type === 'number') && o.visible);
 
   // Geometry labels (vector / brace) are LaTeX, so they're rendered here by
   // KaTeX rather than in Konva. Position matches the codegen anchor points.
@@ -495,7 +504,9 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
           // element — like Konva's rotate anchor. Rotation pivots on the element
           // center (translate(-50%,-50%) puts it at the CSS transform-origin),
           // which is also where Manim's .rotate() pivots.
-          const showRotate = isSel && selectedIds.length === 1 && !isFrozen;
+          // Not for a number readout: its glyphs are rebuilt upright on every value
+          // change, so the codegen never rotates one.
+          const showRotate = isSel && selectedIds.length === 1 && !isFrozen && o.type !== 'number';
 
           return (
             <div key={o.id} onPointerDown={onDown} onClick={onClick} style={wrapperBase}>
@@ -534,7 +545,7 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
         })}
 
         {/* Faded preview of a selected move/scale/rotate animation's result. */}
-        {ghosts.filter(g => g.obj.type === 'latex_text' || g.obj.type === 'text' || g.obj.type === 'matrix').map(g => {
+        {ghosts.filter(g => g.obj.type === 'latex_text' || g.obj.type === 'text' || g.obj.type === 'matrix' || g.obj.type === 'number').map(g => {
           const o = g.obj;
           const fontSize = latexFontPx(o);
           const color = (o.style.fill_color as string) || '#ffffff';

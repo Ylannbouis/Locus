@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { AnimationVerb, SceneObject } from '../types/ir';
+import { dataKind, histValues } from '../canvas/data';
 
 // Sentinel object id for keyframes that drive the camera (mirrors the backend).
 export const CAMERA_ID = '__camera__';
@@ -21,6 +22,7 @@ interface TimelineUIState {
   range: { sceneId: string; start: number; end: number } | null;
   setRange: (r: { sceneId: string; start: number; end: number } | null) => void;
   selectKf: (id: string, additive?: boolean) => void;
+  setKfSelection: (ids: string[]) => void; // replace the keyframe selection (box select)
   selectAudio: (id: string | null) => void;
   selectBreak: (id: string | null) => void;
   clearKf: () => void; // clears the whole timeline selection (keyframes + audio + breaks)
@@ -54,6 +56,11 @@ export const useTimelineStore = create<TimelineUIState>((set) => ({
         : [...s.selectedKfIds, id],
     };
   }),
+  setKfSelection: (ids) => set(s => (
+    s.selectedKfIds.length === ids.length && s.selectedKfIds.every((x, i) => x === ids[i])
+      && !s.selectedAudioId && !s.selectedBreakId
+      ? s
+      : { selectedKfIds: ids, selectedAudioId: null, selectedBreakId: null })),
   selectAudio: (id) => set({ selectedAudioId: id, selectedKfIds: [], selectedBreakId: null }),
   selectBreak: (id) => set({ selectedBreakId: id, selectedKfIds: [], selectedAudioId: null }),
   clearKf: () => set({ selectedKfIds: [], selectedAudioId: null, selectedBreakId: null }),
@@ -84,6 +91,7 @@ export const VERB_META: Record<AnimationVerb, { label: string; color: string }> 
   indicate: { label: 'Indicate', color: '#d97706' },
   circumscribe: { label: 'Circumscribe', color: '#d97706' },
   flash: { label: 'Flash', color: '#d97706' },
+  update_data: { label: 'Update', color: '#0d9488' },
   camera_move: { label: 'Camera', color: '#0891b2' },
 };
 
@@ -92,7 +100,7 @@ export const VERB_META: Record<AnimationVerb, { label: string; color: string }> 
 export const TIMELINE_VERBS: AnimationVerb[] = [
   'write', 'create', 'draw_border_then_fill', 'type_on', 'fade_in', 'fade_out',
   'transform', 'replacement_transform', 'move', 'scale', 'rotate',
-  'indicate', 'circumscribe', 'flash',
+  'indicate', 'circumscribe', 'flash', 'update_data',
 ];
 
 // Write/Create/DrawBorderThenFill need vector points and can't run on a raster
@@ -107,15 +115,36 @@ function supportsTypeOn(o?: SceneObject): boolean {
   return o?.type === 'text' && !!String((o.props as Record<string, unknown>)?.font ?? '').trim();
 }
 
+// Graph subtypes anchored to an Axes (mirrors codegen `AXES_BOUND_GRAPHS`).
+const AXES_BOUND = new Set(['function_plot', 'parametric', 'implicit', 'histogram']);
+export const ATTACHED_DROPPED_VERBS: AnimationVerb[] = ['move', 'scale', 'rotate'];
+export function isAxesBound(o?: SceneObject): boolean {
+  return o?.type === 'graph' && AXES_BOUND.has(String((o.props as Record<string, unknown>)?.subtype ?? 'function_plot'));
+}
+
 export function timelineVerbsFor(o?: SceneObject): AnimationVerb[] {
-  const base = supportsTypeOn(o) ? TIMELINE_VERBS : TIMELINE_VERBS.filter(v => v !== 'type_on');
+  let base = supportsTypeOn(o) ? TIMELINE_VERBS : TIMELINE_VERBS.filter(v => v !== 'type_on');
+  // Update (new bar heights / a new value) only means something on a
+  // histogram or a number readout; the codegen drops it anywhere else.
+  if (!dataKind(o)) base = base.filter(v => v !== 'update_data');
+  // A graph drawn on an Axes has no position of its own: it moves, scales and
+  // rotates with its axes, and the codegen drops its own transforms.
+  if (isAxesBound(o)) base = base.filter(v => !ATTACHED_DROPPED_VERBS.includes(v));
   return o?.type === 'image' ? base.filter(v => !VECTOR_ONLY_VERBS.includes(v)) : base;
 }
 
 // Sensible starting params when a verb is chosen, so a new keyframe does
 // something visible (notably Move, which the codegen skips without a target).
-export function defaultParams(verb: AnimationVerb): Record<string, unknown> {
+// `obj` seeds an Update with the object's own data (its current bars / value),
+// which is also what makes the params fit the object at all.
+export function defaultParams(verb: AnimationVerb, obj?: SceneObject): Record<string, unknown> {
   switch (verb) {
+    case 'update_data': {
+      const kind = dataKind(obj);
+      if (kind === 'bars') return { values: histValues(obj!) };
+      if (kind === 'count') return { value: Number((obj!.props as Record<string, unknown>).value ?? 0) || 0 };
+      return {};
+    }
     case 'move': return { delta: { x: 1, y: 0 } };
     case 'scale': return { factor: 1.5 };
     case 'rotate': return { angle_degrees: 90 };

@@ -500,6 +500,63 @@ def _object_tracks(units, var_map: dict[str, str]) -> list[tuple[float, str, flo
     return tracks
 
 
+# Verbs that move/scale/rotate an object's geometry (an Indicate pulses its
+# scale, a fade may carry a shift, a transform reshapes it).
+_OWN_MOTION_VERBS = {"move", "scale", "rotate"}
+_AXES_MOVING_VERBS = _OWN_MOTION_VERBS | {"indicate", "transform", "replacement_transform"}
+
+
+def _is_axes_bound_graph(o) -> bool:
+    return _is_graph(o) and (o.props or {}).get("subtype", "function_plot") in AXES_BOUND_GRAPHS
+
+
+def _emit_follow(scene: Scene, objects, keyframes, var_map: dict[str, str],
+                 lines: list[str]) -> list[str]:
+    """Emit `_locus_follow(self, axes, [graphs])` for every axes whose attached
+    graphs must ride along with it, returning the follow-function names."""
+    by_id = {o.id: o for o in objects}
+    followers: dict[str, list[str]] = {}
+    for o in objects:
+        if o.id in var_map and _is_axes_bound_graph(o):
+            ax = (o.props or {}).get("axes_ref")
+            if ax in var_map:
+                followers.setdefault(ax, []).append(var_map[o.id])
+    if not followers:
+        return []
+
+    def moves(oid: str) -> bool:
+        for kf in keyframes:
+            if kf.object_id != oid:
+                continue
+            v = _enum(kf.verb)
+            if v in _AXES_MOVING_VERBS:
+                return True
+            if v in ("fade_in", "fade_out") and (kf.params or {}).get("shift"):
+                return True
+        return any(r.subject_id == oid for r in scene.relationships)
+
+    def chain(oid: str):
+        seen: set[str] = set()
+        cur = by_id.get(oid)
+        while cur is not None and cur.id not in seen:
+            seen.add(cur.id)
+            yield cur.id
+            cur = by_id.get(cur.parent_id) if cur.parent_id else None
+
+    fns: list[str] = []
+    for ax, fvars in followers.items():
+        if not any(moves(a) for a in chain(ax)):
+            continue
+        fn = f"_follow_{var_map[ax]}"
+        if not fns:
+            lines.append("# graphs drawn on an axes move, scale and rotate with it")
+        lines.append(f"{fn} = _locus_follow(self, {var_map[ax]}, [{', '.join(fvars)}])")
+        fns.append(fn)
+    if fns:
+        lines.append("")
+    return fns
+
+
 def build_body(scene: Scene, assets_root: str | None = None) -> str:
     """The construct body for `scene`. See `build_body_timed` for the variant
     that also reports how many seconds of animation the body renders."""
@@ -544,6 +601,36 @@ def build_body_timed(scene: Scene, assets_root: str | None = None) -> tuple[str,
             for kf in keyframes
         ]
 
+    # `update_data` only means something on a data-driven object, and its params
+    # pick the helper (`values` → LocusBars, `value` → LocusCount). Drop any that
+    # don't fit their object — e.g. a keyframe whose verb was switched by hand, or
+    # one left behind after an object changed type — rather than emit a call that
+    # raises mid-render.
+    data_kind = {o.id: ("bars" if _is_graph(o) and (o.props or {}).get("subtype") == "histogram"
+                        else "count" if _enum(o.type) == "number" else None)
+                 for o in scene.objects}
+
+    def _data_ok(kf) -> bool:
+        p = kf.params or {}
+        kind = data_kind.get(kf.object_id)
+        if kind == "bars":
+            return isinstance(p.get("values"), (list, tuple))
+        if kind == "count":
+            return p.get("value") is not None and not isinstance(p.get("values"), (list, tuple))
+        return False
+
+    keyframes = [kf for kf in keyframes if _enum(kf.verb) != "update_data" or _data_ok(kf)]
+
+    # A graph drawn on an Axes (plot, parametric, implicit, histogram) has no
+    # position of its own — it belongs to the axes and follows *their* moves,
+    # scales and rotations (`_locus_follow` below; the editor preview draws it
+    # from the axes the same way). Its own move/scale/rotate keyframes are
+    # therefore dropped: honouring them too would move it twice whenever the
+    # same animation was put on both, and pull it off its axes otherwise.
+    attached = {o.id for o in scene.objects if _is_axes_bound_graph(o)}
+    keyframes = [kf for kf in keyframes
+                 if not (kf.object_id in attached and _enum(kf.verb) in _OWN_MOTION_VERBS)]
+
     # Groups that (transitively) contain an image — these must emit as `Group`,
     # not `VGroup` (which rejects non-vector mobjects).
     image_group_ids: set[str] = set()
@@ -556,22 +643,50 @@ def build_body_timed(scene: Scene, assets_root: str | None = None) -> tuple[str,
                 cur = by_id.get(cur.parent_id)
 
     # Objects *introduced* by a creation verb: the creation (write/create/
-    # draw_border_then_fill/fade_in) is the object's first keyframe (tie →
-    # creation verbs first). These are animated in, so they are not pre-added.
-    # An object whose earliest keyframe is something else — e.g. a fade_out
-    # that a later fade_in undoes — was authored as initially visible and must
-    # be pre-added like any other object. Likewise a fade_in does not introduce
-    # an object when an *ancestor group* fades out before it (fading the family
-    # out implies it started visible — e.g. outer group fades out, inner group
-    # fades back in).
+    # draw_border_then_fill/type_on/fade_in) is the object's first **presence
+    # event** (tie → creation verbs first). Presence events are what the editor
+    # preview (`canvas/playback.ts presenceEvents`) counts: a creation, a
+    # fade_out, being the source of a transform/morph, or being its target.
+    # Everything else — move/scale/rotate, indicate, update_data, … — says
+    # nothing about whether the object is on screen, so a Move at 1s followed
+    # by a Create at 3s still means "hidden until 3s" (the move happens unseen
+    # and the Create draws the object where the move left it). These objects
+    # are animated in, so they are not pre-added. An object whose first
+    # presence event is something else — e.g. a fade_out that a later fade_in
+    # undoes — was authored as initially visible and must be pre-added like any
+    # other object. Likewise a fade_in does not introduce an object when an
+    # *ancestor group* fades out before it (fading the family out implies it
+    # started visible — e.g. outer group fades out, inner group fades back in).
     kfs_by_obj: dict[str, list] = {}
     for kf in keyframes:
         kfs_by_obj.setdefault(kf.object_id, []).append(kf)
     obj_by_id = {o.id: o for o in objects}
 
-    def _first_kf(oks):
-        return min(oks, key=lambda k: (float(k.start_time),
-                                       0 if _enum(k.verb) in CREATION_VERBS else 1))
+    _XFORM = {"transform", "replacement_transform", "morph_equation"}
+
+    def _target_of(kf):
+        p = kf.params or {}
+        return p.get("target_object_id") or p.get("target_tex_id")
+
+    # Keyframes that transform *into* an object (it appears as their target).
+    target_kfs: dict[str, list] = {}
+    for kf in keyframes:
+        if _enum(kf.verb) in _XFORM and _target_of(kf):
+            target_kfs.setdefault(_target_of(kf), []).append(kf)
+
+    def _first_kf(oid):
+        """The object's first presence event, or None if it has none: one of
+        its own creation / fade_out / transform-source keyframes, or a
+        transform that targets it. On a start-time tie a creation (or being a
+        transform's target) counts first, like the preview."""
+        evs = [k for k in kfs_by_obj.get(oid, [])
+               if _enum(k.verb) in CREATION_VERBS or _enum(k.verb) == "fade_out"
+               or (_enum(k.verb) in _XFORM and _target_of(k))]
+        evs += target_kfs.get(oid, [])
+        if not evs:
+            return None
+        return min(evs, key=lambda k: (float(k.start_time),
+                                       0 if (_enum(k.verb) in CREATION_VERBS or k.object_id != oid) else 1))
 
     def _ancestor_fadeout_before(oid: str, t: float) -> bool:
         cur = obj_by_id.get(oid)
@@ -585,8 +700,10 @@ def build_body_timed(scene: Scene, assets_root: str | None = None) -> tuple[str,
         return False
 
     created_ids: set[str] = set()
-    for oid, oks in kfs_by_obj.items():
-        first = _first_kf(oks)
+    for oid in kfs_by_obj:
+        first = _first_kf(oid)
+        if first is None or first.object_id != oid:
+            continue  # no presence event, or it first appears as a transform's target
         verb = _enum(first.verb)
         if verb not in CREATION_VERBS:
             continue
@@ -596,7 +713,6 @@ def build_body_timed(scene: Scene, assets_root: str | None = None) -> tuple[str,
 
     # Objects used only as a Transform/morph target are not added on their own;
     # the transform animation pulls them in, so exclude them from pre-add.
-    _XFORM = {"transform", "replacement_transform", "morph_equation"}
     transform_targets = {
         tid for kf in keyframes if _enum(kf.verb) in _XFORM
         for tid in [(kf.params or {}).get("target_object_id") or (kf.params or {}).get("target_tex_id")]
@@ -670,11 +786,19 @@ def build_body_timed(scene: Scene, assets_root: str | None = None) -> tuple[str,
         lines.extend(obj_lines)
         lines.append("")
 
+    # 1b. Attached graphs follow their axes (see `_LOCUS_FOLLOW_HELPER`): only
+    # for axes that can actually move — a motion keyframe on the axes or an
+    # ancestor group, or a relationship placing either — since a scene updater
+    # also stops Manim from freezing static waits.
+    follow_fns = _emit_follow(scene, objects, keyframes, var_map, lines)
+
     # 2. Relationships (relative positioning), after all objects exist.
     rel_lines = [ln for rel in scene.relationships if (ln := _rel_line(rel, var_map))]
     if rel_lines:
         lines.append("# relative positioning")
         lines.extend(rel_lines)
+        # A relationship that moved an axes moved its graphs too.
+        lines.extend(f"{fn}(0)" for fn in follow_fns)
         lines.append("")
 
     # 2b. Hide-until-creation. Two kinds of objects must start at opacity 0:
@@ -710,49 +834,71 @@ def build_body_timed(scene: Scene, assets_root: str | None = None) -> tuple[str,
     fade_intro_ids = [oid for oid, oks in kfs_by_obj.items()
                       if oid in created_ids and oid in var_map
                       and oid not in transform_targets
-                      and _enum(_first_kf(oks).verb) == "fade_in"]
+                      and _enum(_first_kf(oid).verb) == "fade_in"]
 
     reveal_kf_id: dict[str, str] = {}  # obj_id -> the creation keyframe to un-hide at
-    if not uses_tracking:
-        def _has_exposing_kf(oid: str) -> bool:
-            # Every verb except the drawing introducers (Write/Create/…) emits a
-            # non-introducer Manim animation (LocusFade/LocusApply/Indicate/…) whose
-            # mobject joins the play's wrapper Group at t=0.
-            return any(_enum(k.verb) not in INTRO_VERBS for k in kfs_by_obj.get(oid, []))
 
-        # An object is exposed early if it — *or any ancestor group* — has an
-        # exposing animation: a group's own animation pulls the whole VGroup
-        # (including a not-yet-created child) into the play.
-        def _exposed_early(oid: str) -> bool:
-            if _has_exposing_kf(oid):
+    def _has_exposing_kf(oid: str, before: float | None) -> bool:
+        # Every verb except the drawing introducers (Write/Create/…) emits a
+        # non-introducer Manim animation (LocusFade/LocusApply/Indicate/…) whose
+        # mobject Manim adds to the scene when its play starts. In the timeline
+        # model that is the one big play, i.e. t=0, whenever the keyframe runs;
+        # in the sequential model only a keyframe *before* the creation (`before`)
+        # gets its own, earlier play.
+        return any(_enum(k.verb) not in INTRO_VERBS
+                   and (before is None or float(k.start_time) < before - 1e-6)
+                   for k in kfs_by_obj.get(oid, []))
+
+    # An object is exposed early if it — *or any ancestor group* — has an
+    # exposing animation: a group's own animation pulls the whole VGroup
+    # (including a not-yet-created child) into the play.
+    def _exposed_early(oid: str, before: float | None) -> bool:
+        if _has_exposing_kf(oid, before):
+            return True
+        cur = obj_by_id.get(oid)
+        seen: set[str] = set()
+        while cur is not None and cur.parent_id and cur.parent_id not in seen:
+            seen.add(cur.parent_id)
+            if _has_exposing_kf(cur.parent_id, before):
                 return True
-            cur = obj_by_id.get(oid)
-            seen: set[str] = set()
-            while cur is not None and cur.parent_id and cur.parent_id not in seen:
-                seen.add(cur.parent_id)
-                if _has_exposing_kf(cur.parent_id):
-                    return True
-                cur = obj_by_id.get(cur.parent_id)
-            return False
+            cur = obj_by_id.get(cur.parent_id)
+        return False
 
-        for oid, oks in kfs_by_obj.items():
-            if oid not in var_map or oid in fade_intro_ids:
-                continue
-            # On a start-time tie, the creation verb counts as first: a write and
-            # a move starting at the same instant introduce the object via the
-            # write (fused into a LocusIntro), so it must still hide until then.
-            oks = sorted(oks, key=lambda k: (float(k.start_time),
-                                             0 if _enum(k.verb) in CREATION_VERBS else 1))
-            first = oks[0]
-            if first.group_id or _enum(first.verb) not in INTRO_VERBS:
-                continue                                   # not intro'd by a lone drawing verb
-            if float(first.start_time) <= 1e-3:
-                continue                                   # created at t=0 → no early window
-            if not _exposed_early(oid):
-                continue                                   # never pre-added → Manim won't flash it
-            reveal_kf_id[oid] = first.id
+    for oid in kfs_by_obj:
+        if oid not in var_map or oid in fade_intro_ids or oid not in created_ids:
+            continue
+        # `_first_kf` breaks a start-time tie in the creation's favour: a write
+        # and a move starting at the same instant introduce the object via the
+        # write (fused into a LocusIntro), so it must still hide until then.
+        first = _first_kf(oid)
+        if _enum(first.verb) not in INTRO_VERBS:
+            continue                                       # not intro'd by a drawing verb
+        if float(first.start_time) <= 1e-3:
+            continue                                       # created at t=0 → no early window
+        if not _exposed_early(oid, float(first.start_time) if uses_tracking else None):
+            continue                                       # never pre-added → Manim won't flash it
+        reveal_kf_id[oid] = first.id
 
     hide_ids = fade_intro_ids + [oid for oid in reveal_kf_id if oid not in fade_intro_ids]
+
+    # Re-creations: a drawing creation (Write/Create/…) after the object's own
+    # fade_out. The fade left it at opacity 0 and a creation draws with the
+    # mobject's *current* style, so it would draw invisibly — the preview shows
+    # it drawn back in. Reveal it right before, like a hidden-until-creation
+    # object. (Only the object's *own* fade: a faded ancestor group keeps it
+    # hidden in the preview too.)
+    recreate_kf_ids: set[str] = set()
+    for oid, oks in kfs_by_obj.items():
+        if oid not in var_map:
+            continue
+        outs = [float(k.start_time) for k in oks if _enum(k.verb) == "fade_out"]
+        if not outs:
+            continue
+        for k in oks:
+            if _enum(k.verb) in INTRO_VERBS and float(k.start_time) > min(outs) + 1e-6 \
+                    and k.id != reveal_kf_id.get(oid):
+                recreate_kf_ids.add(k.id)
+    recreate_obj_ids = {k.object_id for k in keyframes if k.id in recreate_kf_ids}
 
     # Snapshot the authored look of every object a fade touches (plus the
     # hidden ones): LocusFade / LocusApply(opacity=…) restore opacity from
@@ -858,6 +1004,16 @@ def build_body_timed(scene: Scene, assets_root: str | None = None) -> tuple[str,
                            "run_time": max(0.01, _num(sw.get("duration"), 3.0)),
                            "anims": [f"{tracker_name(obj.id)}.animate.set_value({_num(sw.get('to'), 1.0)})"],
                            "easing": easing_func(str(sw.get("easing", "linear"))), "lag": 0.0})
+        for k in keyframes:
+            if k.id not in set(reveal_kf_id.values()) | recreate_kf_ids:
+                continue
+            # A hidden-until-creation object that an earlier play already put in
+            # the scene (or a re-creation after a fade_out): restore its authored
+            # opacity (opacity only — geometry stays where the earlier moves left
+            # it) the instant its creation play starts, so the creation draws it
+            # visible.
+            events.append({"start": max(0.0, float(k.start_time)), "kind": "stmt", "order": 0,
+                           "run_time": 0.0, "lines": [f"_locus_reveal({var_map[k.object_id]})"]})
         for kf in ordered:  # camera-follow updater statements
             if not _is_track_kf(kf, var_map):
                 continue
@@ -910,7 +1066,8 @@ def build_body_timed(scene: Scene, assets_root: str | None = None) -> tuple[str,
         # their own tracks would put two animations on one mobject in this play
         # whenever the object also has an overlapping transform that did *not*
         # fuse — which `type_on` never does.
-        reveal_kf_ids = set(reveal_kf_id.values()) - fused_intro_ids
+        reveal_kf_ids = (set(reveal_kf_id.values()) | recreate_kf_ids) - fused_intro_ids
+        reveal_objs = set(reveal_kf_id) | recreate_obj_ids
         for kf in ordered:
             (grouped.setdefault(kf.group_id, []) if kf.group_id else ungrouped).append(kf)
         # Ungrouped: simultaneous move/scale/rotate on one object collapse to a
@@ -918,7 +1075,7 @@ def build_body_timed(scene: Scene, assets_root: str | None = None) -> tuple[str,
         # chain into one sequential track (Manim can't run two animations on one
         # mobject as parallel tracks — see `_object_tracks`).
         tracks.extend(_object_tracks(
-            _merge_units(ungrouped, var_map, set(reveal_kf_id),
+            _merge_units(ungrouped, var_map, reveal_objs,
                          fused_fade_ids, fused_intro_ids, reveal_kf_ids), var_map))
         for gid, members in grouped.items():
             lag = round(lag_by_group.get(gid, 0.0), 4)
@@ -927,8 +1084,8 @@ def build_body_timed(scene: Scene, assets_root: str | None = None) -> tuple[str,
                 # transforms and chain each mobject's units sequentially. (A
                 # staggered group is sequential — don't merge.)
                 gtracks = _object_tracks(
-                    _merge_units(members, var_map, set(reveal_kf_id),
-                                 fused_fade_ids, fused_intro_ids), var_map)
+                    _merge_units(members, var_map, reveal_objs,
+                                 fused_fade_ids, fused_intro_ids, reveal_kf_ids), var_map)
                 exprs = [e for _, e, _ in gtracks]
                 # Members all start at the group's start (their own starts are
                 # dropped above), so the group runs as long as its longest member.
@@ -949,6 +1106,9 @@ def build_body_timed(scene: Scene, assets_root: str | None = None) -> tuple[str,
                         continue
                     dur = max(0.01, float(kf.duration))
                     baked = _bake(a, dur, easing_func(_enum(kf.easing)))
+                    if kf.id in reveal_kf_ids and kf.object_id in var_map:
+                        baked = (f"Succession(LocusFade({var_map[kf.object_id]}, 1.0, "
+                                 f"run_time=0.001), {baked})")
                     exprs.append(f"Succession(Wait({round(offset, 4)}), {baked})"
                                  if offset > 1e-6 else baked)
                     span = max(span, offset + dur)

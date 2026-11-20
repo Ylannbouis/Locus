@@ -87,6 +87,10 @@ interface ProjectState {
   upsertKeyframes: (kfs: Keyframe[]) => void;
   removeKeyframe: (id: string) => void;
   removeKeyframes: (ids: string[]) => void;
+  // The sampling simulator's commit, as ONE undo step: drop every keyframe
+  // tagged with `runId` (`params.sim_run` — the previous run), add `kfs`, and
+  // shallow-patch objects (the histogram's bins/settings, counters, axes).
+  applySimulation: (runId: string, kfs: Keyframe[], patches: { id: string; patch: Partial<SceneObject> }[]) => void;
   groupKeyframes: (ids: string[]) => void;
   copyKeyframes: (ids: string[]) => void;
   // Paste the copied animation onto `targetIds` (each gets every copied keyframe,
@@ -136,9 +140,30 @@ function cloneObjects(objs: SceneObject[], offset = 0.3): SceneObject[] {
     c.id = idMap.get(o.id)!;
     c.parent_id = o.parent_id && idMap.has(o.parent_id) ? idMap.get(o.parent_id)! : null;
     c.position = { x: o.position.x + offset, y: o.position.y - offset };
+    // References to other objects follow them when they were copied too (a
+    // histogram copied with its axes sits on the *copied* axes).
+    const p = c.props as Record<string, unknown>;
+    for (const key of REF_PROPS) {
+      const ref = p[key];
+      if (typeof ref === 'string' && idMap.has(ref)) p[key] = idMap.get(ref);
+    }
+    // A copied histogram starts a simulation history of its own: sharing the
+    // original's `run_id` let a run on the copy delete the original's keyframes
+    // (and its readouts, which the copy would otherwise drive too).
+    if (p.sim && typeof p.sim === 'object') {
+      const sim: Record<string, unknown> = { ...(p.sim as Record<string, unknown>), run_id: '' };
+      for (const key of ['counter_id', 'stat_id']) {
+        const ref = sim[key];
+        sim[key] = typeof ref === 'string' && idMap.has(ref) ? idMap.get(ref) : '';
+      }
+      p.sim = sim;
+    }
     return c;
   });
 }
+
+// Props that hold another object's id.
+const REF_PROPS = ['axes_ref', 'target_id', 'line1_id', 'line2_id', 'normal_of'];
 
 // A plain `text` object is named after what it says: the first non-empty line of
 // its content (capped, and numbered if another object already has that name).
@@ -165,7 +190,7 @@ function renameCopies(scene: Scene, copies: SceneObject[]): void {
 // that suits it (and that the timeline would offer for it).
 function introVerbFor(obj: SceneObject): AnimationVerb {
   if (obj.type === 'image') return 'fade_in';
-  if (obj.type === 'latex_text' || obj.type === 'text' || obj.type === 'matrix') return 'write';
+  if (obj.type === 'latex_text' || obj.type === 'text' || obj.type === 'matrix' || obj.type === 'number') return 'write';
   return 'create';
 }
 
@@ -624,6 +649,21 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     });
   },
 
+  applySimulation: (runId, kfs, patches) => {
+    useTimelineStore.getState().clearKf();
+    _mutate(set, get, draft => {
+      const scene = activeScene(draft, get().selectedSceneId);
+      if (!scene) return;
+      scene.timeline.keyframes = scene.timeline.keyframes
+        .filter(k => (k.params as Record<string, unknown>)?.sim_run !== runId)
+        .concat(kfs);
+      for (const { id, patch } of patches) {
+        const obj = scene.objects.find(o => o.id === id);
+        if (obj) Object.assign(obj, patch);
+      }
+    });
+  },
+
   copyKeyframes: (ids) => {
     const scene = activeScene(get().project, get().selectedSceneId);
     const kfs = scene?.timeline.keyframes.filter(k => ids.includes(k.id)) ?? [];
@@ -652,6 +692,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
             ...JSON.parse(JSON.stringify(k)), id: newId('kf'), object_id: oid, group_id: null,
             start_time: Math.max(0, Math.round((t0 + k.start_time - minStart) * 100) / 100),
           };
+          // A pasted copy is the user's own keyframe, not part of a simulator
+          // run — re-running that simulation must not delete it.
+          if (nk.params && 'sim_run' in nk.params) delete (nk.params as Record<string, unknown>).sim_run;
           scene.timeline.keyframes.push(nk);
           made.push(nk.id);
         }

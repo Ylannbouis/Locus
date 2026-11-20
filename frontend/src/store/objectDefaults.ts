@@ -13,7 +13,7 @@ import {
   createPolygon, createLine, createArrow, createDoubleArrow, createDashedLine,
   createAxes, createNumberLine, createNumberPlane, createFunctionPlot,
   createParametric, createImplicit, createVectorField,
-  createVector, createAngle, createBrace, createImage,
+  createVector, createAngle, createBrace, createImage, createNumber, createHistogram,
 } from './objectFactory';
 
 // 'font' is the `text` object's system-font picker — empty means the LaTeX
@@ -62,6 +62,10 @@ export const OBJECT_DEFAULTS: ObjectDefaultSpec[] = [
       { scope: 'props', key: 'italic', label: 'Italic', kind: 'check' }],
   },
   { key: 'matrix', label: '⊞ Matrix', cat: 'Text & Math', sample: createMatrix, fields: [textColor, fontSize] },
+  {
+    key: 'number', label: '# Number', cat: 'Text & Math', sample: createNumber,
+    fields: [textColor, fontSize, num('decimals', 'Decimals', 0, 10, 1)],
+  },
 
   // --- Shapes ---
   {
@@ -103,6 +107,7 @@ export const OBJECT_DEFAULTS: ObjectDefaultSpec[] = [
   { key: 'function_plot', label: '∿ Function Plot', cat: 'Graph', sample: () => createFunctionPlot(''), fields: stroked },
   { key: 'parametric', label: '⟳ Parametric', cat: 'Graph', sample: () => createParametric(''), fields: stroked },
   { key: 'implicit', label: '◔ Implicit', cat: 'Graph', sample: () => createImplicit(''), fields: stroked },
+  { key: 'histogram', label: '▥ Histogram', cat: 'Graph', sample: () => createHistogram(''), fields: [...outlined, num('gap', 'Bar gap', 0, 0.9, 0.05)] },
   { key: 'vector_field', label: '⇶ Vector Field', cat: 'Graph', sample: createVectorField, fields: [strokeColor] },
 
   // --- Geometry ---

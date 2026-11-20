@@ -7,7 +7,7 @@ import { useProjectStore } from '../store/projectStore';
 import { objectBounds } from '../canvas/geometry';
 import type { SceneObject } from '../types/ir';
 
-const TEXT_LIKE = new Set(['latex_text', 'text', 'matrix']);
+const TEXT_LIKE = new Set(['latex_text', 'text', 'matrix', 'number']);
 const CLOSED = new Set(['rectangle', 'circle', 'ellipse', 'polygon']);
 const STROKED = new Set(['shape', 'coordinate_system', 'graph', 'geometry']);
 

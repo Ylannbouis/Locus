@@ -3,6 +3,9 @@ import { useProjectStore } from '../store/projectStore';
 import { newId } from '../store/objectFactory';
 import { FontField } from '../components/FontField';
 import { MultiInspector } from './MultiInspector';
+import { SimulatorPanel } from './SimulatorPanel';
+import { ValuesField } from './ValuesField';
+import { fitBars, histValues } from '../canvas/data';
 import type { SceneObject, Point2D, Scene, Relationship, RelationshipType } from '../types/ir';
 
 function NumberField({ label, value, step = 0.1, onChange }: {
@@ -219,6 +222,24 @@ export function Inspector() {
         </>
       )}
 
+      {/* ---- Number readout ---- */}
+      {obj.type === 'number' && (
+        <>
+          <NumberField label="Value" value={Number(props.value ?? 0)} step={1} onChange={v => setProp({ value: v })} />
+          <div className="field-row">
+            <NumberField label="Decimals" value={Number(props.decimals ?? 2)} step={1}
+              onChange={v => setProp({ decimals: Math.max(0, Math.min(10, Math.round(v))) })} />
+            <NumberField label="Font size" value={Number(props.font_size ?? 48)} step={1} onChange={v => setProp({ font_size: Math.max(1, Math.round(v)) })} />
+          </div>
+          <TextField label="Label (LaTeX, before the number)" value={String(props.label ?? '')} mono onChange={v => setProp({ label: v })} />
+          <ColorField label="Color" value={(obj.style.fill_color as string) || '#ffffff'} onChange={v => setStyle({ fill_color: v, fill_opacity: 1 })} />
+          <p className="panel-hint">
+            Animate it with Update keyframes (it counts to each new value), or link it to a histogram's sampling simulator.
+            The label is math-mode LaTeX — e.g. <code>n =</code>, <code>ar{'{x}'} =</code>, <code>	ext{'{trials: }'}</code>.
+          </p>
+        </>
+      )}
+
       {/* ---- Closed shapes sizing ---- */}
       {obj.type === 'shape' && (subtype === 'rectangle' || subtype === 'ellipse') && (
         <div className="field-row">
@@ -343,6 +364,26 @@ export function Inspector() {
             </>
           )}
 
+          {subtype === 'histogram' && (() => {
+            const vals = histValues(obj);
+            return (
+              <>
+                <div className="field-row">
+                  <NumberField label="First bin starts at" value={Number(props.bin_start ?? 0)} onChange={v => setProp({ bin_start: v })} />
+                  <NumberField label="Bin width" value={Number(props.bin_width ?? 1)} onChange={v => { if (v > 0) setProp({ bin_width: v }); }} />
+                </div>
+                <div className="field-row">
+                  <NumberField label="Bins" value={Math.max(1, vals.length)} step={1}
+                    onChange={v => setProp({ values: fitBars(vals, Math.max(1, Math.min(500, Math.round(v)))) })} />
+                  <NumberField label="Bar gap" value={Number(props.gap ?? 0)} step={0.05}
+                    onChange={v => setProp({ gap: Math.max(0, Math.min(0.9, v)) })} />
+                </div>
+                <ValuesField label="Bar heights (at the start)" values={vals} onChange={v => setProp({ values: v })} />
+                <p className="panel-hint">Animate the bars with Update keyframes, or let the simulator below fill them.</p>
+              </>
+            );
+          })()}
+
           {subtype === 'parametric' && (
             <>
               <TextField label="x(t) =" value={String(props.x_expression ?? 'cos(t)')} mono onChange={v => setProp({ x_expression: v })} />
@@ -368,7 +409,18 @@ export function Inspector() {
             </>
           )}
 
-          {subtype !== 'vector_field' && (
+          {subtype === 'histogram' && (
+            <>
+              <ColorField label="Fill" value={(obj.style.fill_color as string) || '#58c4dd'} onChange={v => setStyle({ fill_color: v })} />
+              <NumberField label="Fill opacity" value={Number(obj.style.fill_opacity ?? 0.75)} step={0.05} onChange={v => setStyle({ fill_opacity: Math.max(0, Math.min(1, v)) })} />
+              <ColorField label="Outline" value={(obj.style.stroke_color as string) || '#ffffff'} onChange={v => setStyle({ stroke_color: v })} />
+              <NumberField label="Outline width" value={Number(obj.style.stroke_width ?? 1.5)} step={0.5} onChange={v => setStyle({ stroke_width: Math.max(0, v) })} />
+              <div className="sidebar-divider" />
+              <SimulatorPanel obj={obj} scene={scene!} />
+            </>
+          )}
+
+          {subtype !== 'vector_field' && subtype !== 'histogram' && (
             <>
               <ColorField label="Color" value={(obj.style.stroke_color as string) || '#58c4dd'} onChange={v => setStyle({ stroke_color: v })} />
               <NumberField label="Stroke width" value={Number(obj.style.stroke_width ?? 4)} step={0.5} onChange={v => setStyle({ stroke_width: v })} />

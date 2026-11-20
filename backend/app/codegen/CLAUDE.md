@@ -6,7 +6,7 @@ run by the render worker.
 
 | File | Role |
 |------|------|
-| `template.py` | Jinja2 scaffold + `SCENE_CLASS_NAME = "LocusScene"`. `render_script(…, time_range=(t0, t1))` (worker range renders only) adds the `_LocusRange` mixin — see "Range renders" below. `render_script(body, background_color, base_class="Scene", progress_total=None)` — `base_class` becomes `MovingCameraScene` when the scene uses the camera. Body is pre-indented (8 spaces) and injected; numpy fns (`sin`, `cos`, …) are imported so plot expressions can use them bare. Also holds the helper classes, emitted only when the body references them: `LocusApply`/`LocusFade`/`LocusIntro`, plus `_LocusProgress` when `progress_total` is given. |
+| `template.py` | Jinja2 scaffold + `SCENE_CLASS_NAME = "LocusScene"`. `render_script(…, time_range=(t0, t1))` (worker range renders only) adds the `_LocusRange` mixin — see "Range renders" below. `render_script(body, background_color, base_class="Scene", progress_total=None)` — `base_class` becomes `MovingCameraScene` when the scene uses the camera. Body is pre-indented (8 spaces) and injected; numpy fns (`sin`, `cos`, …) are imported so plot expressions can use them bare. Also holds the helper classes, emitted only when the body references them: `LocusApply`/`LocusFade`/`LocusIntro`, the data helpers (`LocusHistogram`/`LocusBars`/`LocusNumber`/`LocusCount`), plus `_LocusProgress` when `progress_total` is given. |
 | `objects.py` | `emit_object(obj, assets_root=None) -> (var, lines)`: Mobject construction + styling + placement per type/subtype. |
 | `animations.py` | `emit_animation(verb, var, params, var_map) -> expr`: one **object** verb → the inner expression of a `self.play(...)`. Plus `emit_transform_chain` (fuse simultaneous move/scale/rotate + an overlapping fade's opacity into one `LocusApply`) and `emit_intro_transform` (fuse a creation verb with such a cluster into `LocusIntro`). Camera verbs live in `scene.py`. |
 | `scene.py` | Orchestrator: `build_body` / `generate_scene_script` / `generate_morph_preview_script`. Ties objects + relationships + timeline + camera together. `build_body_timed` is `build_body` plus the exact seconds the emitted statements render — the render bar's denominator, which is why `_object_tracks` and the timeline-model `tracks` carry an `end` alongside each expression. |
@@ -37,8 +37,11 @@ in `ANIMATION-EMISSION.md` (fades) and under "Camera" below; both are locked in 
   f-string interpolation of untrusted props.
 - **Plot expressions are Python/numpy**, evaluated inside `lambda x: (...)`. `_range` clamps a
   non-positive step to 1.0 (a `<= 0` step makes Manim's tick generation hang/raise) and renders whole
-  numbers without a trailing `.0` (`_fmt_num`), so Manim's `NumberLine` infers **0 decimal places** for
-  integer steps — it reads the step's *string* form, and `1.0` implies one decimal.
+  numbers without a trailing `.0` (`_fmt_num`). **Tick-label decimals are passed explicitly**
+  (`_tick_decimals` → `decimal_number_config.num_decimal_places`, per axis via `x_axis_config` /
+  `y_axis_config`): as many as the step has, so an axis reads "2.5, 3.0, 3.5". Manim's own inference
+  reads `str(step)` and trips on Python's float repr (`str(1e-05)` has no "."). The canvas mirrors it
+  (`tickDecimals` in `SceneNodes.tsx`).
 - **Generic baked transforms:** `emit_object` applies a `rotation` prop (degrees, CCW) as
   `.rotate(rot * DEGREES)` after placement; scale is baked into concrete size props by the frontend.
   Axes/number_line pass `number_font_size` through to `font_size` / `axis_config`.
@@ -110,6 +113,37 @@ The canvas must match; mirrors are `equationTex` / `texEscape` / `textKatex` / `
 - **Verb normalization:** Write/Create/DrawBorderThenFill need VMobject points and raise on a raster
   image — `build_body` rewrites them to FadeIn (still a creation verb, so the hide pass is unaffected).
 
+## Data-driven objects (`graph.histogram`, `number`) and `update_data`
+
+- **`graph` subtype `histogram`** → `LocusHistogram(axes, bin_start, bin_width, [values], gap=…)`, a
+  `VGroup` of plain closed `VMobject` bars whose points are rewritten in place (zero height is fine,
+  styling survives). Bar *i* covers its bin minus `gap/2` each side, from y=0 **clamped into the y range**
+  up to `values[i]`. In `AXES_BOUND_GRAPHS` (skip-guarded like a plot); styled like a closed shape
+  (fill + stroke), not like a curve. At least one bar is emitted so Create/Write have something to draw.
+- **`number`** → `LocusNumber(value, places, font_size, label=…)`: always a `VGroup` whose **last** member
+  is a `DecimalNumber` (`group_with_commas=False` — a comma descends below the baseline and would shift
+  the bottom-aligned number). A label is typeset as `MathTex(label, "0")` and the number dropped onto the
+  placeholder digit (`aligned_edge=DL`), so gap and baseline are TeX's own; the canvas mirrors it as
+  KaTeX `label + ' ' + number` (`frontend/src/canvas/data.ts`). Never rotated: `set_value` rebuilds the
+  glyphs upright.
+- **`update_data`** → `LocusBars(m, [values])` / `LocusCount(m, value)` — the params' shape picks which.
+  Both read their **start from the live mobject at `begin()`** (the stale-target rule again:
+  `ChangeDecimalToValue` snapshots its start at construction), so a chain of updates composes. Bars
+  pad/truncate to the bar count. `build_body` **drops** an update whose params don't fit its object
+  (`values` on a number, `value` on a histogram, anything on other types) instead of emitting a call that
+  raises mid-render.
+- **`_locus_set_number` restyles every glyph** from the old first one after `set_value`: Manim only matches
+  style pairwise with the *old* glyphs, so a value gaining digits showed the new ones fully opaque — even
+  while the readout was faded out. `stress_data.py number_counts_while_hidden` locks that in.
+- The histogram keeps **no Axes attribute** (`Mobject.copy` deep-copies attributes, so every `save_state`
+  and Transform target would clone the whole Axes); its layout is a closure in `_locus_layout`, which
+  deepcopy treats as atomic, measuring against the live Axes.
+- **An empty bin draws nothing**: a bar whose height equals the base is collapsed to one repeated point
+  (a stroked zero-height outline drew a line along the base — a stray "x-axis", visible before the axes
+  were drawn in). Later updates grow it from there as usual.
+- The sampling simulator (`frontend/src/sim/sampling.ts`) never reaches codegen: it writes ordinary
+  `update_data` keyframes (tagged `params.sim_run`, ignored here) and `props.sim` (ignored too).
+
 ## Emit order (`_emit_order`) — matters
 
 Dependency order so references resolve: `0` plain → `1` graphs (need axes) → `2` geometry (may reference
@@ -122,7 +156,32 @@ missing/hidden dependencies: axes-bound graphs (`AXES_BOUND_GRAPHS`) skip if `ax
 
 - Point-based shapes (line/arrow/double_arrow/dashed_line/polygon) and `geometry.vector` keep points in
   **local space** and use `.shift(position)`.
-- `graph.*` has **no independent position** — it follows its axes.
+- `graph.*` has **no independent position** — it follows its axes, **including their animations**. In
+  Manim a plot / histogram is a separate mobject built from the axes once, so moving the axes used to
+  leave it behind (the editor always drew it with the axes). Now:
+  - `build_body` **drops move/scale/rotate keyframes on axes-bound graphs** (`_OWN_MOTION_VERBS`) — the
+    convention is "animate the axes"; honouring both would move a graph twice.
+  - `_emit_follow` registers `_locus_follow(self, axes, [graphs])` (template `_LOCUS_FOLLOW_HELPER`), a
+    **scene updater**, for each axes that can move (a move/scale/rotate/indicate/transform or shifted fade
+    on it or an ancestor group, or a relationship placing it). Each frame it reads the axes' similarity
+    transform since the last frame from points that **survive partial drawing** (each axis line's first
+    point, the last tick's first point — Create keeps a submobject's first point fixed, so drawing the
+    axes in isn't motion) and applies it to every follower — hidden ones too, so a graph created later
+    appears in the right place. A histogram is re-laid out from its data instead. A follower that already
+    moved the same way (in a group that moved with the axes) is skipped, or it would move twice. Only
+    emitted when needed: a scene updater stops Manim freezing static waits.
+  - Relationships run after the follow is registered, then call it once (`_follow_m_x(0)`).
+- **Move / scale / rotate pivot on `_locus_pivot`** (template `_LOCUS_PIVOT_HELPER`): the bbox center,
+  except a coordinate system, which pivots on its **data midpoint** (`_locus_mid`, set by `emit_object`) —
+  the editor's `position`. A move's `target_position` emits `.shift(_locus_to(_m, p))`, scale/rotate pass
+  `about_point=_locus_pivot(_m)`, and `LocusIntro` pivots the same way; a baked axes `rotation` turns about
+  `position`. Manim's `move_to`/`scale`/`rotate` use the bbox center, which tips, tick numbers and labels
+  make lopsided, so the axes landed off where the preview put them.
+- **A finished `LocusApply` / `LocusIntro` doesn't re-apply itself at the end of the play.**
+  `AnimationGroup.finish()` re-finishes every member and `Animation.finish()` re-interpolates to 1, so a
+  transform that ended long before snapped its whole family back to its own target — undoing later
+  animations on members (a group moved, then its axes scaled alone: the group's finish reset the axes'
+  graphs). Both remember having reached alpha 1 and make the second `finish()` a no-op.
 - Coordinate systems align their **data midpoint** to `position` via `c2p`/`number_to_point`, *not*
   `.move_to`, which would center Manim's full bbox (tips, numbers, labels) and shift the axes off spot.
 - Everything else uses `.move_to(position)`.

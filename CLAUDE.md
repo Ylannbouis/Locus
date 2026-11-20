@@ -157,6 +157,17 @@ flex rows now), **copies are auto-numbered** like new objects ("Rectangle" → "
 object is **named after its content** until you type a name over it, and clicking the same spot twice
 **selects down the stack** so a covered object can be picked without moving the one on top.
 
+**Data-driven objects + sampling simulator** (for CLT-style explainers): a `graph` subtype
+**`histogram`** (bars on an Axes) and a **`number`** object type (a `DecimalNumber` readout with a LaTeX
+label), both animated by a new **`update_data`** verb (bars grow to new heights / the number counts to a
+new value — `LocusBars`/`LocusCount`, see `backend/app/codegen/CLAUDE.md`). A histogram's Inspector has a
+**Sampling simulator**: pick a population (die, biased coin, uniform, exponential, U-shaped), sample size
+*n*, trials and a seed → it draws every sample *in the editor* (`frontend/src/sim/sampling.ts`) and writes
+the run as ordinary `update_data` keyframes (equal batches, so the bars grow at a steady pace), optionally driving a
+trial counter and a latest-x̄ readout, fitting bins/axes, and adding the CLT's normal curve. Randomness
+never reaches the Python, so preview = render and a seed reproduces a run. Graphs drawn on an Axes (plots, histograms) **belong to the axes**: they move, scale and
+rotate with them in preview and render alike (`_locus_follow`), and their own move/scale/rotate keyframes are dropped.
+
 **Images**: an `image` object type places an uploaded raster file (png/jpg/webp/bmp) on the
 canvas — uploaded to the project's `assets/` dir like audio, rendered via `ImageMobject` with the
 absolute asset path baked into the script. Vector-only verbs (Write/Create/Draw+Fill) degrade to

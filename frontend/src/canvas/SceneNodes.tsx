@@ -3,7 +3,8 @@ import { Rect, Circle as KCircle, Ellipse, Line, Arrow, Group, Path, Text, Image
 import type Konva from 'konva';
 import type { ImageProps, Point2D, SceneObject } from '../types/ir';
 import { PX_PER_UNIT, MANIM_EM_UNITS_PER_PT, SNAP_PX, worldX, worldY, manimX, manimY } from './coords';
-import { samplePlot, sampleParametric, sampleVectorField, vectorFieldColor } from './plotting';
+import { samplePlot, sampleParametric, sampleVectorField, vectorFieldColor, axesGeom, dataToWorldPx } from './plotting';
+import { histValues } from './data';
 import { objectBounds, lineSegment, intersect, BRACE_BUFF, BRACE_DEPTH } from './geometry';
 import { useCanvasStore } from '../store/canvasStore';
 import { snapPosition } from './snapping';
@@ -256,12 +257,21 @@ function rng(v: unknown, fb: number[]): number[] {
   return Array.isArray(v) && v.length >= 2 ? (v as number[]) : fb;
 }
 
-// Format a tick value for display: trim floating-point fuzz and drop the
-// decimal point entirely for whole numbers (so 2 shows as "2", not "2.0").
-function fmtNum(v: number): string {
-  const r = Math.round(v * 1e6) / 1e6;
-  if (Object.is(r, -0)) return '0';
-  return String(r);
+// Decimal places for an axis's tick labels: as many as its step has (0.5 → 1,
+// 0.25 → 2, 1 → 0), so every label shares one format ("2.5, 3.0, 3.5") — the
+// codegen passes Manim the same count (`_tick_decimals` in codegen/objects.py).
+function tickDecimals(step: number): number {
+  // A non-positive step is clamped to 1 by the codegen's _range_vals.
+  const s = (step > 0 ? step : 1).toFixed(6).replace(/0+$/, '');
+  const frac = s.split('.')[1] ?? '';
+  return frac.length;
+}
+
+// A tick label with a fixed number of decimals, like Manim's DecimalNumber
+// (which never prints "-0").
+function fmtNum(v: number, decimals: number): string {
+  const s = v.toFixed(decimals);
+  return Number(s) === 0 ? (0).toFixed(decimals) : s;
 }
 
 // Manim number font_size (points) -> world px, using the same em calibration
@@ -270,21 +280,51 @@ function numberPx(fs: number): number {
   return fs * MANIM_EM_UNITS_PER_PT * PX_PER_UNIT;
 }
 
-// Tick values from min..max, guarding against non-positive steps (infinite
-// loops) and absurdly dense ranges (capped at 500 lines for the preview).
-function safeTicks(min: number, max: number, step: number): number[] {
+// Tick values, mirroring Manim's NumberLine.get_tick_range: a range entirely on
+// one side of 0 ticks from x_min itself (a [2.5, 5] axis has a tick and label
+// at 2.5, where the axes meet); a range spanning 0 ticks at multiples of the
+// step out from 0. x_max is included only without an arrow tip (Manim adds
+// 1e-6 then, and np.arange is end-exclusive). Values are computed, not summed,
+// so fractional steps don't drift. Guards against non-positive steps (infinite
+// loops) and absurdly dense ranges (capped at 500 per direction).
+function safeTicks(min: number, max: number, step: number, tip = false): number[] {
   const s = Math.abs(step) || 1;
   if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return [];
+  const hi = tip ? max - 1e-9 : max + 1e-6;
+  const r = (v: number) => Math.round(v * 1e9) / 1e9;
   const out: number[] = [];
-  let v = Math.ceil(min);
-  let guard = 0;
-  while (v <= max && guard < 500) { out.push(v); v += s; guard++; }
-  return out;
+  const run = (from: number, to: number, dir: 1 | -1) => {
+    for (let i = 0; i < 500; i++) {
+      const v = r(from + dir * i * s);
+      if (dir > 0 ? v >= to : v <= to) break;
+      out.push(v);
+    }
+  };
+  if ((min < max && max < 0) || (max > min && min > 0)) {
+    run(min, hi, 1);
+  } else {
+    run(0, -(Math.abs(min) + 1e-6), -1);
+    run(0, hi, 1);
+  }
+  return [...new Set(out)].sort((a, b) => a - b);
 }
 
 // Local-space child lines for a coordinate system (group sits at its center).
-function coordChildren(o: SceneObject, stroke: string, sw: number) {
+// `draw` (playback preview of Create/Write/Draw+Fill, 0→1; null = fully drawn)
+// traces the axes roughly the way Manim's Create does, which lags over the
+// axes' parts in order: the x-axis in the first half, the y-axis in the second,
+// and within each axis its line, then its ticks, then its numbers (`part`).
+// Hidden before, whole after.
+const AXIS_PARTS = { line: [0, 0.2], ticks: [0.2, 0.5], nums: [0.5, 1] } as const;
+function axisPart(f: number, part: keyof typeof AXIS_PARTS, i = 0, n = 1): number {
+  const [a, b] = AXIS_PARTS[part];
+  const lo = a + ((b - a) * i) / Math.max(1, n);
+  const hi = a + ((b - a) * (i + 1)) / Math.max(1, n);
+  return Math.max(0, Math.min(1, (f - lo) / Math.max(1e-6, hi - lo)));
+}
+function coordChildren(o: SceneObject, stroke: string, sw: number, draw: number | null = null) {
   const p = o.props as any;
+  const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
   const st = p.subtype;
   const els: React.ReactNode[] = [];
   const faint = hexToRgba(o.style.stroke_color, 0.25);
@@ -293,18 +333,23 @@ function coordChildren(o: SceneObject, stroke: string, sw: number) {
 
   if (st === 'number_line') {
     const len = Number(p.length ?? 8) * PXU;
-    els.push(<Line key="axis" points={[-len / 2, 0, len / 2, 0]} stroke={stroke} strokeWidth={sw} />);
+    const f = draw == null ? 1 : clamp01(draw);
+    const reach = -len / 2 + len * axisPart(f, 'line');
+    if (reach > -len / 2) els.push(<Line key="axis" points={[-len / 2, 0, reach, 0]} stroke={stroke} strokeWidth={sw} />);
     const [xmin, xmax, xstep = 1] = rng(p.x_range, [-5, 5, 1]);
     const span = (xmax - xmin) || 1;
-    for (const x of safeTicks(xmin, xmax, xstep)) {
+    const nlTicks = safeTicks(xmin, xmax, xstep);
+    nlTicks.forEach((x, i) => {
       const px = ((x - (xmin + xmax) / 2) / span) * len;
-      els.push(<Line key={`t${x}`} points={[px, -6, px, 6]} stroke={stroke} strokeWidth={sw} />);
-      if (showNums) {
-        const label = fmtNum(x);
+      if (axisPart(f, 'ticks', i, nlTicks.length) > 0) {
+        els.push(<Line key={`t${x}`} points={[px, -6, px, 6]} stroke={stroke} strokeWidth={sw} />);
+      }
+      if (showNums && axisPart(f, 'nums', i, nlTicks.length) > 0) {
+        const label = fmtNum(x, tickDecimals(xstep));
         els.push(<Text key={`n${x}`} text={label} x={px} y={10} fontSize={fs} fill={stroke}
           offsetX={(label.length * fs * 0.55) / 2} />);
       }
-    }
+    });
     return els;
   }
 
@@ -316,8 +361,12 @@ function coordChildren(o: SceneObject, stroke: string, sw: number) {
   const xSpan = (xmax - xmin) || 1, ySpan = (ymax - ymin) || 1;
   const dataXpx = (x: number) => ((x - xmid) / xSpan) * xLen;
   const dataYpx = (y: number) => -((y - ymid) / ySpan) * yLen; // world flip
-  const axisYpx = dataYpx(0);
-  const axisXpx = dataXpx(0);
+  // The axes cross at 0 — or, when 0 is outside a range, at that range's
+  // nearest end, exactly like Manim's `Axes._origin_shift`. Using 0 regardless
+  // left the y-axis floating off to the side of a range like [3, 4].
+  const originShift = (lo: number, hi: number) => (lo > 0 ? lo : hi < 0 ? hi : 0);
+  const axisYpx = dataYpx(originShift(ymin, ymax));
+  const axisXpx = dataXpx(originShift(xmin, xmax));
 
   if (st === 'number_plane') {
     for (const x of safeTicks(xmin, xmax, xstep)) {
@@ -332,7 +381,16 @@ function coordChildren(o: SceneObject, stroke: string, sw: number) {
 
   // axes lines (with optional arrow tips at the positive ends, matching Manim)
   const tips = st === 'axes' && !!p.tips;
-  if (tips) {
+  // How far each axis line has been drawn (px): x from its left end, y from its
+  // bottom end (Konva y is down, so the y-axis grows toward -yLen/2).
+  const fx = draw == null ? 1 : clamp01(draw * 2);
+  const fy = draw == null ? 1 : clamp01(draw * 2 - 1);
+  const xReach = -xLen / 2 + xLen * axisPart(fx, 'line');
+  const yReach = yLen / 2 - yLen * axisPart(fy, 'line');
+  if (draw != null) {
+    if (xReach > -xLen / 2) els.push(<Line key="xaxis" points={[-xLen / 2, axisYpx, xReach, axisYpx]} stroke={stroke} strokeWidth={sw} />);
+    if (yReach < yLen / 2) els.push(<Line key="yaxis" points={[axisXpx, yLen / 2, axisXpx, yReach]} stroke={stroke} strokeWidth={sw} />);
+  } else if (tips) {
     const tip = 0.18 * PXU;
     els.push(<Arrow key="xaxis" points={[-xLen / 2, axisYpx, xLen / 2, axisYpx]} stroke={stroke} fill={stroke} strokeWidth={sw} pointerLength={tip} pointerWidth={tip} />);
     els.push(<Arrow key="yaxis" points={[axisXpx, yLen / 2, axisXpx, -yLen / 2]} stroke={stroke} fill={stroke} strokeWidth={sw} pointerLength={tip} pointerWidth={tip} />);
@@ -342,26 +400,30 @@ function coordChildren(o: SceneObject, stroke: string, sw: number) {
   }
 
   if (st === 'axes') {
-    for (const x of safeTicks(xmin, xmax, xstep)) {
-      if (Math.abs(x) < 1e-9) continue;
+    const xTicks = safeTicks(xmin, xmax, xstep, tips).filter(x => Math.abs(x) >= 1e-9);
+    xTicks.forEach((x, i) => {
       const px = dataXpx(x);
-      els.push(<Line key={`tx${x}`} points={[px, axisYpx - 5, px, axisYpx + 5]} stroke={stroke} strokeWidth={sw} />);
-      if (showNums) {
-        const label = fmtNum(x);
+      if (axisPart(fx, 'ticks', i, xTicks.length) > 0) {
+        els.push(<Line key={`tx${x}`} points={[px, axisYpx - 5, px, axisYpx + 5]} stroke={stroke} strokeWidth={sw} />);
+      }
+      if (showNums && axisPart(fx, 'nums', i, xTicks.length) > 0) {
+        const label = fmtNum(x, tickDecimals(xstep));
         els.push(<Text key={`nx${x}`} text={label} x={px} y={axisYpx + 8} fontSize={fs} fill={stroke}
           offsetX={(label.length * fs * 0.55) / 2} />);
       }
-    }
-    for (const y of safeTicks(ymin, ymax, ystep)) {
-      if (Math.abs(y) < 1e-9) continue;
+    });
+    const yTicks = safeTicks(ymin, ymax, ystep, tips).filter(y => Math.abs(y) >= 1e-9);
+    yTicks.forEach((y, i) => {
       const py = dataYpx(y);
-      els.push(<Line key={`ty${y}`} points={[axisXpx - 5, py, axisXpx + 5, py]} stroke={stroke} strokeWidth={sw} />);
-      if (showNums) {
-        const label = fmtNum(y);
+      if (axisPart(fy, 'ticks', i, yTicks.length) > 0) {
+        els.push(<Line key={`ty${y}`} points={[axisXpx - 5, py, axisXpx + 5, py]} stroke={stroke} strokeWidth={sw} />);
+      }
+      if (showNums && axisPart(fy, 'nums', i, yTicks.length) > 0) {
+        const label = fmtNum(y, tickDecimals(ystep));
         els.push(<Text key={`ny${y}`} text={label} x={axisXpx - 8} y={py} fontSize={fs} fill={stroke}
           offsetX={label.length * fs * 0.55} offsetY={fs / 2} />);
       }
-    }
+    });
   }
   return els;
 }
@@ -371,7 +433,7 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
 
   const renderNode = (o: SceneObject): React.ReactNode => {
     if (!o.visible) return null;
-    if (o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix') return null; // handled by overlay
+    if (o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix' || o.type === 'number') return null; // handled by overlay
 
     const isSel = selectedIds.includes(o.id);
     const isFrozen = frozen.has(o.id);
@@ -513,7 +575,7 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
     if (o.type === 'coordinate_system') {
       return (
         <Rotatable key={o.id} show={canRotate} viewScale={viewScale} onEnd={rotEnd}>
-          {ref => <Group ref={ref as React.Ref<Konva.Group>} {...common} rotation={-(Number(p.rotation) || 0)}>{coordChildren(o, stroke, strokeWidth)}</Group>}
+          {ref => <Group ref={ref as React.Ref<Konva.Group>} {...common} rotation={-(Number(p.rotation) || 0)}>{coordChildren(o, stroke, strokeWidth, draw)}</Group>}
         </Rotatable>
       );
     }
@@ -532,6 +594,39 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
               return (
                 <Arrow key={i} points={[worldX(a.x), worldY(a.y), worldX(a.x + a.dx), worldY(a.y + a.dy)]}
                   stroke={c} fill={c} strokeWidth={2} pointerLength={6} pointerWidth={5} listening={false} />
+              );
+            })}
+          </Group>
+        );
+      }
+
+      if (st === 'histogram') {
+        // Bars on the axes, laid out exactly like the codegen's LocusHistogram:
+        // bar i spans its bin (minus gap/2 each side) from y=0 — clamped into
+        // the y range — up to values[i]. Follows the axes' authored placement.
+        const axes = objects.find(a => a.id === p.axes_ref && a.type === 'coordinate_system');
+        if (!axes) return null;
+        const g = axesGeom(axes);
+        const vals = histValues(o);
+        const bars = vals.length ? vals : [0];
+        const x0 = Number(p.bin_start ?? 0) || 0;
+        const w = Number(p.bin_width) > 0 ? Number(p.bin_width) : 1;
+        const gap = Math.min(0.95, Math.max(0, Number(p.gap ?? 0) || 0));
+        const base = Math.min(Math.max(0, g.ymin), g.ymax);
+        // No stroke-tracing approximation for bars: a drawing verb fades them in.
+        const drawOp = draw == null ? 1 : draw;
+        return (
+          <Group key={o.id} listening={!isFrozen} opacity={drawOp} {...hover} {...sel} onClick={pick}
+            onMouseDown={isFrozen ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }}>
+            {bars.map((h, i) => {
+              // An empty bin draws nothing (the codegen collapses it to a point),
+              // rather than a stroked zero-height outline along the base.
+              if (Math.abs(h - base) < 1e-9) return null;
+              const xl = x0 + (i + gap / 2) * w, xr = x0 + (i + 1 - gap / 2) * w;
+              // Corners through the axes mapping, so a rotated axes turns its bars.
+              const pts = [[xl, base], [xr, base], [xr, h], [xl, h]].flatMap(([dx, dy]) => dataToWorldPx(g, dx, dy));
+              return (
+                <Line key={i} points={pts} closed fill={fill} stroke={stroke} strokeWidth={strokeWidth} />
               );
             })}
           </Group>

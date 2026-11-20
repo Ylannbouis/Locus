@@ -89,21 +89,33 @@ resurrects a faded object"**:
   instead of the two clobbering the shared member. A fused fade+transform (or a shifted fade) owns its
   object and interpolates both.
 
-**Hide-until-creation (`build_body` step 2b).** Objects that must start at `set_opacity(0)`:
+**Hide-until-creation (`build_body` step 2b).** Whether an object starts on screen is decided by its
+first **presence event** (`_first_kf`), exactly like the editor preview (`canvas/playback.ts
+presenceEvents`): its own creation verb, its own fade_out, being a transform/morph's source, or being
+its target — tie → the creation (or being a target) first. Move / scale / rotate / indicate /
+update_data / … are *not* presence events: **a Move at 1s and a Create at 3s means hidden until 3s**,
+the move happening unseen and the Create drawing the object where it left it. (Plain Manim would show
+it from the move's play on; Locus used to pre-add it from frame 0 because its first *keyframe* wasn't a
+creation, while the preview hid it — the mismatch this rule removes.) An object whose first presence
+event is a fade_out started visible and is pre-added. Objects that must start at `set_opacity(0)`:
 
-- **Introduced by fade_in** (both models): the fade_in is the object's first keyframe (tie → creation
-  verbs first). A LocusFade on an already-visible object is a no-op, and the play's wrapper `Group`
+- **Introduced by fade_in** (both models): the fade_in is the object's first presence event. A LocusFade on an already-visible object is a no-op, and the play's wrapper `Group`
   exposes the mobject from t=0 (LocusFade is not a Manim introducer). Exceptions: an **ancestor group's
   earlier fade_out** implies the family started visible (`_ancestor_fadeout_before`, which also drops the
   object from `created_ids` so the pre-add works), and Transform/morph **targets** are never hidden (the
   transform interpolates toward them). No reveal wrapper needed — the fade_in *is* the reveal.
-- **Introduced by a *delayed* drawing verb** (timeline model only) that is otherwise exposed at t=0: any
-  non-drawing keyframe on the object **or any ancestor group** pulls the mobject into the play's wrapper
-  `Group` when the play starts (`_exposed_early` walks the `parent_id` chain), flashing it before its
-  creation plays. So the creation is preceded by `LocusFade(m, 1.0, run_time=0.001)` — an opacity-only
-  reveal (geometry stays wherever earlier hidden transforms put it) the instant the introducer starts.
-  `reveal_kf_id` records which keyframe reveals; on a start-time tie the creation verb sorts first. Not
-  needed in the sequential model (adds are per-play).
+- **Introduced by a *delayed* drawing verb** that is otherwise exposed before it: any non-drawing
+  keyframe on the object **or any ancestor group** pulls the mobject into the scene when its play starts
+  (`_exposed_early` walks the `parent_id` chain) — in the timeline model that's the one big play, so
+  *any* such keyframe counts; in the sequential model only one *before* the creation (it gets an earlier
+  play). The creation is then preceded by an opacity-only reveal (geometry stays wherever earlier hidden
+  transforms put it): `LocusFade(m, 1.0, run_time=0.001)` in the timeline model — also inside a parallel
+  or staggered keyframe group — and a `_locus_reveal(m)` **statement** right before the creation's play
+  in the sequential model. `reveal_kf_id` records which keyframe reveals.
+- **Re-creations** (`recreate_kf_ids`): a drawing creation *after the object's own fade_out* gets the
+  same reveal. Manim's Create/Write draw with the mobject's current style, so after a LocusFade to 0 they
+  drew it invisibly while the preview showed it drawn back in. (An *ancestor's* fade_out is left alone:
+  the preview multiplies the group's opacity in, so the child stays hidden there too.)
   **The reveal is emitted inside `_object_tracks`**, as the first segment of the object's own track, for
   *both* a fused LocusIntro and a standalone introducer (the unit's `reveal` flag; `_merge_units` takes
   `reveal_kf_ids` to set it). Don't hoist reveals back into their own tracks: an object whose introducer

@@ -9,6 +9,7 @@ export interface AxesGeom {
   xmin: number; xmax: number;
   ymin: number; ymax: number;
   xLen: number; yLen: number;     // manim units
+  rot: number;                    // baked axes rotation (Manim CCW degrees)
 }
 
 function rng(v: unknown, fb: [number, number]): [number, number] {
@@ -26,6 +27,7 @@ export function axesGeom(axes: SceneObject): AxesGeom {
     xmin, xmax, ymin, ymax,
     xLen: Number(p.x_length ?? 6),
     yLen: Number(p.y_length ?? 4),
+    rot: Number(p.rotation) || 0,
   };
 }
 
@@ -37,7 +39,11 @@ export function dataToManim(g: AxesGeom, dx: number, dy: number): { x: number; y
   const ySpan = (g.ymax - g.ymin) || 1;
   const lx = ((dx - xmid) / xSpan) * g.xLen;
   const ly = ((dy - ymid) / ySpan) * g.yLen;
-  return { x: g.posX + lx, y: g.posY + ly };
+  // Graphs belong to their axes: a rotated axes (baked `rotation`, about its
+  // data midpoint = `position`) carries its plots and bars round with it.
+  if (!g.rot) return { x: g.posX + lx, y: g.posY + ly };
+  const r = (g.rot * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
+  return { x: g.posX + lx * c - ly * s, y: g.posY + lx * s + ly * c };
 }
 
 // data -> world pixels (for Konva points)

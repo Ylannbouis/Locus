@@ -9,7 +9,8 @@ export type ObjectType =
   | 'geometry'
   | 'matrix'
   | 'group'
-  | 'image';
+  | 'image'
+  | 'number';
 
 export type AnimationVerb =
   | 'write'
@@ -27,6 +28,9 @@ export type AnimationVerb =
   | 'indicate'
   | 'circumscribe'
   | 'flash'
+  // Animate a data-driven object to new data: a histogram's bars to
+  // `params.values`, a number readout to `params.value`.
+  | 'update_data'
   | 'camera_move';
 
 export type EasingType =
@@ -106,6 +110,31 @@ export interface ImageProps {
   width: number;
   height: number;
   opacity: number;
+}
+
+// Props of a `graph` object with subtype 'histogram' — bars on an Axes
+// (`axes_ref`). Bar i spans [bin_start + i*bin_width, bin_start + (i+1)*bin_width]
+// in data x and rises from y=0 (clamped into the y range) to values[i]. `gap` is
+// the fraction of each bin left empty. Mirrors HistogramProps in ir.py.
+export interface HistogramProps {
+  subtype: 'histogram';
+  axes_ref: string;
+  bin_start: number;
+  bin_width: number;
+  values: number[];
+  gap?: number;
+  // Editor-only: the sampling simulator's last settings (sim/sampling.ts).
+  sim?: Record<string, unknown> | null;
+}
+
+// Props of a `number` object — a live readout (Manim DecimalNumber), with an
+// optional LaTeX `label` typeset before it on the same baseline. Mirrors
+// NumberProps in ir.py.
+export interface NumberProps {
+  value: number;
+  decimals: number;
+  label: string;
+  font_size: number;
 }
 
 export interface Relationship {

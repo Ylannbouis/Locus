@@ -15,7 +15,11 @@ sidebar shows `KeyframeInspector` / `AudioClipInspector` / `Inspector` according
 
 `timelineVerbsFor` takes the whole `SceneObject`, not just its type, so it can read props: **Type On**
 is offered only for a `text` object with a `font` prop (Pango), and Write/Create/Draw+Fill are hidden
-for `image` lanes (`defaultVerb` returns `fade_in` there).
+for `image` lanes (`defaultVerb` returns `fade_in` there). **Update** (`update_data`) is offered only on
+a histogram or a number readout, and `defaultParams(verb, obj)` seeds it with that object's own data
+(`values` / `value`) — the shape of the params is what the codegen dispatches on. **Move / Scale /
+Rotate are hidden on a graph drawn on an Axes** (`isAxesBound`): it moves with its axes and the codegen
+drops its own transforms; an existing one shows a warning in `KeyframeInspector`.
 
 ## Layout — two coordinate origins, and it matters which one you're in
 
@@ -46,6 +50,12 @@ simultaneous animations on one object be seen and edited — the codegen then *f
   `KeyframeInspector` when a grouped keyframe is selected; the timeline then shows the staggered starts.
 - **Copy animation:** Ctrl+C on selected keyframes (or the right-click menu's "Copy animation"), then
   select objects and Ctrl+V — see `store/CLAUDE.md` → Clipboards.
+- **Box select:** pressing on *empty* lane space (any lane — the handler checks
+  `target === currentTarget`, so blocks keep their own drags) and dragging draws `.tl__marquee`; every
+  keyframe block it touches is selected live (`setKfSelection`), hit-tested against the rendered
+  `[data-kf-id]` rects so sub-rows and the 18px minimum width count as drawn. Shift / Ctrl / ⌘ adds to
+  the selection. The box is stored relative to `.tl__grid`, so it stays anchored if the grid scrolls.
+  The click that ends a box drag is swallowed (`swallowClick`), or `.tl`'s click-to-clear would undo it.
 - **Group drag:** grabbing a keyframe that's already part of a multi-selection keeps the whole set
   (shift-click toggles membership, mirroring canvas multi-select), and dragging shifts every selected
   keyframe by the anchor's delta (`DragState.members`), clamped so the *earliest* member never crosses

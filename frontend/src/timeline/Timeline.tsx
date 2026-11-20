@@ -62,7 +62,7 @@ function edgeTargetsExcluding(items: { id: string; start_time: number; duration:
 }
 
 function defaultVerb(o: SceneObject): AnimationVerb {
-  if (o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix') return 'write';
+  if (o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix' || o.type === 'number') return 'write';
   if (o.type === 'image') return 'fade_in'; // Create/Write need vector points
   return 'create';
 }
@@ -203,6 +203,12 @@ export function Timeline() {
   const [bDrag, setBDrag] = useState<BreakDragState | null>(null);
   const [oDrag, setODrag] = useState<ObjDragState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Box (marquee) selection: press on empty lane space and drag. Coordinates are
+  // relative to the grid's top-left, so the box stays anchored to the content
+  // if the timeline scrolls. `base` is the selection to add to (Shift / Ctrl).
+  const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number; base: string[] } | null>(null);
+  // The click that ends a box drag would bubble to `.tl` and clear the selection.
+  const swallowClick = useRef(false);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const scrubRef = useRef<{ wasPlaying: boolean } | null>(null);
@@ -300,9 +306,50 @@ export function Timeline() {
   // Snapping pulls the dragged edge onto neighbouring edges in the same lane
   // (plus t=0 and the playhead) when within SNAP_PX. Toggle with the 🧲
   // button; hold Alt to bypass it for one drag.
+  // ---- box selection ------------------------------------------------------
+  const startBox = (e: React.PointerEvent) => {
+    // Only a primary press on the lane itself — keyframe / clip blocks stop
+    // propagation and start their own drags.
+    if (e.button !== 0 || e.target !== e.currentTarget || !gridRef.current) return;
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    window.getSelection()?.removeAllRanges();
+    setMenu(null);
+    const g = gridRef.current.getBoundingClientRect();
+    const x = e.clientX - g.left, y = e.clientY - g.top;
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+    setBox({ x0: x, y0: y, x1: x, y1: y, base: additive ? useTimelineStore.getState().selectedKfIds : [] });
+  };
+
+  const updateBox = (e: React.PointerEvent) => {
+    if (!box || !gridRef.current) return;
+    const g = gridRef.current.getBoundingClientRect();
+    const nb = { ...box, x1: e.clientX - g.left, y1: e.clientY - g.top };
+    setBox(nb);
+    // Hit-test against the rendered blocks, so sub-rows and the 18px minimum
+    // block width count exactly as drawn.
+    const l = g.left + Math.min(nb.x0, nb.x1), r = g.left + Math.max(nb.x0, nb.x1);
+    const t = g.top + Math.min(nb.y0, nb.y1), b = g.top + Math.max(nb.y0, nb.y1);
+    const hit: string[] = [];
+    gridRef.current.querySelectorAll<HTMLElement>('[data-kf-id]').forEach(el => {
+      const rc = el.getBoundingClientRect();
+      if (rc.right >= l && rc.left <= r && rc.bottom >= t && rc.top <= b) hit.push(el.dataset.kfId!);
+    });
+    useTimelineStore.getState().setKfSelection([...new Set([...nb.base, ...hit])]);
+  };
+
+  const endBox = () => {
+    if (!box) return;
+    const moved = Math.abs(box.x1 - box.x0) > 3 || Math.abs(box.y1 - box.y0) > 3;
+    // A plain click on an empty lane falls through to `.tl`'s clear-selection.
+    if (moved) swallowClick.current = true;
+    setBox(null);
+  };
+
   const onPointerMove = (e: React.PointerEvent) => {
     const snapOn = snapEnabled && !e.altKey;
-    if (oDrag) {
+    if (box) {
+      updateBox(e);
+    } else if (oDrag) {
       // Insert before the first row whose midpoint is below the pointer;
       // past every midpoint means "drop at the end".
       const moved = oDrag.moved || Math.abs(e.clientY - oDrag.startClientY) > 3;
@@ -367,7 +414,9 @@ export function Timeline() {
   };
 
   const onPointerUp = () => {
-    if (oDrag) {
+    if (box) {
+      endBox();
+    } else if (oDrag) {
       // insertAt indexes the pre-move list, so dropping *after* the dragged row
       // shifts one slot back once it's pulled out.
       if (oDrag.moved) {
@@ -575,7 +624,7 @@ export function Timeline() {
     const sel = selectedKfIds.includes(kf.id);
     const w = Math.max(18, dur * pxPerSec);
     return (
-      <div key={kf.id}
+      <div key={kf.id} data-kf-id={kf.id}
         className={`tl__kf ${sel ? 'tl__kf--sel' : ''} ${kf.group_id ? 'tl__kf--grouped' : ''}`}
         style={{ left: start * pxPerSec, width: w, top: row * ROW_H + 4, height: ROW_H - 8, background: meta.color }}
         title={`${meta.label} @ ${start.toFixed(2)}s · ${dur.toFixed(2)}s${kf.group_id ? ((scene?.timeline.groups.find(g => g.id === kf.group_id)?.lag_ratio ?? 0) > 0 ? ' · staggered group' : ' · parallel group') : ''}`}
@@ -626,7 +675,10 @@ export function Timeline() {
   const audioLaneH = clipRows * AUDIO_ROW_H;
 
   return (
-    <div className="tl" onClick={() => clearKf()}>
+    <div className="tl" onClick={() => {
+      if (swallowClick.current) { swallowClick.current = false; return; }
+      clearKf();
+    }}>
       <div className="tl__bar" onClick={e => e.stopPropagation()}>
         <span className="panel-title" style={{ margin: 0 }}>Timeline</span>
         <button className="btn btn--ghost tl__transport" title="Back to start" onClick={onStop}>⏮</button>
@@ -657,7 +709,7 @@ export function Timeline() {
           </button>
         )}
         <span className="tl__hint">
-          double-click a lane to add · drag to move · drag right edge to resize · click the ruler to seek
+          double-click a lane to add · drag empty space to box-select (Shift adds) · drag to move · drag right edge to resize · click the ruler to seek
           {isSlideshow ? ' · double-click the ruler for a break' : ''}
         </span>
       </div>
@@ -748,6 +800,7 @@ export function Timeline() {
               📷 Camera
             </div>
             <div className="tl__lane tl__lane--camera" style={{ height: ROW_H }}
+              onPointerDown={startBox}
               onDoubleClick={e => { e.stopPropagation(); addCameraKfAt(e); }}>
               {cameraKfs.map(kf => renderKfBlock(kf))}
             </div>
@@ -767,6 +820,7 @@ export function Timeline() {
                 style={{ display: 'none' }} onChange={onAudioFile} />
             </div>
             <div className="tl__lane tl__lane--audio" style={{ height: audioLaneH }}
+              onPointerDown={startBox}
               onDoubleClick={e => { e.stopPropagation(); fileRef.current?.click(); }}
               onContextMenu={e => {
                 e.preventDefault(); e.stopPropagation();
@@ -801,6 +855,7 @@ export function Timeline() {
                   <span className="tl__label-name">{o.name || o.type}</span>
                 </div>
                 <div className="tl__lane" style={{ height: laneH }}
+                  onPointerDown={startBox}
                   onDoubleClick={e => { e.stopPropagation(); addKfAt(o, e); }}>
                   {rowKfs.map(kf => renderKfBlock(kf, row.get(kf.id) ?? 0))}
                 </div>
@@ -824,6 +879,12 @@ export function Timeline() {
             <div className="tl__range" style={{ left: LABEL_W + rangeHere.start * pxPerSec, width: (rangeHere.end - rangeHere.start) * pxPerSec }} />
           )}
           <PlayheadLine pxPerSec={pxPerSec} />
+          {box && (Math.abs(box.x1 - box.x0) > 3 || Math.abs(box.y1 - box.y0) > 3) && (
+            <div className="tl__marquee" style={{
+              left: Math.min(box.x0, box.x1), top: Math.min(box.y0, box.y1),
+              width: Math.abs(box.x1 - box.x0), height: Math.abs(box.y1 - box.y0),
+            }} />
+          )}
         </div>
       </div>
 
@@ -836,10 +897,13 @@ export function Timeline() {
               <>
                 <div className="tl__menu-head">Change verb</div>
                 <div className="tl__menu-verbs">
-                  {timelineVerbsFor(scene?.objects.find(o => o.id === kf.object_id)).map(v => (
-                    <button key={v} className={`tl__menu-verb ${kf.verb === v ? 'is-active' : ''}`}
-                      onClick={() => { updateKeyframe(kf.id, { verb: v, params: defaultParams(v) }); setMenu(null); }}>{VERB_META[v].label}</button>
-                  ))}
+                  {(() => {
+                    const o = scene?.objects.find(x => x.id === kf.object_id);
+                    return timelineVerbsFor(o).map(v => (
+                      <button key={v} className={`tl__menu-verb ${kf.verb === v ? 'is-active' : ''}`}
+                        onClick={() => { updateKeyframe(kf.id, { verb: v, params: defaultParams(v, o) }); setMenu(null); }}>{VERB_META[v].label}</button>
+                    ));
+                  })()}
                 </div>
                 <div className="tl__menu-sep" />
               </>

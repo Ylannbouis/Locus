@@ -25,7 +25,8 @@ npm run dev                                                       # background, 
 - Project home: `+ New Project` → fill `.project-home__input` → `Create`.
 - Add objects via the Add-panel tiles — `getByRole('button', { name: 'Rectangle' })`, `'Expression'`,
   `'Polygon'`, … (the glyph is `aria-hidden`, so the accessible name is the bare label). New objects
-  land at Manim (0,0) = canvas center and are auto-selected. If the project has "Animate new objects
+  land at the centre of the current view — Manim (0,0) until you pan (Alt+drag or middle-drag; Space is
+  *not* pan) — and are auto-selected. Box-select timeline keyframes by dragging from empty lane space. If the project has "Animate new objects
   in" (`settings.auto_intro`) on, each add also creates an intro keyframe.
 - The UI theme (Chalkboard dark by default / Paper & Ink) is `localStorage['locus.theme']`; set it in
   an init script to screenshot a specific theme.

@@ -25,6 +25,7 @@ class ObjectType(str, Enum):
     MATRIX = "matrix"
     GROUP = "group"
     IMAGE = "image"
+    NUMBER = "number"
 
 
 class AnimationVerb(str, Enum):
@@ -43,6 +44,9 @@ class AnimationVerb(str, Enum):
     INDICATE = "indicate"
     CIRCUMSCRIBE = "circumscribe"
     FLASH = "flash"
+    # Animate a data-driven object to new data: a histogram's bars to new
+    # heights (params.values) or a number readout to a new value (params.value).
+    UPDATE_DATA = "update_data"
     CAMERA_MOVE = "camera_move"
 
 
@@ -229,6 +233,32 @@ class MatrixProps(BaseModel):
     font_size: int = 48
 
 
+class HistogramProps(BaseModel):
+    """`graph` subtype `histogram`: bars on an Axes (via `axes_ref`). Bar i spans
+    [bin_start + i*bin_width, bin_start + (i+1)*bin_width] in data x and rises
+    from y=0 (clamped into the y range) to `values[i]` in data y. `gap` is the
+    fraction of each bin left empty between bars. `update_data` keyframes
+    animate the heights (params.values). `sim` holds the editor's sampling-
+    simulator settings (editor-only; codegen never reads it)."""
+    subtype: str = "histogram"
+    axes_ref: Optional[str] = None
+    bin_start: float = 0.0
+    bin_width: float = 1.0
+    values: list[float] = Field(default_factory=list)
+    gap: float = 0.0
+    sim: Optional[dict[str, Any]] = None
+
+
+class NumberProps(BaseModel):
+    """A live numeric readout (`number` object): Manim `DecimalNumber`, with an
+    optional LaTeX `label` set before it on the same baseline ("n =", or an x-bar). The
+    value animates via `update_data` keyframes (params.value)."""
+    value: float = 0.0
+    decimals: int = 2
+    label: str = ""
+    font_size: int = 48
+
+
 class ImageProps(BaseModel):
     """An external raster image (ImageMobject). `asset` is a filename in the
     project's assets dir (like AudioClip.asset); width/height are Manim units
@@ -239,7 +269,7 @@ class ImageProps(BaseModel):
     opacity: float = 1.0
 
 
-ObjectProps = Union[LatexTextProps, TextProps, ShapeProps, CoordinateSystemProps, GraphProps, GeometryProps, MatrixProps, ImageProps, dict]
+ObjectProps = Union[LatexTextProps, TextProps, ShapeProps, CoordinateSystemProps, GraphProps, GeometryProps, MatrixProps, ImageProps, HistogramProps, NumberProps, dict]
 
 
 # ---------------------------------------------------------------------------

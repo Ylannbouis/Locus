@@ -59,6 +59,11 @@ def _vec(p: Any) -> str | None:
     return None
 
 
+def _fmt(v: float) -> str:
+    """A number without a trailing '.0' for whole values (keeps data lists short)."""
+    return str(int(v)) if v == int(v) else str(v)
+
+
 def _args(parts: list[str]) -> str:
     return (", " + ", ".join(parts)) if parts else ""
 
@@ -140,6 +145,19 @@ def emit_animation(verb: str, var: str, params: dict[str, Any] | None = None,
     if verb == "rotate":
         return f"{var}.animate.rotate({_rotate_call(params)})"
 
+    if verb == "update_data":
+        # Data-driven objects (template helpers). Both read their start from the
+        # live mobject at begin(), so a chain of updates on one object composes.
+        # `scene.build_body` drops an update whose params don't fit the object
+        # (values on a number, …), so the shape of the params picks the helper.
+        vals = params.get("values")
+        if isinstance(vals, (list, tuple)):
+            nums = [round(_num(v, 0.0), 6) for v in vals]
+            return f"LocusBars({var}, [{', '.join(_fmt(v) for v in nums)}])"
+        if params.get("value") is not None:
+            return f"LocusCount({var}, {_fmt(round(_num(params.get('value'), 0.0), 6))})"
+        return None
+
     if verb == "indicate":
         parts: list[str] = []
         if params.get("color"):
@@ -181,7 +199,10 @@ _CHAIN_ORDER = {"move": 0, "scale": 1, "rotate": 2}
 
 def transform_chain_suffix(items: list[tuple[str, dict]]) -> str | None:
     """The method-chain suffix for a set of simultaneous move/scale/rotate,
-    e.g. `.shift(v).scale(2)`, or None if nothing emits."""
+    e.g. `.shift(v).scale(2, about_point=_locus_pivot(_m))`, or None if nothing
+    emits. It is the body of a `lambda _m: _m…` (`emit_transform_chain`): the
+    pivot helpers read `_m` as it stands at that point of the chain (Python
+    evaluates a method's arguments after its receiver)."""
     parts: list[str] = []
     for verb, params in sorted(items, key=lambda it: _CHAIN_ORDER.get(it[0], 9)):
         params = params or {}
@@ -189,13 +210,18 @@ def transform_chain_suffix(items: list[tuple[str, dict]]) -> str | None:
             tp = params.get("target_position")
             dl = params.get("delta")
             if isinstance(tp, dict):
-                parts.append(f".move_to({_vec(tp)})")
+                # Pivot-aware move_to: a coordinate system is placed by its data
+                # midpoint, not its bbox center (template `_locus_to`).
+                parts.append(f".shift(_locus_to(_m, {_vec(tp)}))")
             elif isinstance(dl, dict):
                 parts.append(f".shift({_vec(dl)})")
         elif verb == "scale":
-            parts.append(f".scale({_num(params.get('factor'), 1.5)})")
+            parts.append(f".scale({_num(params.get('factor'), 1.5)}, about_point=_locus_pivot(_m))")
         elif verb == "rotate":
-            parts.append(f".rotate({_rotate_call(params)})")
+            call = _rotate_call(params)
+            if "about_point=" not in call:
+                call += ", about_point=_locus_pivot(_m)"
+            parts.append(f".rotate({call})")
     return "".join(parts) if parts else None
 
 

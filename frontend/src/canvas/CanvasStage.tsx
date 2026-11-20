@@ -216,7 +216,7 @@ export function CanvasStage() {
   //   - selecting transform keyframes (shift-click for several), or
   //   - holding Space with one object selected → all its transform keyframes.
   // Moves also get a direction arrow; a single selected move is draggable.
-  const isLatexLike = (o: SceneObject) => o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix';
+  const isLatexLike = (o: SceneObject) => o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix' || o.type === 'number';
   const isXform = (v: string) => v === 'move' || v === 'scale' || v === 'rotate';
 
   const previewKfs = scene && !showFrame
@@ -324,6 +324,15 @@ export function CanvasStage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size]);
+
+  // Publish the centre of what's on screen (Manim units) so the Add panel can
+  // drop new objects there. Rounded to 0.01 like a dragged position.
+  const setViewCenter = useCanvasStore(s => s.setViewCenter);
+  useEffect(() => {
+    if (size.w <= 0 || size.h <= 0) return;
+    const w = screenToWorld(size.w / 2, size.h / 2, view);
+    setViewCenter({ x: round2(manimX(w.x)) + 0, y: round2(manimY(w.y)) + 0 });
+  }, [view, size, setViewCenter]);
 
   // Wheel gestures. Two-finger trackpad scroll pans; pinch-zoom (which both macOS
   // and Windows deliver as ctrl+wheel) zooms; a discrete mouse wheel keeps zooming

@@ -2,6 +2,7 @@
 // (LatexOverlay), so a brace/vector and its label stay in sync. All values are
 // in Manim units unless noted.
 import type { SceneObject } from '../types/ir';
+import { numberWidthChars } from './data';
 
 export const LINE_SUBTYPES = ['line', 'arrow', 'dashed_line', 'double_arrow'];
 
@@ -40,6 +41,10 @@ export function objectBounds(o: SceneObject): Bounds {
     const len = o.type === 'matrix' ? 1.6 : Math.max(1, widest * 0.28);
     const rows = o.type === 'matrix' ? 1 : lines.length;
     return { cx: pos.x, cy: pos.y, hw: (len * fs) / 2, hh: 0.35 * fs * rows };
+  }
+  if (o.type === 'number') {
+    const fs = Number(p.font_size ?? 48) / 48;
+    return { cx: pos.x, cy: pos.y, hw: (Math.max(1, numberWidthChars(o) * 0.28) * fs) / 2, hh: 0.35 * fs };
   }
   if (o.type === 'coordinate_system') return { cx: pos.x, cy: pos.y, hw: Number(p.x_length ?? 6) / 2, hh: Number(p.y_length ?? 4) / 2 };
   if (o.type === 'image') return { cx: pos.x, cy: pos.y, hw: Number(p.width ?? 4) / 2, hh: Number(p.height ?? 3) / 2 };

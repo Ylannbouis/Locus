@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import { useRenderStore } from '../store/renderStore';
-import { useTimelineStore, VERB_META, timelineVerbsFor, EASING_OPTIONS, defaultParams, CAMERA_ID } from './timelineStore';
+import { useTimelineStore, VERB_META, timelineVerbsFor, EASING_OPTIONS, defaultParams, CAMERA_ID, isAxesBound, ATTACHED_DROPPED_VERBS } from './timelineStore';
 import { transformAfter, RATE } from '../canvas/motion';
 import type { AnimationVerb, EasingType, Point2D } from '../types/ir';
+import { ValuesField } from '../inspector/ValuesField';
 
 function EasingPreview({ easing }: { easing: string }) {
   const fn = RATE[easing] ?? RATE.smooth;
@@ -144,10 +145,15 @@ export function KeyframeInspector() {
       {!isCamera && (
         <label className="field">
           <span className="field__label">Verb</span>
-          <select className="field__input" value={verb} onChange={e => { const v = e.target.value as AnimationVerb; updateKeyframe(kf.id, { verb: v, params: defaultParams(v) }); }}>
+          <select className="field__input" value={verb} onChange={e => { const v = e.target.value as AnimationVerb; updateKeyframe(kf.id, { verb: v, params: defaultParams(v, obj) }); }}>
             {timelineVerbsFor(obj).map(v => <option key={v} value={v}>{VERB_META[v].label}</option>)}
+            {!timelineVerbsFor(obj).includes(verb) && <option value={verb}>{VERB_META[verb]?.label ?? verb}</option>}
           </select>
         </label>
+      )}
+      {!isCamera && isAxesBound(obj) && ATTACHED_DROPPED_VERBS.includes(verb) && (
+        <span className="kf-warn">This graph is drawn on its axes and moves, scales and rotates with them, so this
+          animation is skipped. Put it on the axes instead.</span>
       )}
 
       <div className="field-row">
@@ -291,6 +297,24 @@ export function KeyframeInspector() {
             <Num label="Radius" value={Number(params.flash_radius ?? 0.5)} step={0.1} onChange={v => setParam({ flash_radius: v })} />
             <Num label="Lines" value={Number(params.num_lines ?? 12)} step={1} onChange={v => setParam({ num_lines: Math.round(v) })} />
           </div>
+        </>
+      )}
+
+      {verb === 'update_data' && (
+        <>
+          {Array.isArray(params.values) && (
+            <ValuesField label={`Bar heights (${(params.values as number[]).length})`} values={params.values as number[]}
+              onChange={v => setParam({ values: v })} />
+          )}
+          {!Array.isArray(params.values) && params.value != null && (
+            <Num label="Count to" value={Number(params.value)} step={1} onChange={v => setParam({ value: v })} />
+          )}
+          {!Array.isArray(params.values) && params.value == null && (
+            <span className="kf-warn">Update only works on a histogram or a number readout — this one is skipped.</span>
+          )}
+          {params.sim_run ? (
+            <span className="panel-hint">Made by the sampling simulator — running it again replaces this keyframe.</span>
+          ) : null}
         </>
       )}
 

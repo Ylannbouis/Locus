@@ -16,6 +16,7 @@ Stack: React 19 + react-konva + zustand + immer + katex + axios. Dev server on *
 | `canvas/` | Konva stage + KaTeX overlay: coordinate model, scene rendering, direct manipulation, ghost previews, camera overlay. | `src/canvas/CLAUDE.md` |
 | `timeline/` | Keyframe / camera / audio lanes, snapping, ripple-editing breaks, Web Audio preview. | `src/timeline/CLAUDE.md` |
 | `components/` | Shell, panels and modals: `DepGate`, `ProjectHome`, `EditorShell`, `AddPanel`, `ScenePanel`, `RenderPanel`, `ProjectSettings`, `Presenter`, `CodeView`. | `src/components/CLAUDE.md` |
+| `sim/sampling.ts` | The **sampling simulator** (CLT): seeded RNG, population presets, bin fitting, a run → `update_data` keyframes + a normal-curve expression. Pure; its UI is `inspector/SimulatorPanel.tsx` (in a histogram's Inspector). **All randomness happens here, at authoring time** — the IR stores plain numbers, so preview = render and a seed reproduces a run. | — |
 | `inspector/Inspector.tsx` | Per-type property editors (right sidebar). With 2+ objects selected it hands over to `MultiInspector.tsx`: align / distribute (equal gaps), plus shared stroke, fill / text colour, stroke width, fill opacity, font size and layer — "mixed" when values differ, every edit one undo step (`updateObjects`). | — |
 | `outliner/Outliner.tsx` | Object tree: select, z-order, show/hide, delete, group/ungroup. | — |
 | `api/client.ts` | Thin axios wrappers over the REST API + the WS URL helper. Calls same-origin `/api`, `/ws` (proxied). | — |

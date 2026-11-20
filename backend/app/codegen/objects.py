@@ -5,8 +5,10 @@ Supported (Phase 2):
   text (plain prose via Tex text mode; the raw string is LaTeX-escaped)
   shape: rectangle, circle, ellipse, line, arrow, double_arrow, dashed_line, polygon
   coordinate_system: axes, number_line, number_plane
-  graph: function_plot (references an axes object via props.axes_ref)
+  graph: function_plot / parametric / implicit / histogram (axes-bound via
+         props.axes_ref), vector_field
   matrix
+  number (live readout — template helper LocusNumber)
 
 Positioning semantics:
   - point-based shapes (line/arrow/double_arrow/dashed_line/polygon) keep their
@@ -27,7 +29,7 @@ POINT_SHAPES = {"line", "arrow", "double_arrow", "dashed_line", "polygon"}
 # an Arrow's filled tip is recolored too (set_stroke alone leaves the tip white).
 LINE_LIKE = {"line", "arrow", "double_arrow", "dashed_line"}
 # Graph subtypes that are anchored to an Axes (need a valid axes_ref).
-AXES_BOUND_GRAPHS = {"function_plot", "parametric", "implicit"}
+AXES_BOUND_GRAPHS = {"function_plot", "parametric", "implicit", "histogram"}
 # Size at which Pango `Text` is always built, then scaled to the authored
 # font_size. Large enough that Pango's glyph-advance hinting is stable (its
 # quantization is ruinous in the single digits); matches the /48 convention the
@@ -109,13 +111,42 @@ def _fmt_num(v: float) -> str:
     return str(v)
 
 
-def _range(lst: Any, default: list[float]) -> str:
+def _range_vals(lst: Any, default: list[float]) -> list[float]:
     if not isinstance(lst, (list, tuple)) or len(lst) < 2:
         lst = default
     vals = [_num(v, 0.0) for v in lst]
     # A non-positive step makes Manim's tick generation hang/raise — clamp it.
     if len(vals) >= 3 and vals[2] <= 0:
         vals[2] = 1.0
+    return vals
+
+
+def _range(lst: Any, default: list[float]) -> str:
+    return "[" + ", ".join(_fmt_num(v) for v in _range_vals(lst, default)) + "]"
+
+
+def _tick_decimals(lst: Any, default: list[float]) -> int:
+    """Decimal places for an axis's tick labels: as many as the step has
+    (0.5 -> 1, 0.25 -> 2, 1 -> 0), so every label on the axis shares one
+    format ("2.5, 3.0, 3.5"). Passed to Manim explicitly rather than left to
+    NumberLine's own inference, which reads str(step) and so trips on Python's
+    float repr (str(1e-05) has no ".", giving 0 places). Mirrored by
+    tickDecimals in frontend/src/canvas/SceneNodes.tsx."""
+    vals = _range_vals(lst, default)
+    step = abs(vals[2]) if len(vals) >= 3 else 1.0
+    s = f"{step:.6f}".rstrip("0")
+    return len(s.split(".")[1]) if "." in s else 0
+
+
+def num_list(raw: Any) -> list[float]:
+    """A list of numbers from a free-form prop/param (non-numbers → 0), rounded
+    so a simulator's float noise doesn't bloat the script."""
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [round(_num(v, 0.0), 6) for v in raw]
+
+
+def _fmt_list(vals: list[float]) -> str:
     return "[" + ", ".join(_fmt_num(v) for v in vals) + "]"
 
 
@@ -271,8 +302,13 @@ def _emit_construct(obj: SceneObject, assets_root: str | None = None) -> str:
             axis_cfg = f"'include_numbers': {inc}"
             if props.get("number_font_size") is not None:
                 axis_cfg += f", 'font_size': {_num(props.get('number_font_size'), 36)}"
+            # Per-axis label decimals (the two steps can differ); see _tick_decimals.
+            xd = _tick_decimals(props.get("x_range"), [-5, 5, 1])
+            yd = _tick_decimals(props.get("y_range"), [-3, 3, 1])
             return (f"Axes(x_range={xr}, y_range={yr}, x_length={xl}, y_length={yl}, "
-                    f"tips={tips}, axis_config={{{axis_cfg}}})")
+                    f"tips={tips}, axis_config={{{axis_cfg}}}, "
+                    f"x_axis_config={{'decimal_number_config': {{'num_decimal_places': {xd}}}}}, "
+                    f"y_axis_config={{'decimal_number_config': {{'num_decimal_places': {yd}}}}})")
         if subtype == "number_line":
             xr = _range(props.get("x_range"), [-5, 5, 1])
             length = _num(props.get("length"), 8.0)
@@ -280,7 +316,9 @@ def _emit_construct(obj: SceneObject, assets_root: str | None = None) -> str:
             fs = ""
             if props.get("number_font_size") is not None:
                 fs = f", font_size={_num(props.get('number_font_size'), 36)}"
-            return f"NumberLine(x_range={xr}, length={length}, include_numbers={inc}{fs})"
+            xd = _tick_decimals(props.get("x_range"), [-5, 5, 1])
+            return (f"NumberLine(x_range={xr}, length={length}, include_numbers={inc}{fs}, "
+                    f"decimal_number_config={{'num_decimal_places': {xd}}})")
         if subtype == "number_plane":
             xr = _range(props.get("x_range"), [-5, 5, 1])
             yr = _range(props.get("y_range"), [-3, 3, 1])
@@ -300,6 +338,17 @@ def _emit_construct(obj: SceneObject, assets_root: str | None = None) -> str:
             xr_str = f", x_range={_range(xr, [-5, 5])}" if isinstance(xr, (list, tuple)) and len(xr) >= 2 else ""
             # expression is Python/numpy; sin/cos/etc are imported in the template.
             return f"{axes_var}.plot(lambda x: ({expr}){xr_str})"
+        if subtype == "histogram":
+            # Bars on the axes (template helper). At least one bar, so Create/
+            # Write always have something to draw.
+            vals = num_list(props.get("values")) or [0.0]
+            x0 = _num(props.get("bin_start"), 0.0)
+            w = _num(props.get("bin_width"), 1.0)
+            if w <= 0:
+                w = 1.0
+            gap = min(max(_num(props.get("gap"), 0.0), 0.0), 0.95)
+            return (f"LocusHistogram({axes_var}, {_fmt_num(x0)}, {_fmt_num(w)}, "
+                    f"{_fmt_list(vals)}, gap={_fmt_num(gap)})")
         if subtype == "parametric":
             fx = _expr(props.get("x_expression"), "cos(t)")
             fy = _expr(props.get("y_expression"), "sin(t)")
@@ -338,6 +387,16 @@ def _emit_construct(obj: SceneObject, assets_root: str | None = None) -> str:
                 return f"VGroup((_b := Brace({tgt}, direction={direction})), _b.get_text({label!r}))"
             return f"Brace({tgt}, direction={direction})"
 
+    if otype == "number":
+        # Live readout (template helper): a DecimalNumber, optionally after a
+        # LaTeX label. update_data keyframes count it to new values (LocusCount).
+        value = _num(props.get("value"), 0.0)
+        places = max(0, min(10, int(_num(props.get("decimals"), 2))))
+        font_size = int(_num(props.get("font_size"), 48))
+        label = str(props.get("label") or "").strip()
+        lbl = f", label={label!r}" if label else ""
+        return f"LocusNumber({_fmt_num(value)}, {places}, {font_size}{lbl})"
+
     if otype == "matrix":
         entries = props.get("entries") or [["a", "b"], ["c", "d"]]
         rows = ", ".join("[" + ", ".join(repr(str(c)) for c in row) + "]" for row in entries)
@@ -370,7 +429,7 @@ def _emit_styling(var: str, obj: SceneObject) -> list[str]:
         # (emitted with the sizing in emit_object).
         return lines
 
-    if otype in ("latex_text", "text", "matrix"):
+    if otype in ("latex_text", "text", "matrix", "number"):
         color = fc or sc
         if color:
             lines.append(f"{var}.set_color({color!r})")
@@ -381,7 +440,8 @@ def _emit_styling(var: str, obj: SceneObject) -> list[str]:
                     lines.append(f"{var}.set_color_by_tex({sub!r}, {col!r})")
         return lines
 
-    if otype in ("coordinate_system", "graph"):
+    is_hist = otype == "graph" and (obj.props or {}).get("subtype") == "histogram"
+    if otype in ("coordinate_system", "graph") and not is_hist:
         # ArrowVectorField colors itself by vector magnitude; don't override it.
         if otype == "graph" and (obj.props or {}).get("subtype") == "vector_field":
             return lines
@@ -512,12 +572,16 @@ def emit_object(obj: SceneObject, assets_root: str | None = None) -> tuple[str, 
             xr = props.get("x_range") or [-5, 5, 1]
             xmid = (_num(xr[0], -5) + _num(xr[1], 5)) / 2
             lines.append(f"{var}.shift(np.array([{x}, {y}, 0.0]) - {var}.number_to_point({xmid}))")
+            lines.append(f"{var}._locus_mid = ({xmid},)")
         elif st in ("axes", "number_plane"):
             xr = props.get("x_range") or [-5, 5, 1]
             yr = props.get("y_range") or [-3, 3, 1]
             xmid = (_num(xr[0], -5) + _num(xr[1], 5)) / 2
             ymid = (_num(yr[0], -3) + _num(yr[1], 3)) / 2
             lines.append(f"{var}.shift(np.array([{x}, {y}, 0.0]) - {var}.c2p({xmid}, {ymid}))")
+            # The pivot every move/scale/rotate uses (template `_locus_pivot`):
+            # the data midpoint, i.e. the editor's `position`.
+            lines.append(f"{var}._locus_mid = ({xmid}, {ymid})")
         else:
             lines.append(f"{var}.move_to(np.array([{x}, {y}, 0.0]))")
     else:
@@ -527,7 +591,11 @@ def emit_object(obj: SceneObject, assets_root: str | None = None) -> tuple[str, 
     # rotation into their own points instead, so they never carry this prop;
     # graphs follow their axes and are never rotated independently.
     rot = _num(props.get("rotation"), 0.0)
-    if abs(rot) > 1e-9 and otype != "graph":
+    if abs(rot) > 1e-9 and otype == "coordinate_system":
+        # About the data midpoint (= `position`), like the canvas's Konva group;
+        # the bbox center is off it whenever tips/numbers/labels are lopsided.
+        lines.append(f"{var}.rotate({rot} * DEGREES, about_point=np.array([{x}, {y}, 0.0]))")
+    elif abs(rot) > 1e-9 and otype != "graph":
         lines.append(f"{var}.rotate({rot} * DEGREES)")
 
     if obj.z_index:
