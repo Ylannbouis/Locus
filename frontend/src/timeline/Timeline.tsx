@@ -4,6 +4,7 @@ import { newId } from '../store/objectFactory';
 import { useTimelineStore, VERB_META, timelineVerbsFor, defaultParams, CAMERA_ID } from './timelineStore';
 import { uploadAudioAsset } from '../api/client';
 import { playFrom, stopPlayback } from './audioPlayback';
+import { useCanvasStore } from '../store/canvasStore';
 import { Waveform } from './Waveform';
 import type { AnimationVerb, AudioClip, Keyframe, SceneBreak, SceneObject } from '../types/ir';
 
@@ -248,6 +249,9 @@ export function Timeline() {
     if (!project) return;
     const t = useTimelineStore.getState().playhead;
     const from = t >= contentEnd - 0.01 ? 0 : t; // at the end -> replay from the top
+    // The canvas animates along (playback preview) and stays on the last frame
+    // when playback ends, until the user clicks back into edit mode.
+    useCanvasStore.getState().setPreview(true);
     void playFrom(project.id, audioClips, from, contentEnd);
   };
 
@@ -585,7 +589,7 @@ export function Timeline() {
       <div className="tl__bar" onClick={e => e.stopPropagation()}>
         <span className="panel-title" style={{ margin: 0 }}>Timeline</span>
         <button className="btn btn--ghost tl__transport" title="Back to start" onClick={onStop}>⏮</button>
-        <button className="btn btn--ghost tl__transport" title={playing ? 'Pause' : 'Play audio'} onClick={onPlayPause}>
+        <button className="btn btn--ghost tl__transport" title={playing ? 'Pause' : 'Play (animates the canvas and plays the audio track)'} onClick={onPlayPause}>
           {playing ? '⏸' : '▶'}
         </button>
         <PlayheadTime />
@@ -624,6 +628,7 @@ export function Timeline() {
                 (e.target as Element).setPointerCapture?.(e.pointerId);
                 scrubRef.current = { wasPlaying: playing };
                 if (playing) stopPlayback();
+                useCanvasStore.getState().setPreview(true); // scrubbing previews on the canvas
                 rulerSeek(e);
               }}
               onPointerMoveCapture={e => { if (scrubRef.current) rulerSeek(e); }}

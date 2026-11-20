@@ -9,6 +9,8 @@ import type { Point2D, SceneObject } from '../types/ir';
 import { LatexOverlay } from './LatexOverlay';
 import { SceneNodes } from './SceneNodes';
 import { effectivePosition, transformAfter, type Ghost } from './motion';
+import { frameAt } from './playback';
+import { stopPlayback } from '../timeline/audioPlayback';
 import {
   PX_PER_UNIT, FRAME_WIDTH, FRAME_HEIGHT, SNAP_PX,
   MIN_SCALE, MAX_SCALE, manimX, manimY, worldX, worldY, screenToWorld, type View,
@@ -57,6 +59,14 @@ export function CanvasStage() {
   const snapToCenter = useCanvasStore(s => s.snapToCenter);
   const setSnapToCenter = useCanvasStore(s => s.setSnapToCenter);
   const selectedKfIds = useTimelineStore(s => s.selectedKfIds);
+  // Playback preview: while the timeline plays (or after a scrub) the canvas
+  // shows the scene as animated at the playhead, read-only. Only subscribe to
+  // the 60fps playhead while that's on, so editing never re-renders per frame.
+  const previewPinned = useCanvasStore(s => s.preview);
+  const setPreview = useCanvasStore(s => s.setPreview);
+  const playing = useTimelineStore(s => s.playing);
+  const previewOn = previewPinned || playing;
+  const playhead = useTimelineStore(s => (previewOn ? s.playhead : 0));
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -97,6 +107,23 @@ export function CanvasStage() {
       window.removeEventListener('blur', blur);
     };
   }, []);
+  useEffect(() => {
+    if (selectedIds.length && useCanvasStore.getState().preview && !useTimelineStore.getState().playing) {
+      setPreview(false);
+    }
+  }, [selectedIds, setPreview]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (!useCanvasStore.getState().preview && !useTimelineStore.getState().playing) return;
+      stopPlayback();
+      setPreview(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [setPreview]);
+
   const centered = useRef(false);
   const viewRef = useRef(view); viewRef.current = view;
   const pan = useRef({ active: false, sx: 0, sy: 0, ox: 0, oy: 0 });
@@ -118,7 +145,8 @@ export function CanvasStage() {
   const selKf = scene?.timeline.keyframes.find(k => k.id === selectedKfIds[0]);
   const previewKf = selKf && (selKf.verb === 'move' || selKf.verb === 'scale' || selKf.verb === 'rotate')
     ? selKf : undefined;
-  const spacePreview = spaceHeld && selectedIds.length === 1;
+  const spacePreview = spaceHeld && selectedIds.length === 1 && !previewOn;
+  const frame = previewOn && scene ? frameAt(scene, playhead) : null;
 
   // ---- Camera viewport overlay -------------------------------------------
   // Shows the framing of the selected camera keyframe, or the scene's initial
@@ -135,7 +163,7 @@ export function CanvasStage() {
   const hasCameraKf = !!scene?.timeline.keyframes.some(k => k.object_id === CAMERA_ID);
   // Suppress the initial-framing overlay while previewing a move/scale/rotate so
   // the canvas isn't cluttered; a selected camera keyframe still shows it.
-  const showCamera = !!camKf || ((trackActive || hasCameraKf) && !previewKf && !spacePreview);
+  const showCamera = !previewOn && (!!camKf || ((trackActive || hasCameraKf) && !previewKf && !spacePreview));
   const focusObj = camKf && camParams.focus_object_id ? objects.find(o => o.id === camParams.focus_object_id) : undefined;
   const camZoom = camKf ? Number(camParams.zoom ?? 1) : (camTrack?.initial_zoom ?? 1);
   // For a focus keyframe, frame the object where it is at the keyframe's time
@@ -170,7 +198,7 @@ export function CanvasStage() {
   const isLatexLike = (o: SceneObject) => o.type === 'latex_text' || o.type === 'text' || o.type === 'matrix';
   const isXform = (v: string) => v === 'move' || v === 'scale' || v === 'rotate';
 
-  const previewKfs = scene
+  const previewKfs = scene && !previewOn
     ? (spacePreview
         ? scene.timeline.keyframes.filter(k => k.object_id === selectedIds[0] && isXform(k.verb))
         : scene.timeline.keyframes.filter(k => selectedKfIds.includes(k.id) && isXform(k.verb)))
@@ -326,9 +354,16 @@ export function CanvasStage() {
     const el = containerRef.current;
     if (!el) return;
     function onDown(e: MouseEvent) {
-      if (e.button !== 1 && !(e.button === 0 && e.altKey)) return;
       // Leave the floating controls clickable.
-      if ((e.target as HTMLElement | null)?.closest('.camera-hud, .canvas-toolbar')) return;
+      if ((e.target as HTMLElement | null)?.closest('.camera-hud, .canvas-toolbar, .canvas-preview-banner')) return;
+      // A plain left click on a previewing canvas drops back into edit mode (and
+      // carries on as a normal click there).
+      if (e.type === 'pointerdown' && e.button === 0 && !e.altKey
+        && (useCanvasStore.getState().preview || useTimelineStore.getState().playing)) {
+        stopPlayback();
+        useCanvasStore.getState().setPreview(false);
+      }
+      if (e.button !== 1 && !(e.button === 0 && e.altKey)) return;
       // Never preventDefault a pointerdown: that suppresses the compatibility mouse
       // events (mousedown/mousemove/mouseup) this gesture is driven by, so the release
       // would never arrive and the pan would stick to the cursor. Stopping propagation
@@ -590,6 +625,17 @@ export function CanvasStage() {
             strokeWidth={1}
             dash={[8, 8]}
           />
+          {frame ? (
+            <SceneNodes
+              objects={frame.objects}
+              selectedIds={[]}
+              onSelect={() => {}}
+              onCommitDrag={() => {}}
+              nonInteractiveIds={frame.objects.map(o => o.id)}
+              viewScale={view.scale}
+              opacities={frame.opacity}
+            />
+          ) : (
           <SceneNodes
             objects={objects}
             selectedIds={selectedIds}
@@ -605,6 +651,25 @@ export function CanvasStage() {
             onCommitTransform={commitImageTransform}
             onCommitRotate={commitObjectRotation}
           />
+          )}
+          {frame?.camera && (() => {
+            // The camera's framing at the playhead, with everything outside the
+            // shot dimmed so you see what the render will show.
+            const hw = (FRAME_WIDTH / Math.max(0.1, frame.camera.zoom) / 2) * PX_PER_UNIT;
+            const hh = (FRAME_HEIGHT / Math.max(0.1, frame.camera.zoom) / 2) * PX_PER_UNIT;
+            const x0 = worldX(frame.camera.pan.x) - hw, y0 = worldY(frame.camera.pan.y) - hh;
+            const x1 = x0 + 2 * hw, y1 = y0 + 2 * hh;
+            const F = 1e5, dim = 'rgba(0,0,0,0.5)';
+            return (
+              <Group listening={false}>
+                <Rect x={-F} y={-F} width={2 * F} height={y0 + F} fill={dim} />
+                <Rect x={-F} y={y1} width={2 * F} height={F} fill={dim} />
+                <Rect x={-F} y={y0} width={x0 + F} height={y1 - y0} fill={dim} />
+                <Rect x={x1} y={y0} width={F} height={y1 - y0} fill={dim} />
+                <Rect x={x0} y={y0} width={x1 - x0} height={y1 - y0} stroke="#0891b2" strokeWidth={2 / view.scale} />
+              </Group>
+            );
+          })()}
           {showCamera && (
             <Rect
               x={worldX(camCenter.x) - camHalfWpx}
@@ -692,6 +757,15 @@ export function CanvasStage() {
         </div>
       )}
 
+      {frame ? (
+        <LatexOverlay
+          onSelect={() => {}}
+          objects={frame.objects}
+          view={view}
+          readOnly
+          opacities={frame.opacity}
+        />
+      ) : (
       <LatexOverlay
         onSelect={handleSelect}
         objects={objects}
@@ -711,6 +785,16 @@ export function CanvasStage() {
           onCommit: pos => { commitRotateAnchor(pos); setAnchorDrag(null); },
         } : null}
       />
+      )}
+
+      {previewOn && (
+        <div className="canvas-preview-banner">
+          <span>▶ Preview · {playhead.toFixed(2)}s</span>
+          <span className="canvas-preview-banner__hint">read-only — click the canvas or press Esc to edit</span>
+          <button type="button" className="canvas-toolbar__btn"
+            onClick={() => { stopPlayback(); setPreview(false); }}>Edit</button>
+        </div>
+      )}
 
       {band && (
         <div style={{
@@ -726,13 +810,18 @@ export function CanvasStage() {
           <input type="checkbox" checked={snapToCenter} onChange={e => setSnapToCenter(e.target.checked)} />
           Snap to center
         </label>
+        <button type="button" className={`canvas-toolbar__btn${previewOn ? ' is-on' : ''}`}
+          onClick={() => { if (previewOn) stopPlayback(); setPreview(!previewOn); }}
+          title="Show the scene as animated at the timeline playhead (read-only). Playing or scrubbing the timeline turns this on.">
+          ▶ Preview
+        </button>
         <button type="button" className="canvas-toolbar__btn" onClick={fitView}
           title="Fit the frame in view — scroll or Alt+drag to pan, pinch or Ctrl+scroll to zoom">
           Fit
         </button>
       </div>
 
-      {objects.length === 0 && (
+      {objects.length === 0 && !previewOn && (
         <div className="canvas-empty">Add an object from the left panel to begin.</div>
       )}
     </div>

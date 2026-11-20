@@ -38,6 +38,10 @@ interface Props {
   // and the Konva shapes follow it too.
   groupDrag?: { anchorId: string; dx: number; dy: number } | null;
   onGroupDrag?: (v: { anchorId: string; dx: number; dy: number } | null) => void;
+  // Playback preview (canvas/playback.ts): render read-only — no selection
+  // outline, handles or pointer events — at a per-object opacity.
+  readOnly?: boolean;
+  opacities?: Record<string, number>;
   // Selection goes through the stage so equations share one click-through stack
   // with the Konva shapes (CanvasStage.handleSelect): a press only makes sure
   // something is selected to drag, the click that follows walks down the stack.
@@ -48,12 +52,26 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 // Normalize degrees into (-180, 180].
 const normDeg = (d: number) => { const m = ((d % 360) + 360) % 360; return m > 180 ? m - 360 : m; };
 
+const NO_IDS: string[] = [];
+
+// KaTeX output is a pure function of (tex, mode), and the playback preview
+// re-renders every equation each animation frame — so memoize (bounded).
+const texCache = new Map<string, string>();
+const TEX_CACHE_MAX = 500;
+
 function renderTex(tex: string, displayMode = true): string {
+  const key = `${displayMode ? 'D' : 'I'}${tex}`;
+  const hit = texCache.get(key);
+  if (hit !== undefined) return hit;
+  let html: string;
   try {
-    return katex.renderToString(tex || '\\;', { throwOnError: false, displayMode });
+    html = katex.renderToString(tex || '\\;', { throwOnError: false, displayMode });
   } catch {
-    return '<span style="color:#dc2626">LaTeX error</span>';
+    html = '<span style="color:#dc2626">LaTeX error</span>';
   }
+  if (texCache.size >= TEX_CACHE_MAX) texCache.delete(texCache.keys().next().value!);
+  texCache.set(key, html);
+  return html;
 }
 
 // Draw a matrix bracket as SVG so its height and vertical centering are exact
@@ -237,8 +255,9 @@ function latexFontPx(o: SceneObject): number {
   return Number((o.props as any).font_size ?? 48) * em * PX_PER_UNIT;
 }
 
-export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [], moveHandle = null, anchorHandle = null, groupDrag = null, onGroupDrag, onSelect }: Props) {
-  const selectedIds = useProjectStore(s => s.selectedObjectIds);
+export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [], moveHandle = null, anchorHandle = null, groupDrag = null, onGroupDrag, onSelect, readOnly = false, opacities }: Props) {
+  const storeSelectedIds = useProjectStore(s => s.selectedObjectIds);
+  const selectedIds = readOnly ? NO_IDS : storeSelectedIds;
   const moveObject = useProjectStore(s => s.moveObject);
   const frozen = new Set(nonInteractiveIds);
 
@@ -389,7 +408,9 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
       if (target) pt = braceLabelPoint(objectBounds(target), String(p.direction_str ?? 'DOWN'));
     }
     if (!pt) return [];
-    return [{ id: o.id, text, pt, math, color: (o.style.stroke_color as string) || '#ffffff' }];
+    const op = opacities ? (opacities[o.id] ?? 1) : 1;
+    if (op <= 0.001) return [];
+    return [{ id: o.id, text, pt, math, op, color: (o.style.stroke_color as string) || '#ffffff' }];
   });
 
   return (
@@ -411,7 +432,13 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
           const fontSize = latexFontPx(o);
           const color = (o.style.fill_color as string) || '#ffffff';
           const isSel = selectedIds.includes(o.id);
-          const isFrozen = frozen.has(o.id);
+          const isFrozen = readOnly || frozen.has(o.id);
+          const op = opacities ? (opacities[o.id] ?? 1) : 1;
+          if (op <= 0.001) return null;
+          // Playback preview: a Write wipes the equation in left-to-right.
+          const clip = Number((o.props as any).__clip);
+          const clipPath = Number.isFinite(clip) && clip < 1
+            ? `inset(-20% ${((1 - Math.max(0, clip)) * 100).toFixed(2)}% -20% -1%)` : undefined;
           // This equation is the drag anchor → use its live pos; otherwise if it's a
           // non-anchor member of a live multi-drag, follow by the group delta.
           const gd = groupDrag && groupDrag.anchorId !== o.id && isSel ? groupDrag : null;
@@ -434,6 +461,8 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
             outline: isSel ? '2px solid #2563eb' : 'none',
             outlineOffset: '2px',
             borderRadius: '4px',
+            ...(op < 1 ? { opacity: op } : {}),
+            ...(clipPath ? { clipPath } : {}),
           };
 
           const onDown = isFrozen ? undefined : (e: React.PointerEvent) => {
@@ -529,6 +558,7 @@ export function LatexOverlay({ objects, view, ghosts = [], nonInteractiveIds = [
               transform: 'translate(-50%, -50%)',
               fontSize: `${labelFontPx}px`,
               color: l.color,
+              opacity: l.op,
               pointerEvents: 'none',
               userSelect: 'none',
               whiteSpace: 'nowrap',

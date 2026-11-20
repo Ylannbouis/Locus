@@ -22,3 +22,6 @@ setup_result.json
 
 # OS cruft
 .DS_Store
+
+# Manim cache written when a script runs from the repo root
+/media/

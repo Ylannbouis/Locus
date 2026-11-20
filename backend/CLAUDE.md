@@ -1,6 +1,7 @@
 # Backend — FastAPI + codegen + render worker
 
-Python ≥ 3.10, FastAPI + Pydantic v2 + Jinja2 + asyncio. No database, no Redis/Celery —
+Python ≥ 3.10 per `pyproject.toml`, but **3.11–3.13 in practice** (the pinned `pydantic==2.9.0` has no
+wheels past cp313, and the setup scripts enforce that range). FastAPI + Pydantic v2 + Jinja2 + asyncio. No database, no Redis/Celery —
 storage is JSON files on disk and the render queue is an in-process `asyncio.Queue`.
 
 ## Module map (`app/`)
@@ -9,7 +10,7 @@ storage is JSON files on disk and the render queue is an in-process `asyncio.Que
 |--------|----------------|
 | `main.py` | FastAPI app: all routes + the WebSocket progress stream. Launches the render worker in the lifespan. |
 | `models/ir.py` | **Canonical IR schema.** Every other module imports from here. Mirror of `frontend/src/types/ir.ts`. |
-| `storage/projects.py` | Load/save/delete `Project` JSON under `~/Locus/projects/`. `delete_project` rmtrees the whole project dir, and is the one place that validates the id against a regex + asserts the target is a direct child of the root (traversal would be destructive here). |
+| `storage/projects.py` | Load/save/delete `Project` JSON under `~/Locus/projects/`. **Every path into a project goes through `_project_dir`, which refuses a non-slug id** (`_ID_RE`) by raising `FileNotFoundError` — path params arrive URL-decoded and on Windows `%5C` is a separator, so `..%5C..` would otherwise escape the root. `project_exists` is the cheap existence check (no JSON parse). `delete_project` additionally asserts the target is a direct child of the root before rmtree-ing it. |
 | `deps_check.py` | Verifies manim/ffmpeg/latex are available; cached in-memory per process. |
 | `codegen/` | IR `Scene` → Manim Python script — the subtle core. See `app/codegen/CLAUDE.md`. |
 | `render/` | Job queue, the Manim subprocess, and all ffmpeg post-processing (voiceover mixing, multi-scene stitching, slideshow packaging). See `app/render/CLAUDE.md`. |
@@ -40,10 +41,10 @@ These come from running on the Windows asyncio **SelectorEventLoop** under uvico
    (the venv isn't on PATH, so a bare `manim` subprocess fails with `FileNotFoundError`).
    ffmpeg / pdflatex are system tools resolved via PATH — those are fine to call by name.
 3. **Worker-thread → event-loop hand-off.** `queue.update_job` broadcasts via
-   `asyncio.Queue.put_nowait`, which is only safe on the loop thread. The current worker
-   sidesteps this by using a synchronous `subprocess.run` (off-thread) and only calling
-   `update_job` from the loop thread. If you add code that updates a job *from* a worker
-   thread, marshal it back with `loop.call_soon_threadsafe`.
+   `asyncio.Queue.put_nowait`, which is only safe on the loop thread. The worker streams Manim's
+   stdout with `Popen` inside `asyncio.to_thread`, so its progress callbacks fire on the worker
+   thread — `_process` marshals each one back with `loop.call_soon_threadsafe`. Any new code that
+   updates a job from a thread must do the same.
 
 ## Render (routes in, job out)
 
@@ -59,9 +60,11 @@ packaging — is in `app/render/CLAUDE.md`.** Audio never reaches codegen: it is
 mp4 afterwards, so the ejected script has no trace of it.
 
 **Assets**: `POST /api/projects/{id}/assets/audio` and `.../assets/image` upload a file (raw bytes body
-+ `?filename=` query param — deliberately no multipart, so no `python-multipart` dep) into the project's
++ `?filename=` query param — deliberately no multipart parsing; `python-multipart` is still pinned in
+`requirements.txt` but nothing uses it) into the project's
 `assets/` dir; audio returns `{filename, duration, name}` (ffprobe), image `{filename, name}`.
-`GET .../assets/{filename}` serves either kind. Image assets are referenced by `image` objects and baked
+`GET .../assets/{filename}` serves either kind (404s for a non-existent project rather than creating its
+`assets/` dir — `assets_dir()` mkdirs on access). Image assets are referenced by `image` objects and baked
 into the generated script as absolute `ImageMobject` paths (see `app/codegen/CLAUDE.md`).
 
 **Fonts**: `GET /api/fonts` lists the system fonts a `text` object's `font` prop may name, via

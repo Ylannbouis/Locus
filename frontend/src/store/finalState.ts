@@ -60,9 +60,10 @@ function scaleRotatePts(pts: Point2D[], s: number, r: number): Point2D[] {
   return pts.map(p => rotatePt({ x: c.x + (p.x - c.x) * s, y: c.y + (p.y - c.y) * s }, c, r));
 }
 
-// Return a deep clone of `obj` with its final transform baked into concrete
-// geometry props (so both the canvas and the codegen render it statically).
-function bakeTransform(obj: SceneObject, T: Transform2D): SceneObject {
+// Return a deep clone of `obj` with a transform baked into concrete geometry
+// props (so both the canvas and the codegen render it statically). Also used per
+// frame by the canvas playback preview (`canvas/playback.ts`).
+export function bakeTransform(obj: SceneObject, T: Transform2D): SceneObject {
   const c = JSON.parse(JSON.stringify(obj)) as SceneObject;
   c.position = { x: T.pos.x, y: T.pos.y };
   const s = T.scale, r = T.rotationDeg;

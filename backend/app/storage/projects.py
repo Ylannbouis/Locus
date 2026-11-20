@@ -39,6 +39,12 @@ _migrate_legacy_root()
 
 
 def _project_dir(project_id: str) -> Path:
+    # Every path into a project goes through here, so refuse anything that isn't
+    # an id-shaped slug. Path params arrive URL-decoded, and on Windows a `%5C`
+    # (backslash) is a separator — `..%5C..` would otherwise escape the root on
+    # load/save/asset routes. An invalid id simply doesn't exist.
+    if not _ID_RE.match(project_id):
+        raise FileNotFoundError(f"Project {project_id!r} not found")
     return PROJECTS_ROOT / project_id
 
 
@@ -99,6 +105,13 @@ def create_project(name: str, kind: ProjectKind = ProjectKind.ANIMATION) -> Proj
         project.model_dump_json(indent=2), encoding="utf-8"
     )
     return project
+
+
+def project_exists(project_id: str) -> bool:
+    try:
+        return _project_file(project_id).is_file()
+    except FileNotFoundError:  # not an id-shaped slug
+        return False
 
 
 def load_project(project_id: str) -> Project:

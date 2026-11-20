@@ -39,34 +39,34 @@ export function AudioClipInspector() {
       <label className="field">
         <span className="field__label">Name</span>
         <input className="field__input" type="text" value={clip.name}
-          onChange={e => updateAudioClip(clip.id, { name: e.target.value })} />
+          onChange={e => updateAudioClip(clip.id, { name: e.target.value }, `au:${clip.id}:name`)} />
       </label>
 
       <div className="field-row">
         <Num label="Start (s)" value={clip.start_time} min={0}
-          onChange={v => updateAudioClip(clip.id, { start_time: Math.max(0, v) })} />
+          onChange={v => updateAudioClip(clip.id, { start_time: Math.max(0, v) }, `au:${clip.id}:start_time`)} />
         <Num label="Duration (s)" value={clip.duration} min={0.1}
-          onChange={v => updateAudioClip(clip.id, { duration: Math.max(0.1, Math.min(v, maxDur)) })} />
+          onChange={v => updateAudioClip(clip.id, { duration: Math.max(0.1, Math.min(v, maxDur)) }, `au:${clip.id}:duration`)} />
       </div>
 
       <Num label="Source offset (s) — trim-in point in the file" value={clip.offset} min={0}
         onChange={v => {
           const off = Math.max(0, srcDur > 0 ? Math.min(v, Math.max(0, srcDur - 0.1)) : v);
           const dur = srcDur > 0 ? Math.min(clip.duration, srcDur - off) : clip.duration;
-          updateAudioClip(clip.id, { offset: off, duration: Math.max(0.1, dur) });
+          updateAudioClip(clip.id, { offset: off, duration: Math.max(0.1, dur) }, `au:${clip.id}:offset`);
         }} />
 
       <label className="field">
         <span className="field__label">Volume — {Math.round((clip.gain ?? 1) * 100)}%</span>
         <input type="range" min={0} max={2} step={0.01} value={clip.gain ?? 1}
-          onChange={e => updateAudioClip(clip.id, { gain: parseFloat(e.target.value) })} />
+          onChange={e => updateAudioClip(clip.id, { gain: parseFloat(e.target.value) }, `au:${clip.id}:gain`)} />
       </label>
 
       <div className="field-row">
         <Num label="Fade in (s)" value={clip.fade_in} min={0}
-          onChange={v => updateAudioClip(clip.id, { fade_in: Math.max(0, v) })} />
+          onChange={v => updateAudioClip(clip.id, { fade_in: Math.max(0, v) }, `au:${clip.id}:fade_in`)} />
         <Num label="Fade out (s)" value={clip.fade_out} min={0}
-          onChange={v => updateAudioClip(clip.id, { fade_out: Math.max(0, v) })} />
+          onChange={v => updateAudioClip(clip.id, { fade_out: Math.max(0, v) }, `au:${clip.id}:fade_out`)} />
       </div>
 
       <label className="field field--check">

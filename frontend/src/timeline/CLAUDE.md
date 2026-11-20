@@ -75,8 +75,11 @@ the drag kind:
   backend*, referenced by filename — **deleting a clip doesn't delete the asset.**
 - `audioPlayback.ts` is editor-only preview: Web Audio schedules one BufferSource+Gain per clip
   (linear fades mirror ffmpeg's `afade`), an rAF loop drives `timelineStore.playhead`, and the ruler
-  is a scrub bar (pointer-capture drag; resumes playback on release if it was playing). **The canvas
-  does not animate during playback** — the backend ffmpeg mix is the render truth.
+  is a scrub bar (pointer-capture drag; resumes playback on release if it was playing). The same
+  transport drives the **canvas playback preview**: ▶ and ruler scrubs set `canvasStore.preview`, and
+  the canvas animates from `playhead` (see `canvas/CLAUDE.md`). Playback runs even with no audio
+  clips — the rAF loop just advances the playhead to the end of the content. The backend render (and
+  its ffmpeg mix) remains the truth.
 - The playhead line and the toolbar readout are separate components subscribing to `playhead`, so
   60fps updates don't re-render the whole timeline. Keep it that way.
 

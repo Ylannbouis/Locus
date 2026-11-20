@@ -51,7 +51,8 @@ interface ProjectState {
 
   // Object mutations
   addObject: (obj: SceneObject) => void;
-  updateObject: (id: string, patch: Partial<SceneObject>) => void;
+  // `coalesceKey`: pass from typed / dragged inputs so one gesture is one undo step (see `_mutate`).
+  updateObject: (id: string, patch: Partial<SceneObject>, coalesceKey?: string) => void;
   removeObject: (id: string) => void;
   removeSelected: () => void;
   moveObject: (id: string, x: number, y: number) => void;
@@ -72,9 +73,10 @@ interface ProjectState {
 
   // Timeline mutations
   addKeyframe: (kf: Keyframe) => void;
-  updateKeyframe: (id: string, patch: Partial<Keyframe>) => void;
+  updateKeyframe: (id: string, patch: Partial<Keyframe>, coalesceKey?: string) => void;
   moveKeyframesBy: (ids: string[], dt: number) => void;
   removeKeyframe: (id: string) => void;
+  removeKeyframes: (ids: string[]) => void;
   groupKeyframes: (ids: string[]) => void;
   ungroupKeyframes: (ids: string[]) => void;
 
@@ -85,7 +87,7 @@ interface ProjectState {
 
   // Audio track
   addAudioClip: (clip: AudioClip) => void;
-  updateAudioClip: (id: string, patch: Partial<AudioClip>) => void;
+  updateAudioClip: (id: string, patch: Partial<AudioClip>, coalesceKey?: string) => void;
   removeAudioClip: (id: string) => void;
   splitAudioClip: (id: string, atTime: number) => void;
   copyAudioClip: (id: string) => void;
@@ -337,7 +339,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     scene.objects.push(obj);
   }, [obj.id]),
 
-  updateObject: (id, patch) => _mutate(set, get, draft => {
+  updateObject: (id, patch, coalesceKey) => _mutate(set, get, draft => {
     const scene = activeScene(draft, get().selectedSceneId);
     const obj = scene?.objects.find(o => o.id === id);
     if (!obj || !scene) return;
@@ -346,7 +348,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     if (obj.type === 'text' && !(obj.props as Record<string, unknown>).name_custom) {
       obj.name = autoTextName(scene, obj);
     }
-  }),
+  }, undefined, coalesceKey),
 
   removeObject: (id) => {
     useTimelineStore.getState().clearKf();
@@ -466,6 +468,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       scene.objects.forEach(o => { if (o.parent_id === groupId) { o.parent_id = null; childIds.push(o.id); } });
       scene.objects = scene.objects.filter(o => o.id !== groupId);
       scene.timeline.keyframes = scene.timeline.keyframes.filter(k => k.object_id !== groupId);
+      scene.relationships = scene.relationships.filter(r => r.subject_id !== groupId && r.anchor_id !== groupId);
     }, childIds);
   },
 
@@ -488,11 +491,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     activeScene(draft, get().selectedSceneId)?.timeline.keyframes.push(kf);
   }),
 
-  updateKeyframe: (id, patch) => _mutate(set, get, draft => {
+  updateKeyframe: (id, patch, coalesceKey) => _mutate(set, get, draft => {
     const scene = activeScene(draft, get().selectedSceneId);
     const kf = scene?.timeline.keyframes.find(k => k.id === id);
     if (kf) Object.assign(kf, patch);
-  }),
+  }, undefined, coalesceKey),
 
   // Shift a set of keyframes along the timeline by the same delta, in one undo
   // entry — used when dragging a multi-selection of keyframes as a group.
@@ -510,6 +513,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     _mutate(set, get, draft => {
       const scene = activeScene(draft, get().selectedSceneId);
       if (scene) scene.timeline.keyframes = scene.timeline.keyframes.filter(k => k.id !== id);
+    });
+  },
+
+  // Delete several keyframes as ONE undo step (Delete on a multi-selection).
+  removeKeyframes: (ids) => {
+    if (!ids.length) return;
+    useTimelineStore.getState().clearKf();
+    const idSet = new Set(ids);
+    _mutate(set, get, draft => {
+      const scene = activeScene(draft, get().selectedSceneId);
+      if (scene) scene.timeline.keyframes = scene.timeline.keyframes.filter(k => !idSet.has(k.id));
     });
   },
 
@@ -605,11 +619,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     scene.audio.push(clip);
   }),
 
-  updateAudioClip: (id, patch) => _mutate(set, get, draft => {
+  updateAudioClip: (id, patch, coalesceKey) => _mutate(set, get, draft => {
     const scene = activeScene(draft, get().selectedSceneId);
     const clip = scene?.audio?.find(c => c.id === id);
     if (clip) Object.assign(clip, patch);
-  }),
+  }, undefined, coalesceKey),
 
   removeAudioClip: (id) => {
     useTimelineStore.getState().clearKf();
@@ -683,7 +697,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     if (!history.length || !project) return;
     _coalesce = null; // the entry a coalescing gesture would merge into is gone
     const prev = history[history.length - 1];
-    set(s => ({ project: prev, history: s.history.slice(0, -1), future: [project, ...s.future], isDirty: true }));
+    const sel = _validSelection(prev, get().selectedSceneId, get().selectedObjectIds);
+    set(s => ({ project: prev, history: s.history.slice(0, -1), future: [project, ...s.future], isDirty: true,
+      ...sel }));
     _scheduleSave(get);
   },
 
@@ -692,7 +708,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     if (!future.length || !project) return;
     _coalesce = null;
     const next = future[0];
-    set(s => ({ project: next, history: [...s.history, project!], future: s.future.slice(1), isDirty: true }));
+    const sel = _validSelection(next, get().selectedSceneId, get().selectedObjectIds);
+    set(s => ({ project: next, history: [...s.history, project!], future: s.future.slice(1), isDirty: true,
+      ...sel }));
     _scheduleSave(get);
   },
 
@@ -700,9 +718,27 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const { project } = get();
     if (!project) return;
     const saved = await saveProject(project);
-    set({ project: saved, isDirty: false });
+    // Only adopt the server's copy if nothing changed while the PUT was in
+    // flight — otherwise it would silently revert those edits (and the next
+    // autosave would then persist the reverted state).
+    if (get().project === project) set({ project: saved, isDirty: false });
   },
 }));
+
+// Undo/redo can resurrect or remove scenes and objects. Keep the active scene
+// pointing at one that exists (undoing "+ Scene" would otherwise leave the whole
+// editor blank, with every mutation silently no-oping) and drop selected ids
+// that are gone.
+function _validSelection(p: Project, sceneId: string | null, objIds: string[]):
+  Pick<ProjectState, 'selectedSceneId' | 'selectedObjectIds'> {
+  let scene = p.scenes.find(s => s.id === sceneId);
+  if (!scene) {
+    scene = p.scenes[0];
+    useTimelineStore.getState().clearKf();
+  }
+  const live = new Set(scene?.objects.map(o => o.id) ?? []);
+  return { selectedSceneId: scene?.id ?? null, selectedObjectIds: objIds.filter(id => live.has(id)) };
+}
 
 // ---------------------------------------------------------------------------
 // Helper: snapshot → immer mutation → store update.
@@ -776,7 +812,7 @@ if (typeof window !== 'undefined') {
     if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault(); // also stops Backspace from navigating back
       const tl = useTimelineStore.getState();
-      if (tl.selectedKfIds.length) { tl.selectedKfIds.forEach(id => s.removeKeyframe(id)); }
+      if (tl.selectedKfIds.length) { s.removeKeyframes(tl.selectedKfIds); }
       else if (tl.selectedAudioId) { s.removeAudioClip(tl.selectedAudioId); }
       else if (tl.selectedBreakId) { s.removeBreak(tl.selectedBreakId); }
       else if (s.selectedObjectIds.length) { s.removeSelected(); }

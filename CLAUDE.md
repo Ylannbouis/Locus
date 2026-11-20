@@ -130,6 +130,11 @@ shorter side) and **system fonts for `text` objects** (a `font` prop switches co
 filled glyphs one at a time, since Write stroke-traces the outline and turns a textured font like
 Chalkduster into grey scribble for the length of the animation).
 
+**Canvas playback preview**: playing or scrubbing the timeline animates the canvas itself — a
+read-only view of the scene at the playhead (moves/scales/rotates with easing, hide-until-creation,
+stroke tracing / equation wipes for drawing verbs, fades, group motion, camera framing) — so most
+timing can be judged without rendering. Editor-only approximation; see `frontend/src/canvas/CLAUDE.md`.
+
 Editor ergonomics added since: timeline lanes **reorder by dragging their object label** (which is
 also the object's slot in `scene.objects`), the timeline's label column now really stays pinned while
 scrolling (it was a `position: sticky` grid item, which CSS clamps to its own grid area — lanes are

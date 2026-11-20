@@ -29,6 +29,7 @@ from app.storage.projects import (
     delete_project,
     list_projects,
     load_project,
+    project_exists,
     save_project,
 )
 
@@ -151,7 +152,10 @@ async def get_project(project_id: str) -> Project:
 async def put_project(project_id: str, project: Project) -> Project:
     if project.id != project_id:
         raise HTTPException(status_code=400, detail="Project ID mismatch")
-    return save_project(project)
+    try:
+        return save_project(project)
+    except FileNotFoundError:
+        raise HTTPException(status_code=400, detail="Invalid project id")
 
 
 @app.delete("/api/projects/{project_id}", status_code=204)
@@ -210,6 +214,9 @@ async def upload_image_asset(project_id: str, request: Request, filename: str = 
 async def get_asset(project_id: str, filename: str) -> FileResponse:
     if not _ASSET_NAME_RE.match(filename) or ".." in filename:
         raise HTTPException(status_code=400, detail="Bad asset filename")
+    # Don't let a GET conjure an assets dir for a project that doesn't exist.
+    if not project_exists(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
     path = assets_dir(project_id) / filename
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Asset not found")

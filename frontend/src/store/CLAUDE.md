@@ -7,7 +7,7 @@
 | `objectFactory.ts` | `newId()`, `uniqueName()`, `copyName()`, per-type `SceneObject` factories, and `withDefaults`/`objectDefaultFor` which layer the project's Object Defaults over the factory output. |
 | `objectDefaults.ts` | Registry behind Settings → Object Defaults: one entry per Add-panel button (key, label, category, factory, editable-field list). |
 | `finalState.ts` | `computeFinalState(scene)` — bakes a scene's end-of-animation look into a static, timeline-less scene. |
-| `canvasStore.ts` | UI-only canvas prefs (snap-to-center), persisted to `localStorage`. |
+| `canvasStore.ts` | UI-only canvas state: snap-to-center (persisted to `localStorage`) and the playback-preview flag `preview` (not persisted). |
 
 `projectStore` mirrors the backend IR exactly and is the source of truth; the canvas, timeline and
 inspector are all views onto it.
@@ -22,9 +22,20 @@ inspector are all views onto it.
   same key keeps arriving within `COALESCE_MS` (1.5s) the mutation *replaces* the last history entry
   instead of pushing a new one, so the gesture is one undo step rather than 100 that evict the whole
   stack. Any keyless mutation breaks the chain, and undo/redo reset it (the entry a gesture would have
-  merged into is gone). **Pass it from anything driven by a drag or by typing.**
+  merged into is gone). **Pass it from anything driven by a drag or by typing.** `updateObject`,
+  `updateKeyframe` and `updateAudioClip` take it as an optional last argument; the three inspectors
+  key it by entity + field (`obj:<id>:props:<keys>`, `kf:<id>:start`, `au:<id>:gain`, …) so a burst
+  on one field is one step but switching fields starts a new one. A new inspector field that omits
+  it silently reintroduces the "typing one equation flushes the whole undo stack" bug.
 - **Autosave** is debounced 2s and PUTs the whole project; failures are swallowed (it retries on the
-  next change). Manual Save is also available.
+  next change). Manual Save is also available. `save()` adopts the server's response **only if
+  `project` is still the object it sent** — an edit made while the PUT was in flight would otherwise
+  be reverted by the response (and then persisted by the next autosave).
+- **Undo/redo repair the selection** (`_validSelection`): undoing "+ Scene" removes the active scene,
+  so `selectedSceneId` falls back to the first scene (else the editor goes blank and every mutation
+  no-ops), and selected object ids that no longer exist are dropped.
+- Batch deletes are one mutation: Delete on several keyframes calls `removeKeyframes(ids)` (one undo
+  entry), not `removeKeyframe` per id.
 - Live drag previews (canvas `groupDrag`/`endpointDrag`, timeline drag state) deliberately live
   *outside* the store as component state, and commit **once** on release — one undo entry per gesture.
 
@@ -82,7 +93,7 @@ object carries its end state in its own geometry. Objects faded out and never re
 statically reproduces the final frame); move/scale/rotate accumulate via `effectiveTransform` (the
 same math as the canvas ghosts) and bake into concrete props — scale into `font_size` for text/matrix,
 `radius`/`width`/`height`/`corner_radius`/axis lengths elsewhere; rotation into the generic `rotation`
-prop, **except point-based types** (polygon vertices, line endpoints, `geometry.vector` direction),
+prop (`bakeTransform`, exported — the canvas playback preview bakes every frame with it), **except point-based types** (polygon vertices, line endpoints, `geometry.vector` direction),
 which rotate their own points and never carry the prop, mirroring
 `canvas/CanvasStage.commitObjectRotation` and the codegen. Graphs and angle/brace need no bake — they
 reproduce the final look through the objects they reference. The camera track collapses to the framing

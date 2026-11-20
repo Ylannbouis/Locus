@@ -220,12 +220,33 @@ interface Props {
   // Commit a rotate-gizmo release on a non-image object: bakes the node's rotation
   // into the `rotation` prop (center-based types) or the points (polygon/vector).
   onCommitRotate?: (o: SceneObject, node: Konva.Node) => void;
+  // Playback preview (canvas/playback.ts): per-object opacity. When given, every
+  // node is wrapped in a non-listening Group at that opacity.
+  opacities?: Record<string, number>;
+}
+
+// Stroke trace for an in-flight drawing verb (playback preview only): the
+// transient `__draw` prop ∈ (0,1) on a baked clone, or null when fully drawn.
+function drawOf(p: Record<string, unknown>): number | null {
+  const d = Number(p.__draw);
+  return Number.isFinite(d) && d < 1 ? Math.max(0, d) : null;
+}
+
+// Dash pattern that shows the first `d` of a closed outline of length `len`.
+function traceDash(len: number, d: number | null): number[] | undefined {
+  return d == null ? undefined : [Math.max(0.001, len * d), len + 1];
 }
 
 const PXU = PX_PER_UNIT;
 // Extra clickable padding (world px) around thin/open shapes so lines, arrows
 // and curves are easy to grab even where they're only a couple of pixels wide.
 const HIT = 16;
+
+// Ramanujan's approximation — plenty for a dash-trace preview.
+function ellipsePerimeter(a: number, b: number): number {
+  a = Math.abs(a); b = Math.abs(b);
+  return Math.PI * (3 * (a + b) - Math.sqrt((3 * a + b) * (a + 3 * b)));
+}
 
 function rng(v: unknown, fb: number[]): number[] {
   return Array.isArray(v) && v.length >= 2 ? (v as number[]) : fb;
@@ -341,7 +362,7 @@ function coordChildren(o: SceneObject, stroke: string, sw: number) {
   return els;
 }
 
-export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonInteractiveIds = [], viewScale = 1, endpointDrag = null, onEndpointDrag, onEndpointCommit, groupDrag = null, onNodeDragMove, onCommitTransform, onCommitRotate }: Props) {
+export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonInteractiveIds = [], viewScale = 1, endpointDrag = null, onEndpointDrag, onEndpointCommit, groupDrag = null, onNodeDragMove, onCommitTransform, onCommitRotate, opacities }: Props) {
   const frozen = new Set(nonInteractiveIds);
 
   const renderNode = (o: SceneObject): React.ReactNode => {
@@ -378,6 +399,7 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
     };
     const common = { key: o.id, ...pos, ...drag, ...sel };
     const p = o.props as any;
+    const draw = drawOf(p);
     // Rotate gizmo only for a lone selection (same rule as the image Transformer
     // and endpoint handles — avoids clutter/conflicts during multi-select moves).
     const canRotate = isSel && selectedIds.length === 1 && !isFrozen && !!onCommitRotate;
@@ -396,20 +418,30 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
       // so negate; rect/ellipse pivot about their center (origin already centered).
       const rot = -(Number(p.rotation) || 0);
       if (st === 'circle') {
-        return <KCircle {...common} radius={Number(p.radius ?? 1) * PXU} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
+        const r = Number(p.radius ?? 1) * PXU;
+        // Manim draws a circle CCW from 3 o'clock; Konva's dash runs clockwise on
+        // screen, so mirror the (symmetric) circle while it traces.
+        return <KCircle {...common} radius={r} fill={fill} stroke={stroke} strokeWidth={strokeWidth}
+          dash={traceDash(2 * Math.PI * Math.abs(r), draw)} scaleY={draw == null ? 1 : -1} />;
       }
       if (st === 'ellipse') {
         return (
           <Rotatable key={o.id} show={canRotate} viewScale={viewScale} onEnd={rotEnd}>
-            {ref => <Ellipse ref={ref as React.Ref<Konva.Ellipse>} {...common} rotation={rot} radiusX={(Number(p.width ?? 2) / 2) * PXU} radiusY={(Number(p.height ?? 1.2) / 2) * PXU} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />}
+            {ref => <Ellipse ref={ref as React.Ref<Konva.Ellipse>} {...common} rotation={rot} radiusX={(Number(p.width ?? 2) / 2) * PXU} radiusY={(Number(p.height ?? 1.2) / 2) * PXU} fill={fill} stroke={stroke} strokeWidth={strokeWidth}
+              dash={traceDash(ellipsePerimeter(Number(p.width ?? 2) / 2 * PXU, Number(p.height ?? 1.2) / 2 * PXU), draw)} />}
           </Rotatable>
         );
       }
       if (st === 'polygon') {
-        const pts = (p.vertices ?? []).flatMap((v: any) => [worldX(v.x), worldY(v.y)]);
+        const pts: number[] = (p.vertices ?? []).flatMap((v: any) => [worldX(v.x), worldY(v.y)]);
+        let per = 0;
+        for (let i = 0; i < pts.length; i += 2) {
+          const j = (i + 2) % pts.length;
+          per += Math.hypot(pts[j] - pts[i], pts[j + 1] - pts[i + 1]);
+        }
         return (
           <Rotatable key={o.id} show={canRotate} viewScale={viewScale} onEnd={rotEnd}>
-            {ref => <Line ref={ref as React.Ref<Konva.Line>} {...common} points={pts} closed fill={fill} stroke={stroke} strokeWidth={strokeWidth} />}
+            {ref => <Line ref={ref as React.Ref<Konva.Line>} {...common} points={pts} closed fill={fill} stroke={stroke} strokeWidth={strokeWidth} dash={traceDash(per, draw)} />}
           </Rotatable>
         );
       }
@@ -421,7 +453,10 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
         const live = (w: 'start' | 'end') =>
           endpointDrag && endpointDrag.id === o.id && endpointDrag.which === w ? endpointDrag.point : null;
         const startP = live('start') ?? (p.start_point ?? { x: 0, y: 0 });
-        const endP = live('end') ?? (p.end_point ?? { x: 0, y: 0 });
+        const fullEnd = live('end') ?? (p.end_point ?? { x: 0, y: 0 });
+        // Playback preview: a Create/Write traces the line out from its start.
+        const endP = draw == null ? fullEnd
+          : { x: startP.x + (fullEnd.x - startP.x) * draw, y: startP.y + (fullEnd.y - startP.y) * draw };
         const sx = worldX(startP.x), sy = worldY(startP.y), ex = worldX(endP.x), ey = worldY(endP.y);
         const tip = Number(p.tip_length ?? 0.3) * PXU;
         const d = Number(p.dash_length ?? 0.15) * PXU;
@@ -465,7 +500,7 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
         <Rotatable key={o.id} show={canRotate} viewScale={viewScale} onEnd={rotEnd}>
           {ref => <Rect ref={ref as React.Ref<Konva.Rect>} {...common} rotation={rot} width={w} height={h} offsetX={w / 2} offsetY={h / 2}
             cornerRadius={cr > 0 ? Math.min(cr, Math.min(Math.abs(w), Math.abs(h)) / 2) : 0}
-            fill={fill} stroke={stroke} strokeWidth={strokeWidth} />}
+            fill={fill} stroke={stroke} strokeWidth={strokeWidth} dash={traceDash(2 * (Math.abs(w) + Math.abs(h)), draw)} />}
         </Rotatable>
       );
     }
@@ -502,9 +537,11 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
 
       const axes = objects.find(a => a.id === p.axes_ref && a.type === 'coordinate_system');
       if (!axes) return null;
-      const pts = st === 'parametric'
+      const allPts = st === 'parametric'
         ? sampleParametric(axes, String(p.x_expression ?? 'cos(t)'), String(p.y_expression ?? 'sin(t)'), p.t_range)
         : samplePlot(axes, String(p.expression ?? ''), p.x_range);
+      // Playback preview: Create traces the curve from its first sample.
+      const pts = draw == null ? allPts : allPts.slice(0, Math.max(4, Math.floor((allPts.length / 2) * draw) * 2));
       if (pts.length < 4) return null;
       return (
         <Line key={o.id} points={pts} stroke={stroke} strokeWidth={strokeWidth} lineJoin="round" lineCap="round"
@@ -519,7 +556,8 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
       const pick = isFrozen ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(o.id, e.evt.shiftKey, { x: e.evt.clientX, y: e.evt.clientY }); };
 
       if (p.subtype === 'vector') {
-        const dir = (p.direction as { x: number; y: number }) ?? { x: 1, y: 0 };
+        const full = (p.direction as { x: number; y: number }) ?? { x: 1, y: 0 };
+        const dir = draw == null ? full : { x: full.x * draw, y: full.y * draw };
         const tip = 0.25 * PXU;
         return (
           <Rotatable key={o.id} show={canRotate} viewScale={viewScale} onEnd={rotEnd}>
@@ -579,5 +617,11 @@ export function SceneNodes({ objects, selectedIds, onSelect, onCommitDrag, nonIn
 
   // Render in z-order so higher z draws on top.
   const ordered = [...objects].sort((a, b) => (a.z_index ?? 0) - (b.z_index ?? 0));
-  return <>{ordered.map(renderNode)}</>;
+  if (!opacities) return <>{ordered.map(renderNode)}</>;
+  return <>{ordered.map(o => {
+    const op = opacities[o.id] ?? 1;
+    if (op <= 0.001) return null;
+    const node = renderNode(o);
+    return node && <Group key={o.id} opacity={op} listening={false}>{node}</Group>;
+  })}</>;
 }

@@ -21,10 +21,10 @@ restart loses them.
    venv is not activated, so its `manim` entrypoint isn't on PATH. ffmpeg / ffprobe / pdflatex *are*
    system tools resolved via PATH, so calling those by name is fine.
 3. **Worker-thread → event-loop hand-off.** `queue.update_job` broadcasts via
-   `asyncio.Queue.put_nowait`, which is only safe on the loop thread. The current worker sidesteps this
-   by using synchronous `subprocess.run` (off-thread) and calling `update_job` only from the loop
-   thread. If you add code that updates a job *from* a worker thread, marshal it back with
-   `loop.call_soon_threadsafe`.
+   `asyncio.Queue.put_nowait`, which is only safe on the loop thread. `_render_one` runs `Popen` in
+   `asyncio.to_thread` and fires its progress callbacks on that worker thread, so `_process` wraps
+   each in `loop.call_soon_threadsafe` (see "Progress" below). Do the same for any new code that
+   updates a job from a thread.
 
 ## Pipeline
 

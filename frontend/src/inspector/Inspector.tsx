@@ -100,9 +100,12 @@ export function Inspector() {
   }
 
   const props = obj.props as Record<string, any>;
-  const setProp = (patch: Record<string, any>) => updateObject(obj.id, { props: { ...props, ...patch } });
-  const setStyle = (patch: Partial<SceneObject['style']>) => updateObject(obj.id, { style: { ...obj.style, ...patch } });
-  const setPos = (patch: { x?: number; y?: number }) => updateObject(obj.id, { position: { ...obj.position, ...patch } });
+  // Every field here is typed or dragged (colour pickers fire per pixel), so each
+  // edit carries a coalesce key: one burst on one field = one undo step.
+  const ck = (scope: string, patch: object) => `obj:${obj.id}:${scope}:${Object.keys(patch).join(',')}`;
+  const setProp = (patch: Record<string, any>) => updateObject(obj.id, { props: { ...props, ...patch } }, ck('props', patch));
+  const setStyle = (patch: Partial<SceneObject['style']>) => updateObject(obj.id, { style: { ...obj.style, ...patch } }, ck('style', patch));
+  const setPos = (patch: { x?: number; y?: number }) => updateObject(obj.id, { position: { ...obj.position, ...patch } }, ck('pos', patch));
 
   const subtype = props.subtype as string | undefined;
   const isClosedShape = obj.type === 'shape' && ['rectangle', 'circle', 'ellipse', 'polygon'].includes(subtype || '');
@@ -123,17 +126,17 @@ export function Inspector() {
             : 'Named after its text — type a name here to override')
           : undefined}
         onChange={v => {
-          if (obj.type !== 'text') { updateObject(obj.id, { name: v }); return; }
+          if (obj.type !== 'text') { updateObject(obj.id, { name: v }, `obj:${obj.id}:name`); return; }
           // An empty field means "no override": the store re-derives the name.
           const custom = v.trim().length > 0;
-          updateObject(obj.id, { name: custom ? v : '', props: { ...props, name_custom: custom } });
+          updateObject(obj.id, { name: custom ? v : '', props: { ...props, name_custom: custom } }, `obj:${obj.id}:name`);
         }} />
 
       <div className="field-row">
         <NumberField label="X" value={obj.position.x} onChange={v => setPos({ x: v })} />
         <NumberField label="Y" value={obj.position.y} onChange={v => setPos({ y: v })} />
       </div>
-      <NumberField label="Layer (z)" value={obj.z_index} step={1} onChange={v => updateObject(obj.id, { z_index: Math.round(v) })} />
+      <NumberField label="Layer (z)" value={obj.z_index} step={1} onChange={v => updateObject(obj.id, { z_index: Math.round(v) }, `obj:${obj.id}:z`)} />
 
       {/* Baked rotation (degrees, CCW) for the types that carry the generic
           `rotation` prop. Point-based shapes (polygon, lines, vectors) rotate

@@ -9,7 +9,8 @@ shapes and equations stay aligned:
 | `SceneNodes.tsx` | Konva nodes for shapes / coordinate systems / graphs / images, endpoint + rotate handles. |
 | `LatexOverlay.tsx` | HTML layer: KaTeX for equations/matrices, styled HTML for Pango `text`, plus the HTML handles (rotate, move, ⊕ pivot). |
 | `coords.ts` | Coordinate model + the empirically calibrated size constants. |
-| `motion.ts` | Timeline transform math for previews (editor-only). |
+| `motion.ts` | Timeline transform math for previews (editor-only): `applyKf` (full or partial), easing (`RATE`/`ease`/`kfAlpha`). |
+| `playback.ts` | `frameAt(scene, t)` — the whole scene as animated at time `t`, for the playback preview. |
 | `plotting.ts` | JS sampling of parametric curves / vector fields (preview only). |
 | `geometry.ts` | Axes geometry, brace/vector label anchors, segment intersection. |
 
@@ -127,6 +128,39 @@ and Pango lay out the *same* font file, matching the em is enough to match glyph
 - The **camera** viewport rectangle (cyan, `CAMERA_ID`-driven) shows the framing of a selected camera
   keyframe, or the scene's initial framing; drag it to set the pan, zoom/Reset live in a floating
   `.camera-hud`. Suppressed while a move/scale/rotate keyframe is selected.
+
+## Playback preview (`playback.ts`, `canvasStore.preview`)
+
+Playing or scrubbing the timeline switches the canvas into a **read-only preview** of the scene as
+animated at the playhead (`previewOn = canvasStore.preview || timelineStore.playing`). It stays on the
+last frame after playback ends; the toolbar's **▶ Preview** toggle, **Esc**, a plain left click on the
+canvas, or selecting an object (outliner, paste…) drops back to edit mode. `CanvasStage` subscribes to
+the 60fps `playhead` **only while previewing**, so ordinary editing never re-renders per frame.
+
+`frameAt` returns baked clones (`store/finalState.bakeTransform` — the same geometry bake as Duplicate
+final state) plus an opacity map and the camera framing; `SceneNodes` (`opacities`) and `LatexOverlay`
+(`readOnly` + `opacities`) render them non-interactively. It mirrors the codegen's semantics, not its
+code — when emission semantics change, check this file too:
+
+- move/scale/rotate interpolate with the keyframe's easing (`applyKf(t, kf, alpha)`); a **rotate sweeps
+  its angle**, whereas Manim's `.animate.rotate` moves points in straight lines (a large rotation
+  shrinks mid-flight in the render). End states are identical.
+- a group's transforms carry its children (pivot = centroid of its leaf children); group opacity and a
+  group's Write/Create propagate to descendants.
+- **hide-until-creation:** an object whose first presence event (creation-first on a tie) is a
+  creation verb, or a Transform target, is invisible before it.
+- drawing verbs are approximations: strokes trace via the transient **`__draw`** prop (line endpoint,
+  plot sample slice, vector length, closed-shape `dash`; circles mirrored so the trace runs CCW like
+  Manim), equations/text wipe via **`__clip`** (CSS `clip-path`), Type On slices the text, Draw+Fill
+  brings the fill in over the second half, anything else fades. `__draw`/`__clip` exist **only on
+  preview clones — never write them into the IR.**
+- fades ramp opacity incl. `shift` (LocusFade: fade-out drifts and stays, fade-in slides in);
+  transform/replace/morph cross-fade source → target; Indicate pulses scale + colour; Circumscribe/Flash
+  draw nothing extra.
+- the camera framing interpolates pan and frame *width* linearly; outside the shot is dimmed.
+
+KaTeX output is memoised in `LatexOverlay.renderTex` (bounded map) because the preview re-renders
+every equation each frame.
 
 ## Images
 

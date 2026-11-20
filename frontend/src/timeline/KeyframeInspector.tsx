@@ -2,21 +2,8 @@ import { useEffect, useState } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import { useRenderStore } from '../store/renderStore';
 import { useTimelineStore, VERB_META, timelineVerbsFor, EASING_OPTIONS, defaultParams, CAMERA_ID } from './timelineStore';
-import { transformAfter } from '../canvas/motion';
+import { transformAfter, RATE } from '../canvas/motion';
 import type { AnimationVerb, EasingType, Point2D } from '../types/ir';
-
-// Approximate rate functions for the visual easing preview (not used for render).
-const RATE: Record<string, (t: number) => number> = {
-  linear: t => t,
-  smooth: t => t * t * t * (t * (t * 6 - 15) + 10),
-  rush_from: t => t * (2 - t),
-  rush_into: t => t * t,
-  there_and_back: t => Math.sin(Math.PI * t),
-  double_smooth: t => {
-    const s = (u: number) => u * u * u * (u * (u * 6 - 15) + 10);
-    return t < 0.5 ? s(t * 2) / 2 : 0.5 + s((t - 0.5) * 2) / 2;
-  },
-};
 
 function EasingPreview({ easing }: { easing: string }) {
   const fn = RATE[easing] ?? RATE.smooth;
@@ -136,7 +123,9 @@ export function KeyframeInspector() {
 
   const obj = scene.objects.find(o => o.id === kf.object_id);
   const params = (kf.params ?? {}) as Record<string, any>;
-  const setParam = (patch: Record<string, any>) => updateKeyframe(kf.id, { params: { ...params, ...patch } });
+  // Typed / spun inputs: coalesce per keyframe + field so a burst is one undo step.
+  const setParam = (patch: Record<string, any>) =>
+    updateKeyframe(kf.id, { params: { ...params, ...patch } }, `kf:${kf.id}:params:${Object.keys(patch).join(',')}`);
   const verb = kf.verb;
   const isCamera = kf.object_id === CAMERA_ID || verb === 'camera_move';
 
@@ -158,8 +147,8 @@ export function KeyframeInspector() {
       )}
 
       <div className="field-row">
-        <Num label="Start (s)" value={kf.start_time} onChange={v => updateKeyframe(kf.id, { start_time: Math.max(0, v) })} />
-        <Num label="Duration (s)" value={kf.duration} onChange={v => updateKeyframe(kf.id, { duration: Math.max(0.1, v) })} />
+        <Num label="Start (s)" value={kf.start_time} onChange={v => updateKeyframe(kf.id, { start_time: Math.max(0, v) }, `kf:${kf.id}:start`)} />
+        <Num label="Duration (s)" value={kf.duration} onChange={v => updateKeyframe(kf.id, { duration: Math.max(0.1, v) }, `kf:${kf.id}:duration`)} />
       </div>
 
       <label className="field">
